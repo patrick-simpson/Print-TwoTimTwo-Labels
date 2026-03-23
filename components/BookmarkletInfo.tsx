@@ -57,7 +57,7 @@ export const BookmarkletInfo: React.FC = () => {
         w.document.write('</style></head><body>');
         w.document.write('<div class="main">');
         if (logoSrc) {
-            w.document.write('<img class="club-logo" src="' + logoSrc + '" onerror="this.style.display=\'none\'" />');
+            w.document.write('<img class="club-logo" src="' + logoSrc + '" onerror="this.style.display=\\'none\\'" />');
         }
         w.document.write('<div><div class="first">' + firstName + '</div>');
         if (lastName) {
