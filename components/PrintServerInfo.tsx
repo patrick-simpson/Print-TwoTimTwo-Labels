@@ -65,7 +65,7 @@ function Configure {
         $marker = if ($printers[$i] -eq $cfg.printerName) { "  <-- current" } else { "" }
         Write-Host "  [$i] $($printers[$i])$marker"
     }
-    $choice = Read-Host "`nEnter printer number (or press Enter to keep current)"
+    $choice = Read-Host "\`nEnter printer number (or press Enter to keep current)"
     if ($choice -match '^\d+$') {
         $idx = [int]$choice
         if ($idx -ge 0 -and $idx -lt $printers.Count) { $cfg.printerName = $printers[$idx] }
