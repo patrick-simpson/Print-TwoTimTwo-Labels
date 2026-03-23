@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Twotimtwo Auto Printer",
+  "version": "1.0",
+  "description": "Automatically prints labels upon check-in on twotimtwo.",
+  "permissions": [
+    "printing",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.twotimtwo.com/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.twotimtwo.com/*", "http://localhost:3000/*"],
+      "js": ["lib/jspdf.umd.min.js", "content.js"]
+    }
+  ]
+}

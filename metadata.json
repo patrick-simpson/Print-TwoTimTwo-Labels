@@ -1,5 +1,5 @@
 {
   "name": "Check-in Label Generator",
-  "description": "A utility dashboard that simulates the Awana check-in process and generates a JavaScript bookmarklet to print 4x2 labels for the last checked-in child.",
+  "description": "A utility dashboard that simulates the Awana check-in process and provides a Chrome extension to automatically print 4x2 labels for the last checked-in child.",
   "requestFramePermissions": []
 }

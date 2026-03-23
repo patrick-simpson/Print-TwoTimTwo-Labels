@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ClubberList } from './components/ClubberList';
 import { mockClubbers } from './data';
 import { Clubber } from './types';
-import { BookmarkletInfo } from './components/BookmarkletInfo';
-import { PrintServerInfo } from './components/PrintServerInfo';
+import { ExtensionInfo } from './components/ExtensionInfo';
 import { CheckinModal } from './components/CheckinModal';
 
 const App: React.FC = () => {
@@ -34,11 +33,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-12">
-      {/* Disclaimer banner */}
-      <div className="bg-amber-50 border-b border-amber-200 text-center text-xs text-amber-700 py-1.5 px-4">
-        This tool is not affiliated with, endorsed by, or approved by TwoTimTwo.com
-      </div>
-
       {/* Simulation Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
@@ -54,11 +48,8 @@ const App: React.FC = () => {
 
       <div className="container mx-auto px-4 mt-6">
         
-        {/* Bookmarklet Section */}
-        <BookmarkletInfo />
-
-        {/* Print Server Section */}
-        <PrintServerInfo />
+        {/* Extension Info Section */}
+        <ExtensionInfo />
 
         <div className="border-t-2 border-dashed border-gray-300 my-8"></div>
 
@@ -71,9 +62,9 @@ const App: React.FC = () => {
             <p className="text-sm text-yellow-700">
                 This section simulates your actual Awana Check-in page. 
                 <br />
-                <strong>Step A:</strong> Click your bookmarklet once to arm it — a red badge appears in the corner.
+                <strong>Step A:</strong> Ensure the extension is installed and a printer is selected in the top right.
                 <br />
-                <strong>Step B:</strong> Click any child below to "Check In" — the label prints automatically.
+                <strong>Step B:</strong> Click a child below to "Check In". The label should automatically print.
             </p>
         </div>
 
