@@ -74,7 +74,7 @@ export const BookmarkletInfo: React.FC = () => {
 })();`;
 
   // Minify lightly for the href attribute
-  const hrefCode = bookmarkletCode.replace(/\s+/g, ' ').replace(/\/\//g, '');
+  const hrefCode = bookmarkletCode.replace(/\s+/g, ' ');
 
   const handleCopy = () => {
     navigator.clipboard.writeText(hrefCode);
