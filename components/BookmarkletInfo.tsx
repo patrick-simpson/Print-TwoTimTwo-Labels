@@ -5,36 +5,56 @@ export const BookmarkletInfo: React.FC = () => {
 
   // This is the actual JavaScript that will run in the user's browser
   const bookmarkletCode = `javascript:(function(){
-    var lastCheckinDiv = document.querySelector('#lastCheckin div');
-    if(!lastCheckinDiv) {
-      var manual = prompt("Could not find a recent check-in. Enter name manually:");
-      if(manual) printLabel(manual, "", "");
-      return;
+    if (window.__autoPrintObserver) {
+        window.__autoPrintObserver.disconnect();
+        window.__autoPrintObserver = null;
+        var b = document.getElementById('__autoPrintBadge');
+        if (b) b.remove();
+        return;
     }
 
-    var clone = lastCheckinDiv.cloneNode(true);
-    var undoLink = clone.querySelector('a');
-    if(undoLink) undoLink.remove();
-    var name = clone.innerText.trim();
+    var lastPrinted = '';
 
-    if(!name) { alert('Name is empty.'); return; }
+    function tryPrint() {
+        var lastCheckinDiv = document.querySelector('#lastCheckin div');
+        if (!lastCheckinDiv) return;
+        var clone = lastCheckinDiv.cloneNode(true);
+        var undoLink = clone.querySelector('a');
+        if (undoLink) undoLink.remove();
+        var name = clone.innerText.trim();
+        if (!name || name === lastPrinted) return;
+        lastPrinted = name;
 
-    var clubName = "";
-    var clubLogoSrc = "";
-    var clubberDivs = document.querySelectorAll('.clubber');
-    for (var i = 0; i < clubberDivs.length; i++) {
-        var n = clubberDivs[i].querySelector('.name');
-        if (n && n.innerText.trim() === name) {
-            var img = clubberDivs[i].querySelector('.club img');
-            if (img) {
-                clubName = img.getAttribute('alt').trim().replace(/&amp;/g, '&');
-                clubLogoSrc = img.src;
+        var clubName = '';
+        var clubLogoSrc = '';
+        var clubberDivs = document.querySelectorAll('.clubber');
+        for (var i = 0; i < clubberDivs.length; i++) {
+            var n = clubberDivs[i].querySelector('.name');
+            if (n && n.innerText.trim() === name) {
+                var img = clubberDivs[i].querySelector('.club img');
+                if (img) {
+                    clubName = img.getAttribute('alt').trim().replace(/&amp;/g, '&');
+                    clubLogoSrc = img.src;
+                }
+                break;
             }
-            break;
         }
+        printLabel(name, clubName, clubLogoSrc);
     }
 
-    printLabel(name, clubName, clubLogoSrc);
+    window.__autoPrintObserver = new MutationObserver(tryPrint);
+    window.__autoPrintObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    var badge = document.createElement('div');
+    badge.id = '__autoPrintBadge';
+    badge.title = 'Click to disarm auto-print';
+    badge.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;background:#dc2626;color:#fff;font-family:sans-serif;font-size:13px;font-weight:bold;padding:8px 14px;border-radius:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3)';
+    badge.textContent = 'AUTO PRINT: armed  x';
+    badge.onclick = function() {
+        if (window.__autoPrintObserver) { window.__autoPrintObserver.disconnect(); window.__autoPrintObserver = null; }
+        badge.remove();
+    };
+    document.body.appendChild(badge);
 
     function printLabel(nameText, clubText, logoSrc) {
         try {
@@ -43,7 +63,7 @@ export const BookmarkletInfo: React.FC = () => {
         var lastName = parts.slice(1).join(' ');
         var kvbcLogo = 'https://kvbchurch.twotimtwo.com/images/logos/kvbchurch2.jpg';
         var w = window.open('', '_blank', 'width=400,height=200');
-        if (!w) { alert('Popup blocked! Please allow popups for this site and try again.'); return; }
+        if (!w) { alert('Popup blocked! Allow popups for this site, then re-arm auto-print.'); return; }
         w.document.write('<html><head><title>Label</title><style>');
         w.document.write('@page { size: 4in 2in; margin: 0; }');
         w.document.write('* { box-sizing: border-box; }');
@@ -56,22 +76,15 @@ export const BookmarkletInfo: React.FC = () => {
         w.document.write('.kvbc-logo { height: 0.45in; width: auto; }');
         w.document.write('</style></head><body>');
         w.document.write('<div class="main">');
-        if (logoSrc) {
-            w.document.write('<img class="club-logo" src="' + logoSrc + '" onerror="this.style.display=\\'none\\'" />');
-        }
+        if (logoSrc) { w.document.write('<img class="club-logo" src="' + logoSrc + '" onerror="this.style.display=\\'none\\'" />'); }
         w.document.write('<div><div class="first">' + firstName + '</div>');
-        if (lastName) {
-            w.document.write('<div class="last">' + lastName + '</div>');
-        }
+        if (lastName) { w.document.write('<div class="last">' + lastName + '</div>'); }
         w.document.write('</div></div>');
         w.document.write('<div class="footer"><img class="kvbc-logo" src="' + kvbcLogo + '" /></div>');
         w.document.write('</body></html>');
         w.document.close();
         w.focus();
-        setTimeout(function() {
-            w.print();
-            w.close();
-        }, 500);
+        setTimeout(function() { w.print(); w.close(); }, 500);
         } catch(e) { alert('Label error: ' + e.message); }
     }
 })();`;
@@ -93,7 +106,7 @@ export const BookmarkletInfo: React.FC = () => {
       </h2>
       
       <p className="mb-4 text-gray-600">
-        Drag the blue button below to your browser's bookmarks bar. When you are on the check-in page, click this bookmark <strong>immediately after</strong> checking a child in.
+        Drag the blue button below to your browser's bookmarks bar. Then, when you're on the check-in page, <strong>click it once to arm it</strong> — a red badge will appear and labels will print automatically after each check-in. Click the badge (or the bookmark again) to disarm.
       </p>
 
       <div className="flex flex-col sm:flex-row items-center gap-4 mb-6">
