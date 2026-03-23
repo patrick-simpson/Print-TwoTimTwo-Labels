@@ -34,6 +34,11 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-12">
+      {/* Disclaimer banner */}
+      <div className="bg-amber-50 border-b border-amber-200 text-center text-xs text-amber-700 py-1.5 px-4">
+        This tool is not affiliated with, endorsed by, or approved by TwoTimTwo.com
+      </div>
+
       {/* Simulation Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-40">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
