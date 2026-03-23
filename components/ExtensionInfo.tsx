@@ -23,10 +23,19 @@ export const ExtensionInfo: React.FC = () => {
         </ol>
       </div>
 
-      <div className="bg-blue-50 p-4 rounded text-sm text-blue-800 border border-blue-200">
-        <p>
-          <strong>Note:</strong> Once installed, you will see a "🖨️ Auto-Print" dropdown appear in the top right corner of the simulator below (and on the real Twotimtwo website). Select your label printer from this list to enable auto-printing.
+      <div className="bg-blue-50 p-4 rounded text-sm text-blue-800 border border-blue-200 mb-4">
+        <p className="mb-2">
+          <strong>Note:</strong> Once installed, you will see a "🖨️ Auto-Print" dropdown appear in the top right corner of the simulator below (and on the real Twotimtwo website). Select "Auto-Print (OS Default)" to print silently to your system's default printer, or "Open Print Dialog" to manually select a printer each time.
         </p>
+        <p>
+          <strong>To enable silent printing (no dialog):</strong>
+        </p>
+        <ol className="list-decimal list-inside mt-1 space-y-1">
+          <li>Close all open Chrome windows.</li>
+          <li>Right-click your Chrome shortcut and select <strong>Properties</strong>.</li>
+          <li>In the <strong>Target</strong> field, add <code> --kiosk-printing</code> to the very end (after the quotes).</li>
+          <li>Click <strong>OK</strong> and restart Chrome using that shortcut.</li>
+        </ol>
       </div>
     </div>
   );

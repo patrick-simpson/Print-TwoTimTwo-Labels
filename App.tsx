@@ -38,7 +38,7 @@ const App: React.FC = () => {
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
            <div className="flex items-center gap-4">
                 <img src="https://picsum.photos/40/40" alt="Logo" className="rounded shadow-sm" />
-                <h1 className="text-xl font-bold text-gray-800 hidden sm:block">KVBC Checkin Clubber</h1>
+                <h1 className="text-xl font-bold text-gray-800 hidden sm:block">Kids Club Checkin</h1>
            </div>
            <div className="text-sm text-gray-500">
              Simulated Environment
@@ -60,7 +60,7 @@ const App: React.FC = () => {
                 2. Test It Here
             </h2>
             <p className="text-sm text-yellow-700">
-                This section simulates your actual Awana Check-in page. 
+                This section simulates your actual Kids Club Check-in page. 
                 <br />
                 <strong>Step A:</strong> Ensure the extension is installed and a printer is selected in the top right.
                 <br />

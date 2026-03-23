@@ -48,7 +48,7 @@ export const CheckinModal: React.FC<CheckinModalProps> = ({ clubber, onClose, on
                 </label>
                 <label className="flex items-center space-x-3">
                     <input type="checkbox" defaultChecked className="form-checkbox h-5 w-5 text-blue-600" />
-                    <span className="text-gray-700">Awana meeting</span>
+                    <span className="text-gray-700">Kids Club meeting</span>
                 </label>
                 <label className="flex items-center space-x-3">
                     <input type="checkbox" className="form-checkbox h-5 w-5 text-blue-600" />

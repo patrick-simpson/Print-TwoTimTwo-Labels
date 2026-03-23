@@ -1,7 +1,7 @@
-# KVBC Checkin Clubber - Project Documentation
+# Kids Club Checkin - Project Documentation
 
 ## Overview
-The **KVBC Checkin Clubber** is a tool designed to enhance the Awana check-in process at Kern Valley Bible Church (KVBC). Its primary purpose is to provide a **Chrome Extension** that can be used on the official Awana check-in website to automatically print custom 4" x 2" labels for children as they are checked in.
+The **Kids Club Checkin** is a tool designed to enhance the Kids Club check-in process at Community Church. Its primary purpose is to provide a **Chrome Extension** that can be used on the official Kids Club check-in website to automatically print custom 4" x 2" labels for children as they are checked in.
 
 The application serves two roles:
 1. **Chrome Extension:** Automatically prints labels to a selected printer upon check-in.
@@ -11,7 +11,7 @@ The application serves two roles:
 
 ## How It Works
 ### The Chrome Extension
-The Chrome extension replaces the previous bookmarklet and local print server approach. It operates directly on the Awana check-in page:
+The Chrome extension replaces the previous bookmarklet and local print server approach. It operates directly on the Kids Club check-in page:
 1. **Printer Selection UI:**
    - Injects a dropdown menu into the top right corner of the page, allowing the user to select their local printer.
    - Saves the selected printer to `chrome.storage.sync`.
@@ -31,7 +31,7 @@ The Chrome extension replaces the previous bookmarklet and local print server ap
 The React application (`App.tsx`) mimics the production site's layout:
 - **Grid of Clubbers:** Displays children with color-coded backgrounds.
 - **Check-in Logic:** Clicking a child simulates a network request and updates the `#lastCheckin` DOM element, triggering the Chrome extension.
-- **DOM Fidelity:** The IDs and class names used in the simulator (`#lastCheckin`, `.club img`, etc.) are identical to those found on the real Awana site.
+- **DOM Fidelity:** The IDs and class names used in the simulator (`#lastCheckin`, `.club img`, etc.) are identical to those found on the real Kids Club site.
 
 ---
 

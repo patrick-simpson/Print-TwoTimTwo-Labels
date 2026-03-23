@@ -20,9 +20,14 @@ function injectPrinterDropdown() {
   container.style.borderRadius = '8px';
   container.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
   container.style.display = 'flex';
-  container.style.alignItems = 'center';
-  container.style.gap = '10px';
+  container.style.flexDirection = 'column';
+  container.style.gap = '8px';
   container.style.fontFamily = 'sans-serif';
+
+  const row1 = document.createElement('div');
+  row1.style.display = 'flex';
+  row1.style.alignItems = 'center';
+  row1.style.gap = '10px';
 
   const label = document.createElement('label');
   label.textContent = '🖨️ Auto-Print:';
@@ -43,47 +48,56 @@ function injectPrinterDropdown() {
   disableOption.textContent = '❌ Disabled';
   select.appendChild(disableOption);
 
+  const dialogOption = document.createElement('option');
+  dialogOption.value = 'print_dialog';
+  dialogOption.textContent = '🖨️ Open Print Dialog';
+  select.appendChild(dialogOption);
+
   const kioskOption = document.createElement('option');
   kioskOption.value = 'default_kiosk';
-  kioskOption.textContent = '🖨️ OS Default (Kiosk Mode)';
+  kioskOption.textContent = '🖨️ Auto-Print (OS Default)';
   select.appendChild(kioskOption);
   
   const statusIcon = document.createElement('span');
   statusIcon.id = 'twotimtwo-printer-status';
   statusIcon.style.fontSize = '14px';
   
-  container.appendChild(label);
-  container.appendChild(select);
-  container.appendChild(statusIcon);
+  row1.appendChild(label);
+  row1.appendChild(select);
+  row1.appendChild(statusIcon);
+
+  const row2 = document.createElement('div');
+  row2.style.display = 'flex';
+  row2.style.justifyContent = 'flex-end';
+
+  const testBtn = document.createElement('button');
+  testBtn.textContent = 'Test Print';
+  testBtn.style.fontSize = '11px';
+  testBtn.style.padding = '2px 8px';
+  testBtn.style.background = '#e2e8f0';
+  testBtn.style.border = '1px solid #cbd5e1';
+  testBtn.style.borderRadius = '4px';
+  testBtn.style.cursor = 'pointer';
+  testBtn.addEventListener('click', () => {
+    generateAndPrintPDF('Test Child', 'Test Club');
+  });
+
+  row2.appendChild(testBtn);
+
+  container.appendChild(row1);
+  container.appendChild(row2);
   document.body.appendChild(container);
 
-  // Fetch printers from background script
-  chrome.runtime.sendMessage({ action: 'getPrinters' }, (response) => {
-    if (response && response.printers && response.printers.length > 0) {
-      const group = document.createElement('optgroup');
-      group.label = 'Direct Printers';
-      response.printers.forEach(printer => {
-        const option = document.createElement('option');
-        option.value = printer.id;
-        option.textContent = printer.name;
-        group.appendChild(option);
-      });
-      select.appendChild(group);
-    } else if (response && response.error) {
-      console.warn("Direct printing API not available:", response.error);
+  // Load saved printer
+  chrome.storage.sync.get(['selectedPrinterId'], (result) => {
+    if (result.selectedPrinterId) {
+      select.value = result.selectedPrinterId;
+      selectedPrinterId = result.selectedPrinterId;
+    } else {
+      select.value = 'default_kiosk';
+      selectedPrinterId = 'default_kiosk';
     }
-
-    // Load saved printer
-    chrome.storage.sync.get(['selectedPrinterId'], (result) => {
-      if (result.selectedPrinterId) {
-        select.value = result.selectedPrinterId;
-        selectedPrinterId = result.selectedPrinterId;
-      } else {
-        select.value = 'default_kiosk';
-        selectedPrinterId = 'default_kiosk';
-      }
-      autoPrintEnabled = selectedPrinterId !== 'disabled';
-    });
+    autoPrintEnabled = selectedPrinterId !== 'disabled';
   });
 
   select.addEventListener('change', (e) => {
@@ -102,6 +116,13 @@ function observeCheckins() {
       if (undoLink) undoLink.remove();
       const name = clone.innerText.trim();
       
+      // Check if "undo" is present in the text (case-insensitive)
+      if (name.toLowerCase().includes('undo')) {
+        console.log('Detected "undo" in check-in text, skipping print.');
+        lastPrintedName = name; // Mark as "seen" so we don't trigger again for this text
+        return;
+      }
+
       if (name && name !== lastPrintedName) {
         lastPrintedName = name;
         handleNewCheckin(name);
@@ -144,130 +165,121 @@ function generateAndPrintPDF(name, clubName) {
   if (statusIcon) statusIcon.textContent = '⏳';
 
   try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({
-      orientation: 'landscape',
-      unit: 'in',
-      format: [4, 2]
-    });
-
-    const pageWidth = 4;
-    
     // Split Name into First and Last
     const nameParts = name.split(' ');
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    let currentY = 0.6;
-    if (!clubName && !lastName) {
-      currentY = 1.1;
-    } else if (!clubName || !lastName) {
-      currentY = 0.8;
+    // Final "undo" check - if any part of the label contains "undo", skip it
+    if (firstName.toLowerCase().includes('undo') || 
+        lastName.toLowerCase().includes('undo') || 
+        clubName.toLowerCase().includes('undo')) {
+      console.log('Skipping print because "undo" was found in content.');
+      if (statusIcon) statusIcon.textContent = '🚫';
+      setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+      return;
     }
 
-    // First Name
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(36);
-    const firstNameWidth = doc.getStringUnitWidth(firstName) * doc.internal.getFontSize() / 72;
-    const firstNameX = (pageWidth - firstNameWidth) / 2;
-    doc.text(firstName, firstNameX, currentY);
-
-    // Last Name
-    if (lastName) {
-      currentY += 0.5;
-      const lastNameWidth = doc.getStringUnitWidth(lastName) * doc.internal.getFontSize() / 72;
-      const lastNameX = (pageWidth - lastNameWidth) / 2;
-      doc.text(lastName, lastNameX, currentY);
+    // Create an invisible iframe to print the label
+    let printIframe = document.getElementById('twotimtwo-print-iframe');
+    if (!printIframe) {
+      printIframe = document.createElement('iframe');
+      printIframe.id = 'twotimtwo-print-iframe';
+      printIframe.style.position = 'fixed';
+      printIframe.style.right = '0';
+      printIframe.style.bottom = '0';
+      printIframe.style.width = '0';
+      printIframe.style.height = '0';
+      printIframe.style.border = '0';
+      printIframe.style.visibility = 'hidden';
+      document.body.appendChild(printIframe);
     }
 
-    // Club Name
-    if (clubName) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(24);
-      
-      // Text wrapping for club name
-      const maxClubWidth = 3.8;
-      const splitClubName = doc.splitTextToSize(clubName, maxClubWidth);
-      
-      currentY += 0.45;
-      
-      splitClubName.forEach(line => {
-        const lineWidth = doc.getStringUnitWidth(line) * doc.internal.getFontSize() / 72;
-        const lineX = (pageWidth - lineWidth) / 2;
-        doc.text(line, lineX, currentY);
-        currentY += 0.35;
-      });
-    }
+    const printDoc = printIframe.contentWindow.document;
+    printDoc.open();
+    printDoc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Print Label - ${name}</title>
+          <style>
+            @page {
+              size: 4in 2in;
+              margin: 0;
+            }
+            body {
+              margin: 0;
+              padding: 0;
+              width: 4in;
+              height: 2in;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-family: "Helvetica", "Arial", sans-serif;
+              overflow: hidden;
+            }
+            .badge {
+              width: 3.8in;
+              height: 1.8in;
+              border: 2px solid black;
+              border-radius: 15px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              text-align: center;
+              box-sizing: border-box;
+              padding: 5px;
+            }
+            .first-name {
+              font-size: 48pt;
+              font-weight: bold;
+              line-height: 1.1;
+              word-wrap: break-word;
+              max-width: 100%;
+            }
+            .last-name {
+              font-size: 22pt;
+              margin-top: 2pt;
+            }
+            .club-name {
+              font-size: 14pt;
+              font-style: italic;
+              margin-top: 8pt;
+              border-top: 1px solid #ccc;
+              padding-top: 4pt;
+              width: 70%;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="badge">
+            <div class="first-name">${firstName}</div>
+            ${lastName ? `<div class="last-name">${lastName}</div>` : ''}
+            ${clubName ? `<div class="club-name">${clubName}</div>` : ''}
+          </div>
+        </body>
+      </html>
+    `);
+    printDoc.close();
 
-    if (selectedPrinterId === 'default_kiosk') {
-      // Tell the PDF to automatically open the print dialog when loaded
-      doc.autoPrint();
-      
-      // Get blob URL instead of data URI to avoid some browser restrictions
-      const blob = doc.output('blob');
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Create an invisible iframe to print the PDF
-      let printIframe = document.getElementById('twotimtwo-print-iframe');
-      if (!printIframe) {
-        printIframe = document.createElement('iframe');
-        printIframe.id = 'twotimtwo-print-iframe';
-        // Do NOT use display: none, as it breaks printing in some browsers
-        printIframe.style.position = 'fixed';
-        printIframe.style.right = '0';
-        printIframe.style.bottom = '0';
-        printIframe.style.width = '0';
-        printIframe.style.height = '0';
-        printIframe.style.border = '0';
-        document.body.appendChild(printIframe);
+    // Trigger print from the parent window context for better kiosk mode support
+    setTimeout(() => {
+      try {
+        printIframe.contentWindow.focus();
+        printIframe.contentWindow.print();
+        
+        if (statusIcon) statusIcon.textContent = '✅';
+        setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+      } catch (err) {
+        if (statusIcon) statusIcon.textContent = '❌';
+        console.error('Print execution failed:', err);
       }
-
-      printIframe.src = blobUrl;
-      
-      printIframe.onload = () => {
-        try {
-          // The PDF's internal autoPrint() should trigger the dialog.
-          // We also call contentWindow.print() as a fallback for browsers that allow it.
-          try {
-            printIframe.contentWindow.print();
-          } catch (e) {
-            // Ignore cross-origin errors if the PDF viewer blocks it, 
-            // autoPrint() inside the PDF should still work.
-          }
-          
-          if (statusIcon) statusIcon.textContent = '✅';
-          setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
-          
-          // Clean up blob URL after a delay
-          setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 10000);
-        } catch (err) {
-          if (statusIcon) statusIcon.textContent = '❌';
-          console.error('Print execution failed:', err);
-        }
-      };
-    } else {
-      // Direct printing via chrome.printing API
-      const dataUri = doc.output('datauristring');
-
-      chrome.runtime.sendMessage({
-        action: 'printJob',
-        printerId: selectedPrinterId,
-        title: `Label - ${name}`,
-        pdfBase64: dataUri
-      }, (response) => {
-        if (chrome.runtime.lastError || !response || response.error) {
-          if (statusIcon) statusIcon.textContent = '❌';
-          console.error('Print execution failed:', chrome.runtime.lastError || response?.error);
-        } else {
-          if (statusIcon) statusIcon.textContent = '✅';
-          setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
-        }
-      });
-    }
+    }, 500);
 
   } catch (error) {
     if (statusIcon) statusIcon.textContent = '❌';
-    console.error('PDF generation error:', error);
+    console.error('Print generation error:', error);
   }
 }
 
