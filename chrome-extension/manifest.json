@@ -4,19 +4,16 @@
   "version": "1.0",
   "description": "Automatically prints labels upon check-in on twotimtwo.",
   "permissions": [
-    "printing",
     "storage"
   ],
   "host_permissions": [
     "*://*.twotimtwo.com/*",
-    "http://localhost:3000/*"
+    "http://localhost/*",
+    "*://*.run.app/*"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
     {
-      "matches": ["*://*.twotimtwo.com/*", "http://localhost:3000/*"],
+      "matches": ["*://*.twotimtwo.com/*", "http://localhost/*", "*://*.run.app/*"],
       "js": ["lib/jspdf.umd.min.js", "content.js"]
     }
   ]

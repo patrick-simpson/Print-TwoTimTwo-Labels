@@ -1,12 +1,12 @@
-let selectedPrinterId = null;
+let autoPrintEnabled = true;
 let lastPrintedName = null;
 
 function init() {
-  injectPrinterDropdown();
+  injectAutoPrintToggle();
   observeCheckins();
 }
 
-function injectPrinterDropdown() {
+function injectAutoPrintToggle() {
   const container = document.createElement('div');
   container.id = 'twotimtwo-printer-container';
   container.style.position = 'fixed';
@@ -29,58 +29,28 @@ function injectPrinterDropdown() {
   label.style.fontSize = '14px';
   label.style.color = '#334155';
   
-  const select = document.createElement('select');
-  select.id = 'twotimtwo-printer-select';
-  select.style.padding = '6px 10px';
-  select.style.borderRadius = '4px';
-  select.style.border = '1px solid #94a3b8';
-  select.style.fontSize = '14px';
-  select.style.outline = 'none';
-  select.style.cursor = 'pointer';
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.id = 'twotimtwo-autoprint-toggle';
+  toggle.style.cursor = 'pointer';
   
   const statusIcon = document.createElement('span');
   statusIcon.id = 'twotimtwo-printer-status';
   statusIcon.style.fontSize = '14px';
   
   container.appendChild(label);
-  container.appendChild(select);
+  container.appendChild(toggle);
   container.appendChild(statusIcon);
   document.body.appendChild(container);
 
-  chrome.storage.sync.get(['selectedPrinterId'], (result) => {
-    selectedPrinterId = result.selectedPrinterId || null;
-    
-    chrome.runtime.sendMessage({ action: 'getPrinters' }, (response) => {
-      if (response && response.printers) {
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = '-- Select Printer --';
-        select.appendChild(defaultOption);
-
-        response.printers.forEach(printer => {
-          const option = document.createElement('option');
-          option.value = printer.id;
-          option.textContent = printer.name;
-          if (printer.id === selectedPrinterId) {
-            option.selected = true;
-          }
-          select.appendChild(option);
-        });
-      } else {
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = 'No printers found';
-        select.appendChild(option);
-        if (response && response.error) {
-          console.error('Printer fetch error:', response.error);
-        }
-      }
-    });
+  chrome.storage.sync.get(['autoPrintEnabled'], (result) => {
+    autoPrintEnabled = result.autoPrintEnabled !== undefined ? result.autoPrintEnabled : true;
+    toggle.checked = autoPrintEnabled;
   });
 
-  select.addEventListener('change', (e) => {
-    selectedPrinterId = e.target.value;
-    chrome.storage.sync.set({ selectedPrinterId });
+  toggle.addEventListener('change', (e) => {
+    autoPrintEnabled = e.target.checked;
+    chrome.storage.sync.set({ autoPrintEnabled });
   });
 }
 
@@ -108,8 +78,8 @@ function observeCheckins() {
 }
 
 function handleNewCheckin(name) {
-  if (!selectedPrinterId) {
-    console.warn('No printer selected for auto-print.');
+  if (!autoPrintEnabled) {
+    console.warn('Auto-print is disabled.');
     return;
   }
 
@@ -144,18 +114,32 @@ function generateAndPrintPDF(name, clubName) {
 
     const pageWidth = 4;
     
-    // Name
+    // Split Name into First and Last
+    const nameParts = name.split(' ');
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+
+    let currentY = 0.6;
+    if (!clubName && !lastName) {
+      currentY = 1.1;
+    } else if (!clubName || !lastName) {
+      currentY = 0.8;
+    }
+
+    // First Name
     doc.setFont("helvetica", "bold");
     doc.setFontSize(36);
-    const nameWidth = doc.getStringUnitWidth(name) * doc.internal.getFontSize() / 72;
-    const nameX = (pageWidth - nameWidth) / 2;
-    
-    let currentY = 0.8;
-    if (!clubName) {
-      currentY = 1.1;
+    const firstNameWidth = doc.getStringUnitWidth(firstName) * doc.internal.getFontSize() / 72;
+    const firstNameX = (pageWidth - firstNameWidth) / 2;
+    doc.text(firstName, firstNameX, currentY);
+
+    // Last Name
+    if (lastName) {
+      currentY += 0.5;
+      const lastNameWidth = doc.getStringUnitWidth(lastName) * doc.internal.getFontSize() / 72;
+      const lastNameX = (pageWidth - lastNameWidth) / 2;
+      doc.text(lastName, lastNameX, currentY);
     }
-    
-    doc.text(name, nameX, currentY);
 
     // Club Name
     if (clubName) {
@@ -166,7 +150,7 @@ function generateAndPrintPDF(name, clubName) {
       const maxClubWidth = 3.8;
       const splitClubName = doc.splitTextToSize(clubName, maxClubWidth);
       
-      currentY += 0.5;
+      currentY += 0.45;
       
       splitClubName.forEach(line => {
         const lineWidth = doc.getStringUnitWidth(line) * doc.internal.getFontSize() / 72;
@@ -178,20 +162,28 @@ function generateAndPrintPDF(name, clubName) {
 
     const dataUri = doc.output('datauristring');
 
-    chrome.runtime.sendMessage({
-      action: 'printJob',
-      printerId: selectedPrinterId,
-      title: `Label - ${name}`,
-      documentBase64: dataUri
-    }, (response) => {
-      if (response && response.status === 'OK') {
+    // Create an invisible iframe to print the PDF
+    let printIframe = document.getElementById('twotimtwo-print-iframe');
+    if (!printIframe) {
+      printIframe = document.createElement('iframe');
+      printIframe.id = 'twotimtwo-print-iframe';
+      printIframe.style.display = 'none';
+      document.body.appendChild(printIframe);
+    }
+
+    printIframe.src = dataUri;
+    
+    printIframe.onload = () => {
+      try {
+        printIframe.contentWindow.print();
         if (statusIcon) statusIcon.textContent = '✅';
         setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
-      } else {
+      } catch (err) {
         if (statusIcon) statusIcon.textContent = '❌';
-        console.error('Print failed:', response ? response.error : 'Unknown error');
+        console.error('Print execution failed:', err);
       }
-    });
+    };
+
   } catch (error) {
     if (statusIcon) statusIcon.textContent = '❌';
     console.error('PDF generation error:', error);
