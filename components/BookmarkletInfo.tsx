@@ -8,51 +8,67 @@ export const BookmarkletInfo: React.FC = () => {
     var lastCheckinDiv = document.querySelector('#lastCheckin div');
     if(!lastCheckinDiv) {
       var manual = prompt("Could not find a recent check-in. Enter name manually:");
-      if(manual) printLabel(manual, "");
+      if(manual) printLabel(manual, "", "");
       return;
     }
-    
+
     var clone = lastCheckinDiv.cloneNode(true);
     var undoLink = clone.querySelector('a');
     if(undoLink) undoLink.remove();
     var name = clone.innerText.trim();
-    
+
     if(!name) { alert('Name is empty.'); return; }
-    
+
     var clubName = "";
+    var clubLogoSrc = "";
     var clubberDivs = document.querySelectorAll('.clubber');
     for (var i = 0; i < clubberDivs.length; i++) {
         var n = clubberDivs[i].querySelector('.name');
         if (n && n.innerText.trim() === name) {
             var img = clubberDivs[i].querySelector('.club img');
             if (img) {
-                clubName = img.getAttribute('alt').trim();
-                clubName = clubName.replace(/&amp;/g, '&');
+                clubName = img.getAttribute('alt').trim().replace(/&amp;/g, '&');
+                clubLogoSrc = img.src;
             }
             break;
         }
     }
-    
-    printLabel(name, clubName);
 
-    function printLabel(nameText, clubText) {
-        var w = window.open('', '_blank', 'width=400,height=250');
+    printLabel(name, clubName, clubLogoSrc);
+
+    function printLabel(nameText, clubText, logoSrc) {
+        var parts = nameText.trim().split(' ');
+        var firstName = parts[0];
+        var lastName = parts.slice(1).join(' ');
+        var kvbcLogo = 'https://kvbchurch.twotimtwo.com/images/logos/kvbchurch2.jpg';
+        var w = window.open('', '_blank', 'width=400,height=200');
         w.document.write('<html><head><title>Label</title><style>');
         w.document.write('@page { size: 4in 2in; margin: 0; }');
-        w.document.write('body { margin: 0; padding: 0; width: 4in; height: 2in; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: sans-serif; text-align: center; overflow: hidden; }');
-        w.document.write('h1 { font-size: 38pt; font-weight: bold; margin: 0; line-height: 1.1; }');
-        w.document.write('h2 { font-size: 24pt; font-weight: normal; margin: 10px 0 0 0; color: #555; }');
+        w.document.write('* { box-sizing: border-box; }');
+        w.document.write('body { margin: 0; padding: 0.1in 0.15in 0.05in; width: 4in; height: 2in; display: flex; flex-direction: column; font-family: Arial, sans-serif; overflow: hidden; }');
+        w.document.write('.main { flex: 1; display: flex; align-items: center; gap: 0.12in; }');
+        w.document.write('.club-logo { height: 0.7in; width: auto; flex-shrink: 0; }');
+        w.document.write('.first { font-size: 34pt; font-weight: bold; line-height: 1; margin: 0; }');
+        w.document.write('.last { font-size: 19pt; line-height: 1.2; margin: 0; color: #222; }');
+        w.document.write('.footer { display: flex; justify-content: center; padding-bottom: 0.05in; }');
+        w.document.write('.kvbc-logo { height: 0.45in; width: auto; }');
         w.document.write('</style></head><body>');
-        w.document.write('<h1>' + nameText + '</h1>');
-        if (clubText) {
-            w.document.write('<h2>' + clubText + '</h2>');
+        w.document.write('<div class="main">');
+        if (logoSrc) {
+            w.document.write('<img class="club-logo" src="' + logoSrc + '" onerror="this.style.display=\'none\'" />');
         }
+        w.document.write('<div><div class="first">' + firstName + '</div>');
+        if (lastName) {
+            w.document.write('<div class="last">' + lastName + '</div>');
+        }
+        w.document.write('</div></div>');
+        w.document.write('<div class="footer"><img class="kvbc-logo" src="' + kvbcLogo + '" /></div>');
         w.document.write('</body></html>');
         w.document.close();
         w.focus();
-        setTimeout(function() { 
-            w.print(); 
-            w.close(); 
+        setTimeout(function() {
+            w.print();
+            w.close();
         }, 500);
     }
 })();`;
