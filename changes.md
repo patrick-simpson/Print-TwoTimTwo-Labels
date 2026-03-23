@@ -40,8 +40,15 @@ The React application (`App.tsx`) mimics the production site's layout:
 ### 2. Bookmarklet Architecture
 - **No External Dependencies:** The bookmarklet is self-contained. It doesn't load external scripts (like jQuery) to avoid Cross-Origin Resource Sharing (CORS) issues or security blocks on the production site.
 - **Alt-Text Extraction:** The club name is extracted from the `alt` attribute of images. This was chosen because the text labels for clubs are often hidden or replaced by icons in the production UI, but the `alt` text remains accessible.
+- **`window.open` instead of iframe:** The bookmarklet uses `window.open` to create the print window rather than an iframe. This is intentional — hidden iframes can be blocked by the production site's Content Security Policy (CSP) headers, while a new window is reliably permitted.
 
-### 3. Simulation Accuracy
+### 3. Label Layout
+- **Dimensions:** 4" × 2" (`@page { size: 4in 2in; margin: 0; }`).
+- **Top section:** Club logo image (grabbed from the matching `.club img` element's `src`) displayed on the left, with the child's first name (34pt bold) and last name (19pt) to the right.
+- **Bottom strip:** KVBC church logo (`https://kvbchurch.twotimtwo.com/images/logos/kvbchurch2.jpg`) centered as a footer.
+- **Fallback:** If the club logo fails to load (e.g. during simulator testing, where local image files are not present), it is hidden via `onerror` and the name fills the space.
+
+### 4. Simulation Accuracy
 - **Mock Data:** The `data.ts` file contains a representative sample of clubbers across different clubs (Puggles, Cubbies, Sparks, T&T) to test various name lengths and club types.
 - **Color Coding:** The UI uses specific hex codes (`#FDCCCE` for girls, `#D6DCFF` for boys) to match the visual cues staff are used to seeing.
 
