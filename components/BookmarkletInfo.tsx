@@ -37,11 +37,13 @@ export const BookmarkletInfo: React.FC = () => {
     printLabel(name, clubName, clubLogoSrc);
 
     function printLabel(nameText, clubText, logoSrc) {
+        try {
         var parts = nameText.trim().split(' ');
         var firstName = parts[0];
         var lastName = parts.slice(1).join(' ');
         var kvbcLogo = 'https://kvbchurch.twotimtwo.com/images/logos/kvbchurch2.jpg';
         var w = window.open('', '_blank', 'width=400,height=200');
+        if (!w) { alert('Popup blocked! Please allow popups for this site and try again.'); return; }
         w.document.write('<html><head><title>Label</title><style>');
         w.document.write('@page { size: 4in 2in; margin: 0; }');
         w.document.write('* { box-sizing: border-box; }');
@@ -70,6 +72,7 @@ export const BookmarkletInfo: React.FC = () => {
             w.print();
             w.close();
         }, 500);
+        } catch(e) { alert('Label error: ' + e.message); }
     }
 })();`;
 
