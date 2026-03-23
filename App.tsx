@@ -62,9 +62,9 @@ const App: React.FC = () => {
             <p className="text-sm text-yellow-700">
                 This section simulates your actual Awana Check-in page. 
                 <br />
-                <strong>Step A:</strong> Click a child below to "Check In".
+                <strong>Step A:</strong> Click your bookmarklet once to arm it — a red badge appears in the corner.
                 <br />
-                <strong>Step B:</strong> Once the yellow "Last checked in" box appears, click your new bookmarklet to test the print function.
+                <strong>Step B:</strong> Click any child below to "Check In" — the label prints automatically.
             </p>
         </div>
 
