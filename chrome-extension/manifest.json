@@ -4,13 +4,17 @@
   "version": "1.0",
   "description": "Automatically prints labels upon check-in on twotimtwo.",
   "permissions": [
-    "storage"
+    "storage",
+    "printing"
   ],
   "host_permissions": [
     "*://*.twotimtwo.com/*",
     "http://localhost/*",
     "*://*.run.app/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": ["*://*.twotimtwo.com/*", "http://localhost/*", "*://*.run.app/*"],

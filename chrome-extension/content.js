@@ -1,12 +1,13 @@
+let selectedPrinterId = 'default_kiosk';
 let autoPrintEnabled = true;
 let lastPrintedName = null;
 
 function init() {
-  injectAutoPrintToggle();
+  injectPrinterDropdown();
   observeCheckins();
 }
 
-function injectAutoPrintToggle() {
+function injectPrinterDropdown() {
   const container = document.createElement('div');
   container.id = 'twotimtwo-printer-container';
   container.style.position = 'fixed';
@@ -29,28 +30,66 @@ function injectAutoPrintToggle() {
   label.style.fontSize = '14px';
   label.style.color = '#334155';
   
-  const toggle = document.createElement('input');
-  toggle.type = 'checkbox';
-  toggle.id = 'twotimtwo-autoprint-toggle';
-  toggle.style.cursor = 'pointer';
+  const select = document.createElement('select');
+  select.id = 'twotimtwo-printer-select';
+  select.style.padding = '4px 8px';
+  select.style.borderRadius = '4px';
+  select.style.border = '1px solid #cbd5e1';
+  select.style.fontSize = '14px';
+  select.style.cursor = 'pointer';
+  
+  const disableOption = document.createElement('option');
+  disableOption.value = 'disabled';
+  disableOption.textContent = '❌ Disabled';
+  select.appendChild(disableOption);
+
+  const kioskOption = document.createElement('option');
+  kioskOption.value = 'default_kiosk';
+  kioskOption.textContent = '🖨️ OS Default (Kiosk Mode)';
+  select.appendChild(kioskOption);
   
   const statusIcon = document.createElement('span');
   statusIcon.id = 'twotimtwo-printer-status';
   statusIcon.style.fontSize = '14px';
   
   container.appendChild(label);
-  container.appendChild(toggle);
+  container.appendChild(select);
   container.appendChild(statusIcon);
   document.body.appendChild(container);
 
-  chrome.storage.sync.get(['autoPrintEnabled'], (result) => {
-    autoPrintEnabled = result.autoPrintEnabled !== undefined ? result.autoPrintEnabled : true;
-    toggle.checked = autoPrintEnabled;
+  // Fetch printers from background script
+  chrome.runtime.sendMessage({ action: 'getPrinters' }, (response) => {
+    if (response && response.printers && response.printers.length > 0) {
+      const group = document.createElement('optgroup');
+      group.label = 'Direct Printers';
+      response.printers.forEach(printer => {
+        const option = document.createElement('option');
+        option.value = printer.id;
+        option.textContent = printer.name;
+        group.appendChild(option);
+      });
+      select.appendChild(group);
+    } else if (response && response.error) {
+      console.warn("Direct printing API not available:", response.error);
+    }
+
+    // Load saved printer
+    chrome.storage.sync.get(['selectedPrinterId'], (result) => {
+      if (result.selectedPrinterId) {
+        select.value = result.selectedPrinterId;
+        selectedPrinterId = result.selectedPrinterId;
+      } else {
+        select.value = 'default_kiosk';
+        selectedPrinterId = 'default_kiosk';
+      }
+      autoPrintEnabled = selectedPrinterId !== 'disabled';
+    });
   });
 
-  toggle.addEventListener('change', (e) => {
-    autoPrintEnabled = e.target.checked;
-    chrome.storage.sync.set({ autoPrintEnabled });
+  select.addEventListener('change', (e) => {
+    selectedPrinterId = e.target.value;
+    autoPrintEnabled = selectedPrinterId !== 'disabled';
+    chrome.storage.sync.set({ selectedPrinterId });
   });
 }
 
@@ -78,7 +117,7 @@ function observeCheckins() {
 }
 
 function handleNewCheckin(name) {
-  if (!autoPrintEnabled) {
+  if (!autoPrintEnabled || selectedPrinterId === 'disabled') {
     console.warn('Auto-print is disabled.');
     return;
   }
@@ -160,29 +199,71 @@ function generateAndPrintPDF(name, clubName) {
       });
     }
 
-    const dataUri = doc.output('datauristring');
+    if (selectedPrinterId === 'default_kiosk') {
+      // Tell the PDF to automatically open the print dialog when loaded
+      doc.autoPrint();
+      
+      // Get blob URL instead of data URI to avoid some browser restrictions
+      const blob = doc.output('blob');
+      const blobUrl = URL.createObjectURL(blob);
 
-    // Create an invisible iframe to print the PDF
-    let printIframe = document.getElementById('twotimtwo-print-iframe');
-    if (!printIframe) {
-      printIframe = document.createElement('iframe');
-      printIframe.id = 'twotimtwo-print-iframe';
-      printIframe.style.display = 'none';
-      document.body.appendChild(printIframe);
-    }
-
-    printIframe.src = dataUri;
-    
-    printIframe.onload = () => {
-      try {
-        printIframe.contentWindow.print();
-        if (statusIcon) statusIcon.textContent = '✅';
-        setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
-      } catch (err) {
-        if (statusIcon) statusIcon.textContent = '❌';
-        console.error('Print execution failed:', err);
+      // Create an invisible iframe to print the PDF
+      let printIframe = document.getElementById('twotimtwo-print-iframe');
+      if (!printIframe) {
+        printIframe = document.createElement('iframe');
+        printIframe.id = 'twotimtwo-print-iframe';
+        // Do NOT use display: none, as it breaks printing in some browsers
+        printIframe.style.position = 'fixed';
+        printIframe.style.right = '0';
+        printIframe.style.bottom = '0';
+        printIframe.style.width = '0';
+        printIframe.style.height = '0';
+        printIframe.style.border = '0';
+        document.body.appendChild(printIframe);
       }
-    };
+
+      printIframe.src = blobUrl;
+      
+      printIframe.onload = () => {
+        try {
+          // The PDF's internal autoPrint() should trigger the dialog.
+          // We also call contentWindow.print() as a fallback for browsers that allow it.
+          try {
+            printIframe.contentWindow.print();
+          } catch (e) {
+            // Ignore cross-origin errors if the PDF viewer blocks it, 
+            // autoPrint() inside the PDF should still work.
+          }
+          
+          if (statusIcon) statusIcon.textContent = '✅';
+          setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+          
+          // Clean up blob URL after a delay
+          setTimeout(() => { URL.revokeObjectURL(blobUrl); }, 10000);
+        } catch (err) {
+          if (statusIcon) statusIcon.textContent = '❌';
+          console.error('Print execution failed:', err);
+        }
+      };
+    } else {
+      // Direct printing via chrome.printing API
+      const dataUri = doc.output('datauristring');
+
+      chrome.runtime.sendMessage({
+        action: 'printJob',
+        printerId: selectedPrinterId,
+        title: `Label - ${name}`,
+        pdfBase64: dataUri
+      }, (response) => {
+        if (chrome.runtime.lastError || !response || response.error) {
+          if (statusIcon) statusIcon.textContent = '❌';
+          console.error('Print execution failed:', chrome.runtime.lastError || response?.error);
+        } else {
+          if (statusIcon) statusIcon.textContent = '✅';
+          setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+        }
+      });
+    }
 
   } catch (error) {
     if (statusIcon) statusIcon.textContent = '❌';
