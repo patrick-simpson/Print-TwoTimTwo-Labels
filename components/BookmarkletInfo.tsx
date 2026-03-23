@@ -15,6 +15,11 @@ export const BookmarkletInfo: React.FC = () => {
 
     var lastPrinted = '';
 
+    function updateBadge(text, color) {
+        var b = document.getElementById('__autoPrintBadge');
+        if (b) { b.textContent = text; b.style.background = color; }
+    }
+
     function tryPrint() {
         var lastCheckinDiv = document.querySelector('#lastCheckin div');
         if (!lastCheckinDiv) return;
@@ -39,7 +44,25 @@ export const BookmarkletInfo: React.FC = () => {
                 break;
             }
         }
-        printLabel(name, clubName, clubLogoSrc);
+
+        var parts = name.trim().split(' ');
+        var firstName = parts[0];
+        var lastName = parts.slice(1).join(' ');
+
+        updateBadge('Sending...', '#ca8a04');
+        fetch('http://localhost:3456/print', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ firstName: firstName, lastName: lastName, clubLogoSrc: clubLogoSrc }),
+            signal: AbortSignal.timeout(4000)
+        }).then(function(r) {
+            if (!r.ok) throw new Error('server error');
+            updateBadge('Printed!', '#16a34a');
+            setTimeout(function() { updateBadge('AUTO PRINT: armed  x', '#dc2626'); }, 2000);
+        }).catch(function() {
+            updateBadge('AUTO PRINT: armed  x', '#dc2626');
+            printLabel(name, clubName, clubLogoSrc);
+        });
     }
 
     window.__autoPrintObserver = new MutationObserver(tryPrint);

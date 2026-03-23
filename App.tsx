@@ -3,6 +3,7 @@ import { ClubberList } from './components/ClubberList';
 import { mockClubbers } from './data';
 import { Clubber } from './types';
 import { BookmarkletInfo } from './components/BookmarkletInfo';
+import { PrintServerInfo } from './components/PrintServerInfo';
 import { CheckinModal } from './components/CheckinModal';
 
 const App: React.FC = () => {
@@ -50,6 +51,9 @@ const App: React.FC = () => {
         
         {/* Bookmarklet Section */}
         <BookmarkletInfo />
+
+        {/* Print Server Section */}
+        <PrintServerInfo />
 
         <div className="border-t-2 border-dashed border-gray-300 my-8"></div>
 
