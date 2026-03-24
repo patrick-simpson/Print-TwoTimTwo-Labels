@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Awana Print Bookmarklet</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            padding: 40px;
+            text-align: center;
+        }
+        h1 {
+            color: #1a202c;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .instructions {
+            text-align: left;
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 25px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #2d3748;
+        }
+        .instructions ol {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #2d3748;
+        }
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #68d391;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            margin: 15px 0;
+            max-height: 150px;
+            overflow: auto;
+            text-align: left;
+            word-break: break-all;
+            cursor: pointer;
+        }
+        .code-block:hover {
+            background: #1a202c;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 13px;
+            display: none;
+        }
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            display: block;
+        }
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🖨️ Auto-Print Bookmarklet</h1>
+        <p class="subtitle">One-click silent printing on check-in</p>
+
+        <div class="instructions">
+            <strong>How to use:</strong>
+            <ol>
+                <li><strong>Option A (Easiest):</strong> Drag the button below to your bookmark bar</li>
+                <li><strong>Option B:</strong> Click "Copy Code", then manually create a bookmark with the code</li>
+                <li>Go to your church's check-in page</li>
+                <li>Click the bookmarklet button</li>
+                <li>A small widget appears in the corner — silent printing is now active!</li>
+            </ol>
+        </div>
+
+        <div class="button-group">
+            <a id="bookmarklet-btn" class="btn btn-primary" href="javascript:void(0);" draggable="true">
+                📌 Drag to Bookmark Bar
+            </a>
+            <button id="copy-btn" class="btn btn-secondary">Copy Code</button>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+            <p style="font-size: 12px; color: #718096; margin-bottom: 10px;">Bookmarklet code:</p>
+            <div class="code-block" id="code-display" title="Click to copy"></div>
+        </div>
+    </div>
+
+    <script>
+        // The detection and printing logic
+        const DETECTION_CODE = `
+(function(){
+    if(window.__awanaPrinterLoaded) return;
+    window.__awanaPrinterLoaded = true;
+    const PRINT_COOLDOWN=2000,DEBOUNCE_MS=100,STATUS_TIMEOUT=3000,PRINT_SERVER='http://localhost:3456',STORAGE_KEY='awana_selectedPrinterId';
+    let selectedMode=localStorage.getItem(STORAGE_KEY)||'auto',lastPrintedName=null,lastPrintTime=0;
+    function isUndo(e){return e&&e.toLowerCase().includes('undo')}function getClubImageDataUrl(e){try{if(!e||!e.src||!e.complete||0===e.naturalWidth)return null;const t=document.createElement('canvas');return t.width=t.height=64,t.getContext('2d').drawImage(e,0,0,64,64),t.toDataURL('image/png')}catch{return e.src||null}}function injectWidget(){const e=document.createElement('div');e.id='awana-widget',Object.assign(e.style,{position:'fixed',top:'10px',right:'10px',zIndex:'99999',background:'#f8fafc',padding:'10px 14px',border:'1px solid #cbd5e1',borderRadius:'8px',boxShadow:'0 4px 12px rgba(0,0,0,0.12)',display:'flex',flexDirection:'column',gap:'6px',fontFamily:'system-ui, sans-serif',fontSize:'13px'});const t=document.createElement('div');Object.assign(t.style,{display:'flex',alignItems:'center',gap:'8px'});const n=document.createElement('span');n.textContent='🖨️',n.style.fontSize='16px';const o=document.createElement('select');o.id='awana-mode-select',Object.assign(o.style,{padding:'3px 7px',borderRadius:'4px',border:'1px solid #cbd5e1',cursor:'pointer',fontSize:'12px'}),[['auto','🖨️ Auto-Print'],['dialog','🗔 Print Dialog'],['off','❌ Off']].forEach((([e,r])=>{const a=document.createElement('option');a.value=e,a.textContent=r,o.appendChild(a)})),o.value=selectedMode;const s=document.createElement('span');s.id='awana-status',s.style.fontSize='16px';o.addEventListener('change',(()=>{selectedMode=o.value,localStorage.setItem(STORAGE_KEY,selectedMode)}));const i=document.createElement('button');i.textContent='Test',Object.assign(i.style,{fontSize:'11px',padding:'2px 7px',background:'#e2e8f0',border:'1px solid #cbd5e1',borderRadius:'4px',cursor:'pointer'}),i.addEventListener('click',(()=>doPrint('Test Child','Sparks',null))),t.append(n,o,s,i),e.appendChild(t),document.body.appendChild(e)}function setStatus(e){const t=document.getElementById('awana-status');t&&(t.textContent=e)}function clearStatus(){setTimeout((()=>setStatus('')),STATUS_TIMEOUT)}function watchCheckins(){let e=null;const t=()=>{const n=document.querySelector('#lastCheckin div');if(!n)return void(lastPrintedName=null);const o=n.cloneNode(!0);o.querySelector('a')?.remove();const s=o.textContent.trim();isUndo(s)?lastPrintedName=s:s&&s!==lastPrintedName?(lastPrintedName=s,onCheckin(s)):s||(lastPrintedName=null)};new MutationObserver((()=>{clearTimeout(e),e=setTimeout(t,DEBOUNCE_MS)})).observe(document.querySelector('#lastCheckin')||document.body,{childList:!0,subtree:!0,characterData:!0})}function lookupClub(e){for(const t of document.querySelectorAll('.clubber')){const n=t.querySelector('.name');if(n&&n.innerText.trim()===e){const o=t.querySelector('.club img');return o?{clubName:(o.getAttribute('alt')||'').trim().replace(/&amp;/g,'&'),clubImageData:getClubImageDataUrl(o)}:{clubName:'',clubImageData:null}}}return{clubName:'',clubImageData:null}}function onCheckin(e){'off'===selectedMode||Date.now()-lastPrintTime<PRINT_COOLDOWN||(lastPrintTime=Date.now(),doPrint(e,...lookupClub(e)|>{clubName:'',clubImageData:null}))}async function doPrint(e,t,n){setStatus('⏳');const o=e.split(' '),s=o[0]||'',i=o.slice(1).join(' ')||'';if(isUndo(s)||isUndo(i)||isUndo(t))return setStatus('🚫'),void clearStatus();if('dialog'!==selectedMode)try{const o=await fetch(PRINT_SERVER+'/print',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:e,clubName:t,clubImageData:n}),signal:AbortSignal.timeout(5e3)});if(o.ok)return setStatus('✅'),void clearStatus()}catch{console.log('[Awana] Print server unavailable — falling back to window.print()')}if('off'===selectedMode)return;let a=document.getElementById('awana-print-frame');a||(a=document.createElement('iframe'),a.id='awana-print-frame',Object.assign(a.style,{position:'fixed',right:'0',bottom:'0',width:'0',height:'0',border:'0',visibility:'hidden'}),document.body.appendChild(a));const r=n?'<div class="icon-col"><img src="'+n+'"/></div><div class="div"></div>':'',c=s.length>12?'32pt':s.length>8?'40pt':'48pt';a.contentWindow.document.open(),a.contentWindow.document.write('<!DOCTYPE html><html><head><style>@page{size:4in 2in;margin:0}*{box-sizing:border-box;margin:0;padding:0}body{width:4in;height:2in;display:flex;align-items:center;justify-content:center;font-family:Helvetica,Arial,sans-serif}.badge{width:3.8in;height:1.8in;border:1.5pt solid #000;border-radius:12pt;display:flex;align-items:stretch;overflow:hidden}.icon-col{width:1.1in;display:flex;align-items:center;justify-content:center;background:#f4f4f4;flex-shrink:0;padding:8pt}.icon-col img{width:52pt;height:52pt;object-fit:contain}.div{width:1pt;background:#ddd;flex-shrink:0}.text{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6pt 10pt;text-align:center}.fn{font-size:'+c+';font-weight:bold;line-height:1.05;word-break:break-word}.ln{font-size:20pt;margin-top:2pt}.sep{width:65%;height:.5pt;background:#ccc;margin:5pt auto}.cn{font-size:12pt;font-style:italic;color:#444}</style></head><body><div class="badge">'+r+'<div class="text"><div class="fn">'+s+'</div>'+(i?'<div class="ln">'+i+'</div>':'')+(t?'<div class="sep"></div><div class="cn">'+t+'</div>':'')+'</div></div></body></html>'),a.contentWindow.document.close(),setTimeout((()=>{try{a.contentWindow.focus(),a.contentWindow.print(),setStatus('✅')}catch{setStatus('❌')}clearStatus()}),500)}injectWidget(),watchCheckins()
+        `;
+
+        // Create the bookmarklet href
+        const bookmarkletCode = `javascript:${DETECTION_CODE}`;
+
+        // Display the code (minified version shown to user)
+        document.getElementById('code-display').textContent = bookmarkletCode;
+
+        // Set the bookmarklet button
+        const bookmarkletBtn = document.getElementById('bookmarklet-btn');
+        bookmarkletBtn.href = bookmarkletCode;
+        bookmarkletBtn.textContent = '📌 Drag to Bookmark Bar';
+
+        // Copy button
+        document.getElementById('copy-btn').addEventListener('click', () => {
+            navigator.clipboard.writeText(bookmarkletCode).then(() => {
+                const status = document.getElementById('status');
+                status.textContent = '✓ Bookmarklet code copied to clipboard!';
+                status.className = 'status success';
+                setTimeout(() => { status.className = 'status'; }, 3000);
+            }).catch(() => {
+                const status = document.getElementById('status');
+                status.textContent = '✗ Failed to copy. Try right-clicking the code and selecting Copy.';
+                status.className = 'status error';
+            });
+        });
+
+        // Click the code block to copy
+        document.getElementById('code-display').addEventListener('click', () => {
+            navigator.clipboard.writeText(bookmarkletCode);
+            const status = document.getElementById('status');
+            status.textContent = '✓ Copied!';
+            status.className = 'status success';
+            setTimeout(() => { status.className = 'status'; }, 2000);
+        });
+    </script>
+</body>
+</html>

@@ -4,7 +4,6 @@
   "description": "Silent label print server for Awana check-in",
   "main": "server.js",
   "dependencies": {
-    "archiver": "^6.0.1",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "pdf-to-printer": "^5.5.0",
