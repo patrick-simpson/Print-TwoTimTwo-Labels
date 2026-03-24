@@ -21,12 +21,20 @@ $ErrorActionPreference = "Stop"
 $ScriptVersion = "1.2.0"
 $ScriptDate    = "2026-03-24"
 
+# Set window properties
+$Host.UI.RawUI.WindowTitle = "🖨️  Awana Label Print Server Setup"
+[console]::BackgroundColor = "Black"
+[console]::ForegroundColor = "White"
+
 Write-Host ""
-Write-Host "==============================" -ForegroundColor Cyan
-Write-Host "  Awana Label Print Server" -ForegroundColor Cyan
-Write-Host "  All-in-One Installer" -ForegroundColor Cyan
-Write-Host "  v$ScriptVersion  ($ScriptDate)" -ForegroundColor Cyan
-Write-Host "==============================" -ForegroundColor Cyan
+Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "  ║                                        ║" -ForegroundColor Cyan
+Write-Host "  ║      🖨️  Awana Label Print Server     ║" -ForegroundColor Cyan
+Write-Host "  ║         All-in-One Installer          ║" -ForegroundColor Cyan
+Write-Host "  ║                                        ║" -ForegroundColor Cyan
+Write-Host "  ║          v$ScriptVersion  ($ScriptDate)              ║" -ForegroundColor Cyan
+Write-Host "  ║                                        ║" -ForegroundColor Cyan
+Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
 # --- 0. Check PowerShell version ---
@@ -347,16 +355,27 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
 
 # --- 6. Start server and open browser ---
 Write-Host ""
-Write-Host "==============================" -ForegroundColor Cyan
-Write-Host "  Server starting..." -ForegroundColor Cyan
-Write-Host "==============================" -ForegroundColor Cyan
+Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Green
+Write-Host "  ║       ✓ Setup Complete — Ready!       ║" -ForegroundColor Green
+Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-Write-Host "Opening Microsoft Edge at check-in page..." -ForegroundColor Cyan
+Write-Host "  📖 Next steps:" -ForegroundColor White
+Write-Host ""
+Write-Host "    1. Open http://localhost:3456 in your browser" -ForegroundColor Gray
+Write-Host "    2. Click 'Create Bookmarklet'" -ForegroundColor Gray
+Write-Host "    3. Drag the button to your bookmark bar" -ForegroundColor Gray
+Write-Host "    4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
 
-Write-Host "Print server running at http://localhost:3456" -ForegroundColor Cyan
-Write-Host "Leave this window open during check-in." -ForegroundColor Gray
-Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Gray
+Write-Host ""
+Write-Host "  🖨️  Print server running" -ForegroundColor Green
+Write-Host "  📍 http://localhost:3456" -ForegroundColor Cyan
+Write-Host "  🖥️  Printer: $($cfg.printerName)" -ForegroundColor White
+Write-Host ""
+Write-Host "  ⚠️  Keep this window open during check-in" -ForegroundColor Yellow
+Write-Host "  ❌ Press Ctrl+C to stop the server" -ForegroundColor Yellow
 Write-Host ""
 
 # --- Kill any existing process on port 3456 ---
