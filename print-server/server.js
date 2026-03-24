@@ -177,6 +177,12 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', printer: PRINTER_NAME || '(default)' });
 });
 
+// Explicit route for bookmarklet (debugging)
+app.get('/bookmarklet.html', (req, res) => {
+  const bookmarkletPath = path.join(__dirname, 'public', 'bookmarklet.html');
+  res.sendFile(bookmarkletPath);
+});
+
 app.post('/print', async (req, res) => {
   const {
     name,
