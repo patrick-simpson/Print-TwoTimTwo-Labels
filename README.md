@@ -4,16 +4,22 @@
 
 When a child checks in during Awana, automatically print a 4" × 2" label to your label printer with zero dialogs or manual steps.
 
-## What This Does
+## Quick Start — Download the Installer (Recommended)
 
-This tool watches the TwoTimTwo check-in page and automatically prints a label for each new check-in. It works as a **Windows PowerShell setup script** that:
-- Installs Node.js (if needed)
-- Downloads the project
-- Installs dependencies
-- Configures your printer and church check-in URL
-- Starts a silent print server that runs in the background
+**[👉 Download Awana-Label-Printer-Setup.exe](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest)**
 
-## Quick Start (3 Steps)
+1. Download the `.exe` file
+2. Double-click to install (one-click, no setup wizard)
+3. The app launches and guides you through first-time setup
+4. Done — server runs silently in your system tray
+
+No PowerShell, no Node.js install, no terminal window. This is the easiest way to get started.
+
+---
+
+## Alternative: PowerShell Script (Fallback)
+
+If you prefer the terminal-based setup or need a portable version:
 
 ### Step 1: Download
 Download `install-and-run.ps1` from the [GitHub releases](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases) or [directly from the repo](https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1).
@@ -138,13 +144,41 @@ This project is **not affiliated with, endorsed by, or approved by TwoTimTwo.com
 3. **Check the PowerShell window** for server startup messages
 4. **Verify your printer** - Go to Windows Settings → Printers and make sure it's there
 
+## For Developers — Releasing a New Version
+
+The `.exe` installer is automatically built and released via GitHub Actions. To release:
+
+```bash
+# 1. Bump version in electron-app/package.json
+#    (e.g., change "version": "1.0.0" to "1.0.1")
+
+git add electron-app/package.json
+git commit -m "Bump version to 1.0.1"
+git push origin main
+
+# 2. Create and push a version tag
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+GitHub Actions automatically:
+- Builds the installer on a Windows server
+- Creates a GitHub Release
+- Attaches `Awana-Label-Printer-Setup.exe` to it
+
+Users download from: **https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest**
+
+To test the build without releasing, go to **Actions** → **Build Electron App** → **Run workflow** and select your branch.
+
 ## Credits
 
 Built with:
-- [jsPDF](https://github.com/parallax/jsPDF) for PDF generation
-- [Puppeteer](https://github.com/puppeteer/puppeteer) for HTML rendering
+- [Electron](https://www.electronjs.org/) for the desktop app
+- [React](https://react.dev/) for the UI
+- [Vite](https://vitejs.dev/) for fast builds
+- [Express.js](https://expressjs.com/) for the print server
 - [pdf-to-printer](https://github.com/npm2s/pdf-to-printer) for Windows printing
-- [Express.js](https://expressjs.com/) for the web server
+- [jsPDF](https://github.com/parallax/jsPDF) for the bookmarklet
 
 ## License
 
