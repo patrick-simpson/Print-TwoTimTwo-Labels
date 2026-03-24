@@ -128,6 +128,11 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
 
     Write-Host "Extracting..." -ForegroundColor Gray
     try {
+        # Clean up any partial extraction from a previous failed attempt
+        Get-ChildItem -Path $installDir -Directory |
+            Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } |
+            ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+
         # Use .NET ZipFile directly — avoids a Windows PowerShell 5.1 bug where
         # Expand-Archive fails on zip entries with hidden directories (e.g. .github)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
