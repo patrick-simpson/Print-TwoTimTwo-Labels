@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 const DEFAULT_URL = 'https://kvbchurch.twotimtwo.com/clubber/checkin?#';
 
 export default function SetupWizard({ onSaved }) {
-  const [printers, setPrinters]       = useState([]);
+  const [printers, setPrinters]       = useState(null);  // null = still loading
   const [printerName, setPrinterName] = useState('');
   const [checkinUrl, setCheckinUrl]   = useState(DEFAULT_URL);
   const [saving, setSaving]           = useState(false);
@@ -16,7 +16,7 @@ export default function SetupWizard({ onSaved }) {
         const first = typeof list[0] === 'string' ? list[0] : list[0].name;
         setPrinterName(first);
       }
-    });
+    }).catch(() => setPrinters([]));
     // Pre-fill URL from any existing (partial) config
     window.awana.getConfig().then(cfg => {
       if (cfg?.checkinUrl) setCheckinUrl(cfg.checkinUrl);
@@ -56,9 +56,9 @@ export default function SetupWizard({ onSaved }) {
 
         {/* Printer */}
         <label style={s.label}>Label Printer</label>
-        {printers.length === 0 ? (
+        {printers === null ? (
           <p style={s.loading}>Detecting printers…</p>
-        ) : (
+        ) : printers.length > 0 ? (
           <select
             value={printerName}
             onChange={e => setPrinterName(e.target.value)}
@@ -69,6 +69,14 @@ export default function SetupWizard({ onSaved }) {
               return <option key={i} value={name}>{name}</option>;
             })}
           </select>
+        ) : (
+          <input
+            value={printerName}
+            onChange={e => setPrinterName(e.target.value)}
+            style={s.input}
+            placeholder="Enter printer name exactly as it appears in Windows"
+            spellCheck={false}
+          />
         )}
         <p style={s.hint}>Choose your label printer (e.g. DYMO LabelWriter, Brother QL)</p>
 
@@ -87,8 +95,8 @@ export default function SetupWizard({ onSaved }) {
 
         <button
           onClick={handleSave}
-          disabled={saving || printers.length === 0}
-          style={saving || printers.length === 0 ? { ...s.btn, ...s.btnDisabled } : s.btn}
+          disabled={saving || printers === null}
+          style={saving || printers === null ? { ...s.btn, ...s.btnDisabled } : s.btn}
         >
           {saving ? 'Starting server…' : 'Save & Start'}
         </button>

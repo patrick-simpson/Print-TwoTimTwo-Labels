@@ -133,8 +133,9 @@ function startServer(config) {
 
 ipcMain.handle('get-printers', async () => {
   try {
-    const { getPrinters } = require('pdf-to-printer');
-    return await getPrinters();
+    // Use Electron's built-in printer enumeration — no subprocess, always works
+    const printers = await pdfWindow.webContents.getPrintersAsync();
+    return printers.map(p => ({ name: p.name, isDefault: p.isDefault }));
   } catch {
     return [];
   }
