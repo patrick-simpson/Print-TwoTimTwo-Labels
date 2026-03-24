@@ -350,6 +350,27 @@ Write-Host "Leave this window open during check-in." -ForegroundColor Gray
 Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Gray
 Write-Host ""
 
+# --- Kill any existing process on port 3456 ---
+Write-Host "Checking for existing server on port 3456..." -ForegroundColor Gray
+try {
+    $conns = @(Get-NetTCPConnection -LocalPort 3456 -ErrorAction SilentlyContinue)
+    if ($conns.Count -gt 0) {
+        foreach ($conn in $conns) {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Host "  Found: $($proc.Name) (PID $($proc.Id)). Stopping..." -ForegroundColor Yellow
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Start-Sleep -Milliseconds 500  # Brief pause to ensure port is released
+        Write-Host "  ✓ Old server stopped." -ForegroundColor Green
+    } else {
+        Write-Host "  ✓ Port is free." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  ⚠ Could not check port (non-critical): $_" -ForegroundColor Yellow
+}
+
 $env:PRINTER_NAME = $cfg.printerName
 Set-Location $printServerPath
 node server.js
