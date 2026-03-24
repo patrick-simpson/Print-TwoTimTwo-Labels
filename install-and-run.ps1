@@ -1,10 +1,14 @@
 # Awana Label Print Server — All-in-One Installer
+# Version : 1.2.0
+# Updated : 2026-03-24
+#
 # This script:
-#   1. Installs Node.js LTS if needed
-#   2. Downloads the Print-TwoTimTwo-Labels project
-#   3. Installs npm packages (~300 MB, first time only)
-#   4. Asks for printer + check-in URL
-#   5. Starts the server and opens Edge
+#   1. Upgrades PowerShell to v7+ if needed
+#   2. Installs Node.js LTS if needed
+#   3. Downloads the Print-TwoTimTwo-Labels project
+#   4. Installs npm packages (~300 MB, first time only)
+#   5. Asks for printer + check-in URL
+#   6. Starts the server and opens Edge
 
 param(
     [string]$PrinterName,
@@ -14,13 +18,63 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ScriptVersion = "1.2.0"
+$ScriptDate    = "2026-03-24"
 
 Write-Host ""
 Write-Host "==============================" -ForegroundColor Cyan
 Write-Host "  Awana Label Print Server" -ForegroundColor Cyan
 Write-Host "  All-in-One Installer" -ForegroundColor Cyan
+Write-Host "  v$ScriptVersion  ($ScriptDate)" -ForegroundColor Cyan
 Write-Host "==============================" -ForegroundColor Cyan
 Write-Host ""
+
+# --- 0. Check PowerShell version ---
+Write-Host "Checking PowerShell version..." -ForegroundColor Gray
+$psVer = $PSVersionTable.PSVersion
+if ($psVer.Major -lt 7) {
+    Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) detected. Upgrading to PowerShell 7..." -ForegroundColor Yellow
+    Write-Host ""
+
+    $upgraded = $false
+
+    # Try winget first (built into Windows 10 1709+ and Windows 11)
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "  Installing via winget..." -ForegroundColor Gray
+        try {
+            winget install --id Microsoft.PowerShell --source winget --silent `
+                --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) { $upgraded = $true }
+        } catch {}
+    }
+
+    # Fallback: download MSI directly
+    if (-not $upgraded) {
+        Write-Host "  winget unavailable. Downloading PowerShell 7 MSI..." -ForegroundColor Gray
+        $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
+        $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
+            Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
+            $upgraded = $true
+        } catch {
+            Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
+            Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
+        }
+    }
+
+    if ($upgraded) {
+        Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
+        Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
+        Read-Host "  Press Enter to exit"
+        exit 0
+    }
+} else {
+    Write-Host "✓ PowerShell $($psVer.Major).$($psVer.Minor) found." -ForegroundColor Green
+}
 
 # --- 1. Check for Node.js and install if needed ---
 Write-Host "Checking for Node.js..." -ForegroundColor Gray
