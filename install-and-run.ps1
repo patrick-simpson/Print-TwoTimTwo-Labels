@@ -1,7 +1,6 @@
 # Awana Label Print Server — All-in-One Installer
-# Version    : 1.2.0
-# Updated    : 2026-03-24 14:32:45
-# Created    : 2026-03-24 14:32:45
+# Version    : 1.2.1
+# Updated    : 2026-03-24 14:45:00
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
@@ -19,8 +18,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.2.0"
-$ScriptTimestamp = "2026-03-24 14:32:45"
+$ScriptVersion = "1.2.1"
 
 # Set window properties
 $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
@@ -28,7 +26,7 @@ $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
 Write-Host ""
 Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host "  Awana Label Print Server — All-in-One Installer" -ForegroundColor Cyan
-Write-Host "  Version $ScriptVersion  |  $ScriptTimestamp" -ForegroundColor Cyan
+Write-Host "  Version $ScriptVersion" -ForegroundColor Cyan
 Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -177,9 +175,10 @@ $versionFile = Join-Path $installDir ".script-version"
 
 if (Test-Path $versionFile) {
     try {
-        $installedTimestamp = Get-Content $versionFile -Raw | ForEach-Object { $_.Trim() }
-        if ($installedTimestamp -lt $ScriptTimestamp) {
-            Write-Host "Newer script detected. Updating installation..." -ForegroundColor Cyan
+        $installedVersion = Get-Content $versionFile -Raw | ForEach-Object { $_.Trim() }
+        # Compare versions: if installed version is different from current script version
+        if ($installedVersion -ne $ScriptVersion) {
+            Write-Host "Updating to script version $ScriptVersion..." -ForegroundColor Cyan
             if (Test-Path $projectPath) {
                 Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
                 Write-Host "  Old installation removed." -ForegroundColor Gray
@@ -414,7 +413,7 @@ try {
 
 # Save the script version for future updates
 try {
-    Set-Content -Path $versionFile -Value $ScriptTimestamp -Force -ErrorAction SilentlyContinue
+    Set-Content -Path $versionFile -Value $ScriptVersion -Force -ErrorAction SilentlyContinue
 } catch {
     # Silently ignore version file write errors
 }
