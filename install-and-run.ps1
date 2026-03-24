@@ -1,6 +1,7 @@
 # Awana Label Print Server — All-in-One Installer
-# Version : 1.2.0
-# Updated : 2026-03-24
+# Version    : 1.2.0
+# Updated    : 2026-03-24 14:32:45
+# Created    : 2026-03-24 14:32:45
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
@@ -19,22 +20,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ScriptVersion = "1.2.0"
-$ScriptDate    = "2026-03-24"
+$ScriptTimestamp = "2026-03-24 14:32:45"
 
 # Set window properties
-$Host.UI.RawUI.WindowTitle = "🖨️  Awana Label Print Server Setup"
-[console]::BackgroundColor = "Black"
-[console]::ForegroundColor = "White"
+$Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
 
 Write-Host ""
-Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║                                        ║" -ForegroundColor Cyan
-Write-Host "  ║      🖨️  Awana Label Print Server     ║" -ForegroundColor Cyan
-Write-Host "  ║         All-in-One Installer          ║" -ForegroundColor Cyan
-Write-Host "  ║                                        ║" -ForegroundColor Cyan
-Write-Host "  ║          v$ScriptVersion  ($ScriptDate)              ║" -ForegroundColor Cyan
-Write-Host "  ║                                        ║" -ForegroundColor Cyan
-Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "=================================================================================" -ForegroundColor Cyan
+Write-Host "  Awana Label Print Server — All-in-One Installer" -ForegroundColor Cyan
+Write-Host "  Version $ScriptVersion  |  $ScriptTimestamp" -ForegroundColor Cyan
+Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # --- 0. Check PowerShell version ---
@@ -176,8 +171,26 @@ try {
     exit 1
 }
 
-# --- 3. Download project (if not already present) ---
+# --- 2b. Check if installed version is outdated ---
 $projectPath = Join-Path $installDir "Print-TwoTimTwo-Labels"
+$versionFile = Join-Path $installDir ".script-version"
+
+if (Test-Path $versionFile) {
+    try {
+        $installedTimestamp = Get-Content $versionFile -Raw | ForEach-Object { $_.Trim() }
+        if ($installedTimestamp -lt $ScriptTimestamp) {
+            Write-Host "Newer script detected. Updating installation..." -ForegroundColor Cyan
+            if (Test-Path $projectPath) {
+                Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "  Old installation removed." -ForegroundColor Gray
+            }
+        }
+    } catch {
+        # Silently ignore version file errors
+    }
+}
+
+# --- 3. Download project (if not already present) ---
 $printServerPath = Join-Path $projectPath "print-server"
 
 if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
@@ -355,27 +368,27 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
 
 # --- 6. Start server and open browser ---
 Write-Host ""
-Write-Host "  ╔════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "  ║       ✓ Setup Complete — Ready!       ║" -ForegroundColor Green
-Write-Host "  ╚════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "=================================================================================" -ForegroundColor Green
+Write-Host "  Setup Complete" -ForegroundColor Green
+Write-Host "=================================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  📖 Next steps:" -ForegroundColor White
+Write-Host "Next steps:" -ForegroundColor White
 Write-Host ""
-Write-Host "    1. Open http://localhost:3456 in your browser" -ForegroundColor Gray
-Write-Host "    2. Click 'Create Bookmarklet'" -ForegroundColor Gray
-Write-Host "    3. Drag the button to your bookmark bar" -ForegroundColor Gray
-Write-Host "    4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
+Write-Host "  1. Open http://localhost:3456 in your browser" -ForegroundColor Gray
+Write-Host "  2. Click 'Create Bookmarklet'" -ForegroundColor Gray
+Write-Host "  3. Drag the button to your bookmark bar" -ForegroundColor Gray
+Write-Host "  4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
+Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
 
 Write-Host ""
-Write-Host "  🖨️  Print server running" -ForegroundColor Green
-Write-Host "  📍 http://localhost:3456" -ForegroundColor Cyan
-Write-Host "  🖥️  Printer: $($cfg.printerName)" -ForegroundColor White
+Write-Host "Print server running" -ForegroundColor Green
+Write-Host "  Server: http://localhost:3456" -ForegroundColor Cyan
+Write-Host "  Printer: $($cfg.printerName)" -ForegroundColor White
 Write-Host ""
-Write-Host "  ⚠️  Keep this window open during check-in" -ForegroundColor Yellow
-Write-Host "  ❌ Press Ctrl+C to stop the server" -ForegroundColor Yellow
+Write-Host "Keep this window open during check-in." -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Yellow
 Write-Host ""
 
 # --- Kill any existing process on port 3456 ---
@@ -397,6 +410,13 @@ try {
     }
 } catch {
     Write-Host "  ⚠ Could not check port (non-critical): $_" -ForegroundColor Yellow
+}
+
+# Save the script version for future updates
+try {
+    Set-Content -Path $versionFile -Value $ScriptTimestamp -Force -ErrorAction SilentlyContinue
+} catch {
+    # Silently ignore version file write errors
 }
 
 $env:PRINTER_NAME = $cfg.printerName
