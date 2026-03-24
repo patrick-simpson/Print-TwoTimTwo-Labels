@@ -21,12 +21,20 @@ export const PrintServerInfo: React.FC = () => {
     }
   };
 
-  const downloadScript = () => {
-    const scriptUrl = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1';
-    const a = document.createElement('a');
-    a.href = scriptUrl;
-    a.download = 'install-and-run.ps1';
-    a.click();
+  const [scriptStatus, setScriptStatus] = useState('');
+
+  const copyScriptToClipboard = async () => {
+    try {
+      const scriptUrl = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1';
+      const response = await fetch(scriptUrl);
+      const scriptText = await response.text();
+      await navigator.clipboard.writeText(scriptText);
+      setScriptStatus('✓ Script copied to clipboard!');
+      setTimeout(() => setScriptStatus(''), 3000);
+    } catch (err) {
+      setScriptStatus('✗ Failed to copy. Try manually downloading from GitHub.');
+      setTimeout(() => setScriptStatus(''), 3000);
+    }
   };
 
   const openBookmarklet = () => {
@@ -57,18 +65,23 @@ export const PrintServerInfo: React.FC = () => {
         <li className="flex gap-3">
           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">1</span>
           <div>
-            <p className="font-semibold text-gray-800 mb-3">Download the setup script</p>
+            <p className="font-semibold text-gray-800 mb-3">Get the setup script</p>
             <p className="mb-3">
-              Click the button below to download <code className="bg-gray-100 px-1 rounded">install-and-run.ps1</code>.
-              This is the only file you need — it handles everything automatically.
+              Click the button below to copy the install script to your clipboard.
+              Then paste it into PowerShell to run it.
             </p>
             <button
-              onClick={downloadScript}
+              onClick={copyScriptToClipboard}
               className="flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded shadow transition-colors bg-green-600 hover:bg-green-700 text-white cursor-pointer"
             >
-              <i className="fa fa-download"></i>
-              Download install-and-run.ps1
+              <i className="fa fa-copy"></i>
+              Copy Script to Clipboard
             </button>
+            {scriptStatus && (
+              <p className={`mt-2 text-sm ${scriptStatus.startsWith('✓') ? 'text-green-700' : 'text-red-600'}`}>
+                {scriptStatus}
+              </p>
+            )}
           </div>
         </li>
 
