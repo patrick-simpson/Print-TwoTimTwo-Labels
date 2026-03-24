@@ -196,7 +196,7 @@ function handleNewCheckin(name) {
   generateAndPrintPDF(name, clubName);
 }
 
-function generateAndPrintPDF(name, clubName) {
+async function generateAndPrintPDF(name, clubName) {
   const statusIcon = document.getElementById('twotimtwo-printer-status');
   if (statusIcon) statusIcon.textContent = '⏳';
 
@@ -214,6 +214,27 @@ function generateAndPrintPDF(name, clubName) {
       return;
     }
 
+    // ── Try silent print server first (unless user chose "Print Dialog") ──────
+    if (selectedPrinterId !== 'print_dialog') {
+      try {
+        const res = await fetch('http://localhost:3456/print', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, clubName }),
+          signal: AbortSignal.timeout(5000)
+        });
+        if (res.ok) {
+          if (statusIcon) statusIcon.textContent = '✅';
+          setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, STATUS_ICON_TIMEOUT_MS);
+          return;
+        }
+      } catch {
+        // Server not running — fall through to browser print
+        console.log('[twotimtwo] Print server not available, using browser print fallback.');
+      }
+    }
+
+    // ── Fallback: browser print via hidden iframe ─────────────────────────────
     // Create an invisible iframe to print the label
     let printIframe = document.getElementById('twotimtwo-print-iframe');
     if (!printIframe) {
