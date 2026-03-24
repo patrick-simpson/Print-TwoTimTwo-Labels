@@ -38,7 +38,7 @@ export default function StatusPanel({ config, onReset }) {
       {/* Actions */}
       <div style={s.actions}>
         <button style={s.primaryBtn} onClick={() => window.awana.openCheckinPage(config.checkinUrl)}>
-          Open Check-in Page
+          Open Check-in Window
         </button>
 
         <button
