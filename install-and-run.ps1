@@ -128,7 +128,10 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
 
     Write-Host "Extracting..." -ForegroundColor Gray
     try {
-        Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+        # Use .NET ZipFile directly — avoids a Windows PowerShell 5.1 bug where
+        # Expand-Archive fails on zip entries with hidden directories (e.g. .github)
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $installDir)
     } catch {
         Write-Host "✗ Extraction failed: $_" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
