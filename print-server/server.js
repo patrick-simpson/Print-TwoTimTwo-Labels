@@ -8,6 +8,7 @@ const express = require('express');
 const cors    = require('cors');
 const { print } = require('pdf-to-printer');
 const PDFDocument = require('pdfkit');
+const archiver = require('archiver');
 const http  = require('http');
 const https = require('https');
 const fs    = require('fs');
@@ -210,6 +211,28 @@ app.post('/print', async (req, res) => {
     console.error('[print] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Extension download (serves chrome-extension as .zip) ─────────────────────
+app.get('/extension-download', (req, res) => {
+  const extensionDir = path.join(__dirname, '..', 'chrome-extension');
+
+  if (!fs.existsSync(extensionDir)) {
+    return res.status(404).json({ error: 'Extension folder not found' });
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="awana-print-extension.zip"');
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.on('error', (err) => {
+    console.error('[extension-download] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  });
+
+  archive.pipe(res);
+  archive.directory(extensionDir, 'chrome-extension');
+  archive.finalize();
 });
 
 app.listen(PORT, () => {

@@ -22,11 +22,18 @@ export const PrintServerInfo: React.FC = () => {
   };
 
   const downloadScript = () => {
-    // Trigger download of install-and-run.ps1 from the repo
     const scriptUrl = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1';
     const a = document.createElement('a');
     a.href = scriptUrl;
     a.download = 'install-and-run.ps1';
+    a.click();
+  };
+
+  const downloadExtension = () => {
+    const extensionUrl = 'http://localhost:3456/extension-download';
+    const a = document.createElement('a');
+    a.href = extensionUrl;
+    a.download = 'awana-print-extension.zip';
     a.click();
   };
 
@@ -91,9 +98,38 @@ export const PrintServerInfo: React.FC = () => {
           </div>
         </li>
 
-        {/* Step 3 - Optional Test */}
+        {/* Step 3 - Install Edge Extension */}
         <li className="flex gap-3">
           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">3</span>
+          <div>
+            <p className="font-semibold text-gray-800 mb-3">Install the Edge extension</p>
+            <p className="mb-3 text-gray-600">
+              The extension detects check-ins and triggers silent printing. Download it here:
+            </p>
+            <button
+              onClick={downloadExtension}
+              className="flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded shadow transition-colors bg-blue-600 hover:bg-blue-700 text-white cursor-pointer mb-4"
+            >
+              <i className="fa fa-download"></i>
+              Download Edge Extension (.zip)
+            </button>
+            <p className="mb-3 text-gray-600">Then follow these steps:</p>
+            <ol className="list-decimal list-inside text-gray-600 space-y-2 mb-3">
+              <li>Extract the <code className="bg-gray-100 px-1 rounded text-xs">awana-print-extension.zip</code> file</li>
+              <li>Open Microsoft Edge and go to <code className="bg-gray-100 px-1 rounded text-xs">edge://extensions</code></li>
+              <li>Enable <strong>"Developer mode"</strong> (toggle in top-right corner)</li>
+              <li>Click <strong>"Load unpacked"</strong></li>
+              <li>Select the extracted <code className="bg-gray-100 px-1 rounded text-xs">chrome-extension</code> folder</li>
+            </ol>
+            <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+              <strong>That's it!</strong> The extension is now active. Go to the check-in page and it will automatically detect check-ins and print labels.
+            </p>
+          </div>
+        </li>
+
+        {/* Step 4 - Optional Test */}
+        <li className="flex gap-3">
+          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">4</span>
           <div>
             <p className="font-semibold text-gray-800 mb-2">Test the connection <span className="font-normal text-gray-500">(optional)</span></p>
             <p className="text-gray-600 mb-3">Once the server is running, click below to verify everything is working.</p>
