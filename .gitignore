@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Backup/duplicate files
+*-1.ts
+*-1.js
+*-1.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -6,6 +6,13 @@
 #   4. Asks for printer + check-in URL
 #   5. Starts the server and opens Edge
 
+param(
+    [string]$PrinterName,
+    [string]$CheckinUrl,
+    [string]$InstallPath,
+    [switch]$SkipNodeCheck
+)
+
 $ErrorActionPreference = "Stop"
 
 Write-Host ""
@@ -17,7 +24,9 @@ Write-Host ""
 
 # --- 1. Check for Node.js and install if needed ---
 Write-Host "Checking for Node.js..." -ForegroundColor Gray
-if (Get-Command node -ErrorAction SilentlyContinue) {
+if ($SkipNodeCheck) {
+    Write-Host "⊘ Skipping Node.js check (per -SkipNodeCheck flag)" -ForegroundColor Gray
+} elseif (Get-Command node -ErrorAction SilentlyContinue) {
     $nodeVersion = node --version
     Write-Host "✓ Node.js $nodeVersion found." -ForegroundColor Green
 } else {
@@ -32,25 +41,42 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     Write-Host "Downloading Node.js from $nodeUrl..." -ForegroundColor Gray
     try {
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath
-        Write-Host "✓ Downloaded." -ForegroundColor Green
+        Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath -ErrorAction Stop
+        Write-Host "✓ Downloaded ($('{0:N0}' -f ((Get-Item $installerPath).Length)) bytes)" -ForegroundColor Green
     } catch {
         Write-Host "✗ Download failed: $_" -ForegroundColor Red
         Write-Host "  Please download Node.js LTS manually from https://nodejs.org" -ForegroundColor Yellow
+        Write-Host "  Or run this script with -SkipNodeCheck if you already have Node.js installed" -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
         exit 1
     }
 
     Write-Host "Running Node.js installer..." -ForegroundColor Gray
-    Start-Process -FilePath $installerPath -ArgumentList "/qn" -Wait
+    try {
+        Start-Process -FilePath $installerPath -ArgumentList "/qn" -Wait -ErrorAction Stop
+    } catch {
+        Write-Host "✗ Node.js installation failed: $_" -ForegroundColor Red
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
 
-    # Refresh PATH
+    # Refresh PATH - CRITICAL: must refresh before continuing
+    Write-Host "Refreshing PATH environment..." -ForegroundColor Gray
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
-    if (Get-Command node -ErrorAction SilentlyContinue) {
-        Write-Host "✓ Node.js installed: $(node --version)" -ForegroundColor Green
+    # Verify Node.js is actually available
+    $nodeCheck = $null
+    try {
+        $nodeCheck = Get-Command node -ErrorAction SilentlyContinue
+    } catch {}
+
+    if ($nodeCheck) {
+        $nodeVersion = node --version
+        Write-Host "✓ Node.js installed: $nodeVersion" -ForegroundColor Green
     } else {
-        Write-Host "✗ Node.js installation may have failed. Please try manual installation." -ForegroundColor Red
+        Write-Host "✗ Node.js installation verification failed." -ForegroundColor Red
+        Write-Host "  PATH may not have been refreshed properly." -ForegroundColor Red
+        Write-Host "  Try closing PowerShell and running this script again in a new window." -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
         exit 1
     }
@@ -58,14 +84,25 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 
 # --- 2. Determine install location ---
 Write-Host ""
-$installDir = Join-Path ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ApplicationData)) "Awana-Print"
-Write-Host "Install location: $installDir" -ForegroundColor Gray
-
-if (Test-Path $installDir) {
-    Write-Host "Directory already exists. Updating..." -ForegroundColor Gray
+if ($InstallPath) {
+    $installDir = $InstallPath
+    Write-Host "Using custom install path: $installDir" -ForegroundColor Gray
 } else {
-    Write-Host "Creating directory..." -ForegroundColor Gray
-    New-Item -ItemType Directory -Path $installDir | Out-Null
+    $installDir = Join-Path ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ApplicationData)) "Awana-Print"
+    Write-Host "Install location: $installDir" -ForegroundColor Gray
+}
+
+try {
+    if (Test-Path $installDir) {
+        Write-Host "  Directory already exists. Updating..." -ForegroundColor Gray
+    } else {
+        Write-Host "  Creating directory..." -ForegroundColor Gray
+        New-Item -ItemType Directory -Path $installDir | Out-Null
+    }
+} catch {
+    Write-Host "✗ Failed to create/access install directory: $_" -ForegroundColor Red
+    Read-Host "  Press Enter to exit"
+    exit 1
 }
 
 # --- 3. Download project (if not already present) ---
@@ -90,16 +127,32 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     }
 
     Write-Host "Extracting..." -ForegroundColor Gray
-    Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
-
-    # Move from "Print-TwoTimTwo-Labels-main" to "Print-TwoTimTwo-Labels"
-    $extractedPath = Join-Path $installDir "Print-TwoTimTwo-Labels-main"
-    if (Test-Path $extractedPath) {
-        if (Test-Path $projectPath) { Remove-Item $projectPath -Recurse -Force }
-        Rename-Item -Path $extractedPath -NewName "Print-TwoTimTwo-Labels" | Out-Null
+    try {
+        Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+    } catch {
+        Write-Host "✗ Extraction failed: $_" -ForegroundColor Red
+        Read-Host "  Press Enter to exit"
+        exit 1
     }
 
-    Remove-Item -Path $zipPath -Force
+    # Find the extracted directory (dynamically - don't hardcode)
+    $extractedDir = Get-ChildItem -Path $installDir -Directory | Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } | Select-Object -First 1
+    if (-not $extractedDir) {
+        Write-Host "✗ Could not find extracted project directory" -ForegroundColor Red
+        Write-Host "  Expected 'Print-TwoTimTwo-Labels*' folder in $installDir" -ForegroundColor Red
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
+
+    # Rename if necessary
+    if ($extractedDir.Name -ne "Print-TwoTimTwo-Labels") {
+        $extractedPath = $extractedDir.FullName
+        if (Test-Path $projectPath) { Remove-Item $projectPath -Recurse -Force }
+        Rename-Item -Path $extractedPath -NewName "Print-TwoTimTwo-Labels" | Out-Null
+        Write-Host "  Renamed from '$($extractedDir.Name)'" -ForegroundColor Gray
+    }
+
+    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
     Write-Host "✓ Extracted to $projectPath" -ForegroundColor Green
 }
 
@@ -130,7 +183,7 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
 Write-Host ""
 $configPath = Join-Path $printServerPath "config.json"
 
-# Load existing config if available
+# Load existing config if available, or use command-line parameters
 $cfg = [ordered]@{ printerName = ""; checkinUrl = "https://kvbchurch.twotimtwo.com/clubber/checkin?#" }
 if (Test-Path $configPath) {
     try {
@@ -141,6 +194,10 @@ if (Test-Path $configPath) {
         # Silently ignore parse errors
     }
 }
+
+# Override with command-line parameters if provided
+if ($PrinterName) { $cfg.printerName = $PrinterName }
+if ($CheckinUrl) { $cfg.checkinUrl = $CheckinUrl }
 
 function Configure {
     Write-Host ""
@@ -179,11 +236,14 @@ function Configure {
     Write-Host "✓ Settings saved." -ForegroundColor Green
 }
 
+# If parameters provided and both are set, skip interactive configuration
+$skipInteractive = $PrinterName -and $CheckinUrl
+
 # First time or config missing
-if (-not $cfg.printerName -or -not $cfg.checkinUrl) {
+if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive) {
     Write-Host "First-time configuration needed..." -ForegroundColor Cyan
     Configure
-} else {
+} elseif (-not $skipInteractive) {
     Write-Host "Current settings:" -ForegroundColor White
     Write-Host "  Printer : $($cfg.printerName)" -ForegroundColor White
     Write-Host "  URL     : $($cfg.checkinUrl)" -ForegroundColor White
@@ -202,6 +262,16 @@ if (-not $cfg.printerName -or -not $cfg.checkinUrl) {
     }
     Write-Host ""
     if ($changed) { Configure }
+} else {
+    Write-Host "Configuration provided via parameters (non-interactive mode)" -ForegroundColor Cyan
+    Write-Host "  Printer : $($cfg.printerName)" -ForegroundColor White
+    Write-Host "  URL     : $($cfg.checkinUrl)" -ForegroundColor White
+    Write-Host ""
+
+    # Save config
+    [PSCustomObject]@{ printerName = $cfg.printerName; checkinUrl = $cfg.checkinUrl } |
+        ConvertTo-Json | Set-Content $configPath
+    Write-Host "✓ Settings saved." -ForegroundColor Green
 }
 
 # --- 6. Start server and open browser ---

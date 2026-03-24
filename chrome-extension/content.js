@@ -1,6 +1,12 @@
+// Configuration and constants
+const PRINT_COOLDOWN_MS = 2000;  // Prevent duplicate prints within 2 seconds
+const MUTATION_DEBOUNCE_MS = 100; // Debounce MutationObserver to prevent rapid firing
+const STATUS_ICON_TIMEOUT_MS = 3000; // How long to show status icon (✅, ❌, 🚫)
+
 let selectedPrinterId = 'default_kiosk';
 let autoPrintEnabled = true;
 let lastPrintedName = null;
+let lastPrintTime = 0; // Timestamp of last print attempt
 
 function init() {
   injectPrinterDropdown();
@@ -107,19 +113,27 @@ function injectPrinterDropdown() {
   });
 }
 
+// Helper: Detect if text contains "undo" action (shared logic)
+function isUndoAction(text) {
+  return text && text.toLowerCase().includes('undo');
+}
+
 function observeCheckins() {
-  const observer = new MutationObserver((mutationsList) => {
+  let observerTimeout = null;
+
+  // Debounced callback to prevent rapid-fire mutations from causing multiple prints
+  const handleMutations = () => {
     const lastCheckinDiv = document.querySelector('#lastCheckin div');
     if (lastCheckinDiv) {
       const clone = lastCheckinDiv.cloneNode(true);
       const undoLink = clone.querySelector('a');
       if (undoLink) undoLink.remove();
       const name = clone.innerText.trim();
-      
+
       // Check if "undo" is present in the text (case-insensitive)
-      if (name.toLowerCase().includes('undo')) {
+      if (isUndoAction(name)) {
         console.log('Detected "undo" in check-in text, skipping print.');
-        lastPrintedName = name; // Mark as "seen" so we don't trigger again for this text
+        lastPrintedName = name; // Mark as "seen" so we don't trigger again
         return;
       }
 
@@ -132,14 +146,34 @@ function observeCheckins() {
     } else {
       lastPrintedName = null;
     }
+  };
+
+  const observer = new MutationObserver(() => {
+    // Clear previous timeout and set a new one (debouncing)
+    if (observerTimeout) clearTimeout(observerTimeout);
+    observerTimeout = setTimeout(handleMutations, MUTATION_DEBOUNCE_MS);
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // Only observe the specific container to improve performance
+  const container = document.querySelector('#lastCheckin');
+  if (container) {
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+  } else {
+    // Fallback: observe body if container not yet available
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 }
 
 function handleNewCheckin(name) {
   if (!autoPrintEnabled || selectedPrinterId === 'disabled') {
     console.warn('Auto-print is disabled.');
+    return;
+  }
+
+  // Prevent duplicate prints: check cooldown timer
+  const now = Date.now();
+  if (now - lastPrintTime < PRINT_COOLDOWN_MS) {
+    console.log(`Print cooldown active (${PRINT_COOLDOWN_MS}ms). Ignoring rapid check-in.`);
     return;
   }
 
@@ -157,6 +191,8 @@ function handleNewCheckin(name) {
     }
   }
 
+  // Update lastPrintTime before generating PDF
+  lastPrintTime = now;
   generateAndPrintPDF(name, clubName);
 }
 
@@ -171,12 +207,10 @@ function generateAndPrintPDF(name, clubName) {
     const lastName = nameParts.slice(1).join(' ') || '';
 
     // Final "undo" check - if any part of the label contains "undo", skip it
-    if (firstName.toLowerCase().includes('undo') || 
-        lastName.toLowerCase().includes('undo') || 
-        clubName.toLowerCase().includes('undo')) {
+    if (isUndoAction(firstName) || isUndoAction(lastName) || isUndoAction(clubName)) {
       console.log('Skipping print because "undo" was found in content.');
       if (statusIcon) statusIcon.textContent = '🚫';
-      setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+      setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, STATUS_ICON_TIMEOUT_MS);
       return;
     }
 
@@ -264,16 +298,18 @@ function generateAndPrintPDF(name, clubName) {
     printDoc.close();
 
     // Trigger print from the parent window context for better kiosk mode support
+    // Use 500ms delay to ensure iframe document is fully ready
     setTimeout(() => {
       try {
         printIframe.contentWindow.focus();
         printIframe.contentWindow.print();
-        
+
         if (statusIcon) statusIcon.textContent = '✅';
-        setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, 3000);
+        setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, STATUS_ICON_TIMEOUT_MS);
       } catch (err) {
         if (statusIcon) statusIcon.textContent = '❌';
         console.error('Print execution failed:', err);
+        setTimeout(() => { if (statusIcon) statusIcon.textContent = ''; }, STATUS_ICON_TIMEOUT_MS);
       }
     }, 500);
 
