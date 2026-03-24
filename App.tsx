@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ClubberList } from './components/ClubberList';
 import { mockClubbers } from './data';
 import { Clubber } from './types';
-import { ExtensionInfo } from './components/ExtensionInfo';
+import { PrintServerInfo } from './components/PrintServerInfo';
 import { CheckinModal } from './components/CheckinModal';
 
 const App: React.FC = () => {
@@ -48,8 +48,8 @@ const App: React.FC = () => {
 
       <div className="container mx-auto px-4 mt-6">
         
-        {/* Extension Info Section */}
-        <ExtensionInfo />
+        {/* Print Server Setup Section */}
+        <PrintServerInfo />
 
         <div className="border-t-2 border-dashed border-gray-300 my-8"></div>
 
@@ -60,11 +60,11 @@ const App: React.FC = () => {
                 2. Test It Here
             </h2>
             <p className="text-sm text-yellow-700">
-                This section simulates your actual Kids Club Check-in page. 
+                This section simulates your actual Kids Club Check-in page.
                 <br />
-                <strong>Step A:</strong> Ensure the extension is installed and a printer is selected in the top right.
+                <strong>Step A:</strong> Make sure <code className="bg-yellow-100 px-1 rounded">install-and-run.ps1</code> is running (leave that PowerShell window open).
                 <br />
-                <strong>Step B:</strong> Click a child below to "Check In". The label should automatically print.
+                <strong>Step B:</strong> Click a child below to "Check In". The label should automatically print silently.
             </p>
         </div>
 
