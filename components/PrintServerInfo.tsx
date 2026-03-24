@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { HEALTH_CHECK_ENDPOINT, HEALTH_CHECK_TIMEOUT } from '../src/constants';
 
 type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error';
 
@@ -10,7 +11,7 @@ export const PrintServerInfo: React.FC = () => {
     setConnStatus('checking');
     setConnDetail('');
     try {
-      const res  = await fetch('http://localhost:3456/health', { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(HEALTH_CHECK_ENDPOINT, { signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT) });
       const data = await res.json();
       setConnStatus('connected');
       setConnDetail(`Printer: ${data.printer}`);
