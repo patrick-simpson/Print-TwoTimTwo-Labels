@@ -91,23 +91,17 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {lastCheckin && !isLoading && (
-            <div id="lastCheckin" className="mb-4 bg-gray-200 p-2 rounded flex items-center gap-2">
-                <span className="text-gray-700">Last checked in:</span>
-                {/* This internal DIV structure matches the provided HTML exactly for the selector '#lastCheckin div' */}
-                <div className="bg-yellow-100 border border-yellow-200 px-3 py-1 font-bold text-green-900 rounded">
-                    {lastCheckin.name} 
-                    <a href="#" onClick={handleUndo} className="ml-3 text-xs font-normal text-blue-600 hover:underline bg-white px-2 py-0.5 border rounded">
-                        undo
-                    </a>
-                </div>
+        {/* Always keep this node in the DOM so the MutationObserver in the extension stays attached */}
+        <div id="lastCheckin" className={lastCheckin && !isLoading ? "mb-4 bg-gray-200 p-2 rounded flex items-center gap-2" : ""} style={!lastCheckin || isLoading ? {display: 'none'} : {}}>
+            <span className="text-gray-700">Last checked in:</span>
+            {/* This internal DIV structure matches the provided HTML exactly for the selector '#lastCheckin div' */}
+            <div className="bg-yellow-100 border border-yellow-200 px-3 py-1 font-bold text-green-900 rounded">
+                {lastCheckin?.name}
+                <a href="#" onClick={handleUndo} className="ml-3 text-xs font-normal text-blue-600 hover:underline bg-white px-2 py-0.5 border rounded">
+                    undo
+                </a>
             </div>
-        )}
-        
-        {/* Empty placeholder if nothing checked in, to ensure ID exists but is empty (mimicking initial state if needed, though usually hidden) */}
-        {!lastCheckin && !isLoading && (
-            <div id="lastCheckin" style={{display: 'none'}}><div></div></div>
-        )}
+        </div>
 
         {/* Filter Box Simulation */}
         <div className="bg-green-100 border border-green-200 p-3 rounded mb-4 flex items-center gap-4">
