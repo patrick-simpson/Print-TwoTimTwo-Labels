@@ -1,158 +1,219 @@
+// Awana Label Print Server
+// Started by install-and-run.ps1 — listens on http://localhost:3456
+// Accepts POST /print and silently prints a 4×2 in label via pdf-to-printer.
+
+'use strict';
+
 const express = require('express');
-const cors = require('cors');
-const puppeteer = require('puppeteer');
-const { print, getPrinters } = require('pdf-to-printer');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const cors    = require('cors');
+const { print } = require('pdf-to-printer');
+const PDFDocument = require('pdfkit');
+const http  = require('http');
+const https = require('https');
+const fs    = require('fs');
+const path  = require('path');
+const os    = require('os');
 
-const PORT = 3456;
+const PORT         = 3456;
+const PRINTER_NAME = process.env.PRINTER_NAME || '';
 
-// Load printer name: env var takes priority, then config.json
-let printerName = process.env.PRINTER_NAME || '';
-const configPath = path.join(__dirname, 'config.json');
-try {
-  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  if (!printerName && cfg.printerName) printerName = cfg.printerName;
-} catch {}
+// ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
+const PAGE_W  = 4 * 72;  // 288 pt
+const PAGE_H  = 2 * 72;  // 144 pt
+const INSET   = 6;        // badge margin from page edge
+const BX = INSET, BY = INSET;
+const BW = PAGE_W - INSET * 2;   // badge width  (276 pt)
+const BH = PAGE_H - INSET * 2;   // badge height (132 pt)
+const CORNER = 12;
 
-if (!printerName) {
-  console.error('ERROR: No printer configured.');
-  console.error('  Set the PRINTER_NAME environment variable, or run install-and-run.ps1 to configure.');
-  process.exit(1);
+// Columns (when icon is present)
+const ICON_COL_W  = 84;                // left icon zone width
+const DIVIDER_X   = BX + ICON_COL_W;
+const TEXT_X      = DIVIDER_X + 8;    // right text zone start
+const TEXT_W      = BX + BW - TEXT_X; // right text zone width
+
+// ── Download a remote image into a Buffer ─────────────────────────────────────
+function downloadImage(url) {
+  return new Promise((resolve, reject) => {
+    const proto = url.startsWith('https') ? https : http;
+    const req = proto.get(url, { timeout: 4000 }, (res) => {
+      if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
 }
 
+// ── Resolve clubImageData → Buffer (or null) ──────────────────────────────────
+async function resolveImageBuffer(clubImageData) {
+  if (!clubImageData) return null;
+  try {
+    if (clubImageData.startsWith('data:')) {
+      // base64 data URL
+      const b64 = clubImageData.replace(/^data:[^;]+;base64,/, '');
+      return Buffer.from(b64, 'base64');
+    }
+    if (/^https?:\/\//.test(clubImageData)) {
+      return await downloadImage(clubImageData);
+    }
+  } catch (e) {
+    console.log(`[icon] Could not load club image: ${e.message}`);
+  }
+  return null;
+}
+
+// ── Auto-size a font to fit within maxWidth ───────────────────────────────────
+function fitFontSize(doc, text, fontName, maxWidth, maxSize = 44, minSize = 18) {
+  doc.font(fontName);
+  for (let size = maxSize; size >= minSize; size -= 2) {
+    doc.fontSize(size);
+    if (doc.widthOfString(text) <= maxWidth) return size;
+  }
+  return minSize;
+}
+
+// ── Generate the label PDF ────────────────────────────────────────────────────
+async function generateLabel(firstName, lastName, clubName, clubImageBuffer) {
+  const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
+  const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
+  const out  = fs.createWriteStream(pdfPath);
+
+  doc.pipe(out);
+
+  const hasIcon = !!clubImageBuffer;
+  const textX   = hasIcon ? TEXT_X : BX + 8;
+  const textW   = hasIcon ? TEXT_W : BW - 16;
+
+  // ── Badge border ────────────────────────────────────────────────────────────
+  doc.roundedRect(BX, BY, BW, BH, CORNER)
+     .lineWidth(1.5).strokeColor('#000000').stroke();
+
+  // ── Left icon panel ─────────────────────────────────────────────────────────
+  if (hasIcon) {
+    // Soft gray background for the icon zone (clip to badge shape)
+    doc.save();
+    doc.roundedRect(BX, BY, BW, BH, CORNER).clip();
+    doc.rect(BX, BY, ICON_COL_W, BH).fillColor('#f4f4f4').fill();
+    doc.restore();
+
+    // Subtle vertical divider
+    doc.moveTo(DIVIDER_X, BY + 12)
+       .lineTo(DIVIDER_X, BY + BH - 12)
+       .lineWidth(0.5).strokeColor('#d0d0d0').stroke();
+
+    // Club icon image (56×56 pt, centred in the icon zone)
+    const iconSize = 56;
+    const iconX = BX + (ICON_COL_W - iconSize) / 2;
+    const iconY = BY + (BH - iconSize) / 2;
+    try {
+      doc.image(clubImageBuffer, iconX, iconY, { width: iconSize, height: iconSize, fit: [iconSize, iconSize], align: 'center', valign: 'center' });
+    } catch {
+      // Image decode failed — draw a placeholder circle
+      doc.circle(BX + ICON_COL_W / 2, BY + BH / 2, 20)
+         .lineWidth(1).strokeColor('#aaa').stroke();
+    }
+  }
+
+  // ── Text area ───────────────────────────────────────────────────────────────
+  const hasLast = lastName.trim().length > 0;
+  const hasClub = clubName.trim().length > 0;
+
+  // Measure the total block height so we can centre it vertically
+  const fs1 = fitFontSize(doc, firstName, 'Helvetica-Bold', textW);
+  const fs2 = 20;
+  const fs3 = 12;
+  const GAP = 4;
+  const SEP = 9;  // gap(4) + line(1) + gap(4)
+
+  let blockH = fs1;
+  if (hasLast) blockH += GAP + fs2;
+  if (hasClub) blockH += SEP + fs3;
+
+  const centerY = BY + BH / 2;
+  let y = centerY - blockH / 2;
+
+  // First name
+  doc.font('Helvetica-Bold').fontSize(fs1).fillColor('#000000');
+  doc.text(firstName, textX, y, { width: textW, align: 'center', lineBreak: false });
+  y += fs1;
+
+  // Last name
+  if (hasLast) {
+    y += GAP;
+    doc.font('Helvetica').fontSize(fs2).fillColor('#222222');
+    doc.text(lastName, textX, y, { width: textW, align: 'center', lineBreak: false });
+    y += fs2;
+  }
+
+  // Club name with separator
+  if (hasClub) {
+    y += 4;
+    const sepMargin = textW * 0.1;
+    doc.moveTo(textX + sepMargin, y + 0.5)
+       .lineTo(textX + textW - sepMargin, y + 0.5)
+       .lineWidth(0.5).strokeColor('#cccccc').stroke();
+    y += 5;
+    doc.font('Helvetica-Oblique').fontSize(fs3).fillColor('#444444');
+    doc.text(clubName, textX, y, { width: textW, align: 'center', lineBreak: false });
+  }
+
+  doc.end();
+  return new Promise((resolve, reject) => {
+    out.on('finish', () => resolve(pdfPath));
+    out.on('error', reject);
+  });
+}
+
+// ── Express server ────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());
-app.use(express.json());
-
-// Launch puppeteer browser once at startup and reuse across requests
-let browser = null;
-async function getBrowser() {
-  if (!browser || !browser.connected) {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-  }
-  return browser;
-}
+app.use(express.json({ limit: '2mb' }));  // allow base64 image payloads
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', printer: printerName });
-});
-
-app.get('/printers', async (req, res) => {
-  try {
-    const printers = await getPrinters();
-    res.json(printers);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json({ status: 'ok', printer: PRINTER_NAME || '(default)' });
 });
 
 app.post('/print', async (req, res) => {
-  const { name, firstName: reqFirst, lastName: reqLast, clubName = '' } = req.body || {};
+  const {
+    name,
+    firstName: reqFirst,
+    lastName:  reqLast,
+    clubName   = '',
+    clubImageData = null
+  } = req.body || {};
 
   let firstName, lastName;
   if (reqFirst !== undefined) {
-    firstName = reqFirst || '';
-    lastName = reqLast || '';
+    firstName = String(reqFirst || '').trim();
+    lastName  = String(reqLast  || '').trim();
   } else if (name) {
     const parts = String(name).trim().split(/\s+/);
     firstName = parts[0] || '';
-    lastName = parts.slice(1).join(' ') || '';
+    lastName  = parts.slice(1).join(' ') || '';
   } else {
-    return res.status(400).json({ error: 'name or firstName required' });
+    return res.status(400).json({ error: 'name or firstName is required' });
   }
 
-  console.log(`POST /print — ${firstName} ${lastName} (${clubName || 'no club'})`);
+  console.log(`[print] ${firstName} ${lastName} | ${clubName || '—'} | printer: ${PRINTER_NAME || 'default'}`);
 
   try {
-    const pdfPath = await generateLabel(firstName, lastName, clubName);
-    await print(pdfPath, { printer: printerName });
+    const clubImageBuffer = await resolveImageBuffer(clubImageData);
+    const pdfPath = await generateLabel(firstName, lastName, clubName, clubImageBuffer);
+    const opts = PRINTER_NAME ? { printer: PRINTER_NAME } : {};
+    await print(pdfPath, opts);
     fs.unlink(pdfPath, () => {});
     res.json({ success: true });
   } catch (err) {
-    console.error('Print error:', err);
+    console.error('[print] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-async function generateLabel(firstName, lastName, clubName) {
-  const html = `<!DOCTYPE html>
-<html>
-  <head>
-    <style>
-      @page { size: 4in 2in; margin: 0; }
-      body {
-        margin: 0; padding: 0;
-        width: 4in; height: 2in;
-        display: flex; align-items: center; justify-content: center;
-        font-family: Helvetica, Arial, sans-serif;
-        overflow: hidden;
-      }
-      .badge {
-        width: 3.8in; height: 1.8in;
-        border: 2px solid black; border-radius: 15px;
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        text-align: center; box-sizing: border-box; padding: 5px;
-      }
-      .first-name { font-size: 48pt; font-weight: bold; line-height: 1.1; word-break: break-word; max-width: 100%; }
-      .last-name  { font-size: 22pt; margin-top: 2pt; }
-      .club-name  { font-size: 14pt; font-style: italic; margin-top: 8pt; border-top: 1px solid #ccc; padding-top: 4pt; width: 70%; }
-    </style>
-  </head>
-  <body>
-    <div class="badge">
-      <div class="first-name">${escapeHtml(firstName)}</div>
-      ${lastName ? `<div class="last-name">${escapeHtml(lastName)}</div>` : ''}
-      ${clubName ? `<div class="club-name">${escapeHtml(clubName)}</div>` : ''}
-    </div>
-  </body>
-</html>`;
-
-  const b = await getBrowser();
-  const page = await b.newPage();
-  try {
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    const pdfPath = path.join(os.tmpdir(), `label-${Date.now()}.pdf`);
-    await page.pdf({
-      path: pdfPath,
-      width: '4in',
-      height: '2in',
-      printBackground: true,
-      margin: { top: '0', bottom: '0', left: '0', right: '0' }
-    });
-    return pdfPath;
-  } finally {
-    await page.close();
-  }
-}
-
-// Warm up the browser on startup so the first print isn't slow
-getBrowser()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Print server running at http://localhost:${PORT}`);
-      console.log(`Printer: ${printerName}`);
-    });
-  })
-  .catch(err => {
-    console.error('Failed to launch browser:', err);
-    process.exit(1);
-  });
-
-process.on('SIGINT', async () => {
-  if (browser) await browser.close();
-  process.exit(0);
+app.listen(PORT, () => {
+  console.log(`\n  Awana Print Server  •  http://localhost:${PORT}`);
+  console.log(`  Printer : ${PRINTER_NAME || '(system default)'}`);
+  console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
 });
