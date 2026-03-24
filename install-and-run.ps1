@@ -33,44 +33,53 @@ Write-Host ""
 Write-Host "Checking PowerShell version..." -ForegroundColor Gray
 $psVer = $PSVersionTable.PSVersion
 if ($psVer.Major -lt 7) {
-    Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) detected. Upgrading to PowerShell 7..." -ForegroundColor Yellow
-    Write-Host ""
+    # Check if PS7 is already installed
+    $ps7Installed = (Get-Command pwsh -ErrorAction SilentlyContinue) -or `
+                    (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe")
 
-    $upgraded = $false
-
-    # Try winget first (built into Windows 10 1709+ and Windows 11)
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host "  Installing via winget..." -ForegroundColor Gray
-        try {
-            winget install --id Microsoft.PowerShell --source winget --silent `
-                --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -eq 0) { $upgraded = $true }
-        } catch {}
-    }
-
-    # Fallback: download MSI directly
-    if (-not $upgraded) {
-        Write-Host "  winget unavailable. Downloading PowerShell 7 MSI..." -ForegroundColor Gray
-        $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
-        $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
-        try {
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
-            Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
-            $upgraded = $true
-        } catch {
-            Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
-            Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
-        }
-    }
-
-    if ($upgraded) {
-        Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+    if ($ps7Installed) {
+        Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) running, but PowerShell 7 is installed." -ForegroundColor Green
+        Write-Host "  Continuing with current session..." -ForegroundColor Gray
+    } else {
+        Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) detected. Installing PowerShell 7..." -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
-        Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
-        Read-Host "  Press Enter to exit"
-        exit 0
+
+        $upgraded = $false
+
+        # Try winget first (built into Windows 10 1709+ and Windows 11)
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Installing via winget..." -ForegroundColor Gray
+            try {
+                winget install --id Microsoft.PowerShell --source winget --silent `
+                    --accept-package-agreements --accept-source-agreements
+                if ($LASTEXITCODE -eq 0) { $upgraded = $true }
+            } catch {}
+        }
+
+        # Fallback: download MSI directly
+        if (-not $upgraded) {
+            Write-Host "  winget unavailable. Downloading PowerShell 7 MSI..." -ForegroundColor Gray
+            $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
+            $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
+            try {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
+                Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
+                $upgraded = $true
+            } catch {
+                Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
+                Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
+            }
+        }
+
+        if ($upgraded) {
+            Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
+            Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
+            Read-Host "  Press Enter to exit"
+            exit 0
+        }
     }
 } else {
     Write-Host "✓ PowerShell $($psVer.Major).$($psVer.Minor) found." -ForegroundColor Green
