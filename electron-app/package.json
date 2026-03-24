@@ -41,6 +41,9 @@
       "src/**",
       "dist/**",
       "build/icon.png"
+    ],
+    "asarUnpack": [
+      "node_modules/pdf-to-printer/**/*"
     ]
   }
 }
