@@ -1,6 +1,6 @@
 # Awana Label Print Server — All-in-One Installer
-# Version    : 1.3.0
-# Updated    : 2026-03-26 12:00:00
+# Version    : 1.4.0
+# Updated    : 2026-03-26 13:00:00
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.3.0"
+$ScriptVersion = "1.4.0"
 
 # Set window properties
 $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
