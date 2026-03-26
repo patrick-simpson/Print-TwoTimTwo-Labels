@@ -219,28 +219,42 @@ try {
 $projectPath = Join-Path $installDir "Print-TwoTimTwo-Labels"
 $versionFile = Join-Path $installDir ".script-version"
 
-if (Test-Path $versionFile) {
+# Determine whether a fresh download is needed.
+# Three cases require an update:
+#   1. No version file but project folder exists  = pre-versioning install, refresh it
+#   2. Version file exists but differs from current script version
+#   3. Version file is unreadable (corrupt) = force refresh to be safe
+$needsUpdate = $false
+if (-not (Test-Path $versionFile)) {
+    if (Test-Path $projectPath) {
+        Write-Host "No version file found in existing install — refreshing to v$ScriptVersion..." -ForegroundColor Cyan
+        $needsUpdate = $true
+    }
+    # If neither file nor project exists this is a clean first install;
+    # Step 3 will handle the download without any delete needed.
+} else {
     try {
         $installedVersion = Get-Content $versionFile -Raw | ForEach-Object { $_.Trim() }
-        # Compare versions: if installed version is different from current script version
         if ($installedVersion -ne $ScriptVersion) {
-            Write-Host "Updating to script version $ScriptVersion..." -ForegroundColor Cyan
-            if (Test-Path $projectPath) {
-                # Back up clubbers.csv before deleting the project so user data survives the update
-                $csvBackupPath   = Join-Path $installDir "clubbers-backup.csv"
-                $existingCsvPath = Join-Path $projectPath "print-server\clubbers.csv"
-                if (Test-Path $existingCsvPath) {
-                    Copy-Item $existingCsvPath $csvBackupPath -Force
-                    Write-Host "  Backed up clubbers.csv (will restore after update)." -ForegroundColor Gray
-                }
-
-                Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
-                Write-Host "  Old installation removed." -ForegroundColor Gray
-            }
+            Write-Host "Updating from v$installedVersion to v$ScriptVersion..." -ForegroundColor Cyan
+            $needsUpdate = $true
         }
     } catch {
-        # Silently ignore version file errors
+        Write-Host "  Could not read version file — refreshing install to be safe..." -ForegroundColor Yellow
+        $needsUpdate = $true
     }
+}
+
+if ($needsUpdate -and (Test-Path $projectPath)) {
+    # Back up clubbers.csv before deleting the project so user data survives the update
+    $csvBackupPath   = Join-Path $installDir "clubbers-backup.csv"
+    $existingCsvPath = Join-Path $projectPath "print-server\clubbers.csv"
+    if (Test-Path $existingCsvPath) {
+        Copy-Item $existingCsvPath $csvBackupPath -Force
+        Write-Host "  Backed up clubbers.csv (will restore after update)." -ForegroundColor Gray
+    }
+    Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  Old installation removed." -ForegroundColor Gray
 }
 
 # --- 3. Download project (if not already present) ---
