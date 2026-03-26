@@ -3,6 +3,9 @@
  * Central location for all magic numbers and configuration values
  */
 
+// Print server version — bump this whenever server.js changes are deployed
+export const SERVER_VERSION = '1.1.0';
+
 // Server & Network Configuration
 export const SERVER_PORT = 3456;
 export const SERVER_URL = `http://localhost:${SERVER_PORT}`;

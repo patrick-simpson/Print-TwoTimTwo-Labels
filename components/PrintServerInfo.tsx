@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HEALTH_CHECK_ENDPOINT, HEALTH_CHECK_TIMEOUT } from '../src/constants';
+import { HEALTH_CHECK_ENDPOINT, HEALTH_CHECK_TIMEOUT, SERVER_VERSION } from '../src/constants';
 
 type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error';
 
@@ -43,9 +43,12 @@ export const PrintServerInfo: React.FC = () => {
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-purple-600">
-      <h2 className="text-xl font-bold text-gray-800 mb-1 flex items-center">
+      <h2 className="text-xl font-bold text-gray-800 mb-1 flex items-center flex-wrap gap-2">
         <i className="fa fa-server mr-2 text-purple-600"></i>
         Silent Print Server
+        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono font-normal">
+          v{SERVER_VERSION}
+        </span>
       </h2>
       <p className="text-sm text-gray-500 mb-4">
         By default the bookmarklet opens a print dialog. Use this automatic setup to print silently
@@ -152,6 +155,113 @@ export const PrintServerInfo: React.FC = () => {
 
       </ol>
 
+      {/* ── Optional: CSV enrichment ──────────────────────────────────────── */}
+      <div className="mt-8 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-bold text-gray-700 mb-1 flex items-center gap-2">
+          <i className="fa fa-table text-purple-500"></i>
+          Optional: Enhanced Labels with <code className="font-mono text-purple-700 bg-purple-50 px-1 rounded">clubbers.csv</code>
+        </h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Drop a <code className="bg-gray-100 px-1 rounded text-xs">clubbers.csv</code> file into the same folder as{' '}
+          <code className="bg-gray-100 px-1 rounded text-xs">install-and-run.ps1</code> to unlock four extra features
+          on every printed label.
+        </p>
+
+        {/* Feature tiles */}
+        <div className="grid grid-cols-2 gap-2 mb-5 text-xs">
+          <div className="bg-red-50 border border-red-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-exclamation-triangle text-red-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-red-700 block mb-0.5">Allergy strip</strong>
+              <span className="text-gray-600">Red bar at bottom of label — NUTS, DAIRY, GLUTEN, EGG, SHELLFISH detected automatically</span>
+            </div>
+          </div>
+          <div className="bg-yellow-50 border border-yellow-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-birthday-cake text-yellow-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-yellow-700 block mb-0.5">Birthday banner</strong>
+              <span className="text-gray-600">Red "Happy Birthday!" line printed when a birthday falls within the next 7 days</span>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-book text-blue-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-blue-700 block mb-0.5">Handbook group</strong>
+              <span className="text-gray-600">Small line below the club name (e.g. "Sparks Group A")</span>
+            </div>
+          </div>
+          <div className="bg-green-50 border border-green-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-user-plus text-green-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-green-700 block mb-0.5">New visitor safe</strong>
+              <span className="text-gray-600">Unknown names print a basic label — no crash, no missing labels</span>
+            </div>
+          </div>
+        </div>
+
+        {/* CSV format example */}
+        <p className="text-xs font-semibold text-gray-700 mb-1">
+          Required column names (header row must match exactly):
+        </p>
+        <div className="bg-gray-900 rounded p-3 font-mono text-xs leading-relaxed overflow-x-auto mb-4">
+          <div className="text-gray-500 mb-1">// Save as clubbers.csv alongside install-and-run.ps1</div>
+          <div className="text-green-300">FirstName,LastName,Birthdate,Allergies,HandbookGroup</div>
+          <div className="text-gray-300">Alice,Smith,2018-03-15,peanut allergy,Cubbies A</div>
+          <div className="text-gray-300">Bob,Jones,2019-07-22,,T&amp;T Group B</div>
+          <div className="text-gray-300">Carol,White,05/12/2020,dairy and tree nut,</div>
+        </div>
+
+        {/* Column reference table */}
+        <table className="w-full text-xs border-collapse mb-4">
+          <thead>
+            <tr className="bg-gray-100">
+              <th className="text-left p-2 border border-gray-200 font-semibold">Column</th>
+              <th className="text-left p-2 border border-gray-200 font-semibold">Format</th>
+              <th className="text-left p-2 border border-gray-200 font-semibold">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="p-2 border border-gray-200 font-mono text-purple-700">FirstName</td>
+              <td className="p-2 border border-gray-200">Text</td>
+              <td className="p-2 border border-gray-200">Matched case-insensitively against the check-in name</td>
+            </tr>
+            <tr className="bg-gray-50">
+              <td className="p-2 border border-gray-200 font-mono text-purple-700">LastName</td>
+              <td className="p-2 border border-gray-200">Text</td>
+              <td className="p-2 border border-gray-200">Matched case-insensitively against the check-in name</td>
+            </tr>
+            <tr>
+              <td className="p-2 border border-gray-200 font-mono text-purple-700">Birthdate</td>
+              <td className="p-2 border border-gray-200">
+                <code className="bg-gray-100 px-1 rounded">YYYY-MM-DD</code>{' '}or{' '}
+                <code className="bg-gray-100 px-1 rounded">MM/DD/YYYY</code>
+              </td>
+              <td className="p-2 border border-gray-200">Leave blank if unknown — no crash</td>
+            </tr>
+            <tr className="bg-gray-50">
+              <td className="p-2 border border-gray-200 font-mono text-purple-700">Allergies</td>
+              <td className="p-2 border border-gray-200">Free text</td>
+              <td className="p-2 border border-gray-200">
+                Detected keywords: <em>nut / peanut, dairy / milk / lactose, gluten / wheat, egg, shellfish / shrimp / crab</em>
+              </td>
+            </tr>
+            <tr>
+              <td className="p-2 border border-gray-200 font-mono text-purple-700">HandbookGroup</td>
+              <td className="p-2 border border-gray-200">Free text</td>
+              <td className="p-2 border border-gray-200">Displayed below club name; truncated at 30 characters</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="bg-green-50 border border-green-200 rounded p-3 text-xs text-green-800">
+          <strong>Live-event safe:</strong> The server re-reads <code className="bg-green-100 px-1 rounded">clubbers.csv</code> on
+          every check-in so you can update it mid-event. If the file is missing, locked (being saved by Excel), or
+          malformed, the server silently falls back to basic labels and keeps running — it will never crash the print server.
+        </div>
+      </div>
+
+      {/* ── Summary ───────────────────────────────────────────────────────── */}
       <div className="mt-6 bg-purple-50 border border-purple-200 rounded p-3 text-sm text-purple-800">
         <strong>That's it!</strong> Once configured, silent printing is automatic. Each time a child checks in,
         a label prints directly to your configured printer with no dialog. If the server isn't running,
