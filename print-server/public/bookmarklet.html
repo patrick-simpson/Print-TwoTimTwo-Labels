@@ -406,38 +406,31 @@
       document.body.appendChild(frame);
     }
 
-    const iconHtml = imageData ? \`<div class="icon-col"><img src="\${imageData}"/></div><div class="divider"></div>\` : '';
+    // Build HTML without nested template literals to avoid escaping issues
     const fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
+    const iconHtml = imageData ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>' : '';
+    const lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
+    const clubHtml = clubName ? '<div class="sep"></div><div class="cn">' + clubName + '</div>' : '';
 
-    const html = \`<!DOCTYPE html>
-<html>
-<head>
-<style>
-  @page { size: 4in 2in; margin: 0; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }
-  .badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }
-  .icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }
-  .icon-col img { width: 52pt; height: 52pt; object-fit: contain; }
-  .divider { width: 1pt; background: #ddd; flex-shrink: 0; }
-  .text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }
-  .fn { font-size: \${fontSize}; font-weight: bold; line-height: 1.05; word-break: break-word; }
-  .ln { font-size: 20pt; margin-top: 2pt; }
-  .sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }
-  .cn { font-size: 12pt; font-style: italic; color: #444; }
-</style>
-</head>
-<body>
-<div class="badge">
-  \${iconHtml}
-  <div class="text">
-    <div class="fn">\${firstName}</div>
-    \${lastName ? \`<div class="ln">\${lastName}</div>\` : ''}
-    \${clubName ? \`<div class="sep"></div><div class="cn">\${clubName}</div>\` : ''}
-  </div>
-</div>
-</body>
-</html>\`;
+    const html = '<!DOCTYPE html><html><head><style>' +
+      '@page { size: 4in 2in; margin: 0; }' +
+      '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+      'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
+      '.badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }' +
+      '.icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }' +
+      '.icon-col img { width: 52pt; height: 52pt; object-fit: contain; }' +
+      '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
+      '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }' +
+      '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
+      '.ln { font-size: 20pt; margin-top: 2pt; }' +
+      '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
+      '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
+      '</style></head><body><div class="badge">' +
+      iconHtml +
+      '<div class="text"><div class="fn">' + firstName + '</div>' +
+      lastNameHtml +
+      clubHtml +
+      '</div></div></body></html>';
 
     frame.contentWindow.document.open();
     frame.contentWindow.document.write(html);

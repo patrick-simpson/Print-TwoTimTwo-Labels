@@ -354,57 +354,54 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
 # The server re-reads this file on every check-in so you can edit it mid-event.
 # If the file is missing or locked the server continues printing basic labels.
 $clubbersCsvPath = Join-Path $printServerPath "clubbers.csv"
-if (-not (Test-Path $clubbersCsvPath)) {
-    Write-Host ""
-    Write-Host "Setting up clubbers.csv..." -ForegroundColor Gray
 
-    # Try to download from your TwoTimTwo church account
-    # (This assumes the CSV export endpoint is public or you've configured it)
-    $downloaded = $false
-    $twotimtwoUrl = "https://kvbchurch.twotimtwo.com/clubber/csv"
+Write-Host ""
+Write-Host "Setting up clubbers.csv..." -ForegroundColor Gray
+
+# Always attempt to download from TwoTimTwo first (fresh data each time)
+# This way updates to the roster are picked up on each run
+$downloaded = $false
+$twotimtwoUrl = "https://kvbchurch.twotimtwo.com/clubber/csv"
+try {
+    $ProgressPreference = 'SilentlyContinue'
+    Write-Host "  Attempting to download from TwoTimTwo..." -ForegroundColor Gray
+    Invoke-WebRequest -Uri $twotimtwoUrl -OutFile $clubbersCsvPath -ErrorAction Stop
+    $downloaded = $true
+    Write-Host "  ✓ Downloaded fresh data from TwoTimTwo" -ForegroundColor Green
+} catch {
+    Write-Host "  ⚠ Could not download from TwoTimTwo: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+# Fallback: try GitHub template if TwoTimTwo download fails
+if (-not $downloaded) {
     try {
         $ProgressPreference = 'SilentlyContinue'
-        Write-Host "  Attempting to download from TwoTimTwo..." -ForegroundColor Gray
-        Invoke-WebRequest -Uri $twotimtwoUrl -OutFile $clubbersCsvPath -ErrorAction Stop
+        $templateUrl = "https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/print-server/clubbers-template.csv"
+        Write-Host "  Downloading template from GitHub..." -ForegroundColor Gray
+        Invoke-WebRequest -Uri $templateUrl -OutFile $clubbersCsvPath -ErrorAction Stop
         $downloaded = $true
-        Write-Host "  ✓ Downloaded from TwoTimTwo" -ForegroundColor Green
-    } catch {
-        Write-Host "  ⚠ Could not download from TwoTimTwo: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
+        Write-Host "  ✓ Downloaded template from GitHub" -ForegroundColor Green
+    } catch {}
+}
 
-    # Fallback: try GitHub template if TwoTimTwo download fails
-    if (-not $downloaded) {
-        try {
-            $ProgressPreference = 'SilentlyContinue'
-            $templateUrl = "https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/print-server/clubbers-template.csv"
-            Write-Host "  Downloading template from GitHub..." -ForegroundColor Gray
-            Invoke-WebRequest -Uri $templateUrl -OutFile $clubbersCsvPath -ErrorAction Stop
-            $downloaded = $true
-            Write-Host "  ✓ Downloaded template from GitHub" -ForegroundColor Green
-        } catch {}
-    }
-
-    # Last resort: write a minimal template inline
-    if (-not $downloaded) {
-        Write-Host "  Writing fallback template..." -ForegroundColor Gray
-        @"
+# Last resort: write a minimal template inline
+if (-not $downloaded) {
+    Write-Host "  Writing fallback template..." -ForegroundColor Gray
+    @"
 FirstName,LastName,Birthdate,Allergies,HandbookGroup
 Alice,Smith,2018-03-15,peanut allergy,Cubbies A
 Bob,Jones,2019-07-22,,T&T Group B
 Carol,White,05/12/2020,dairy and tree nut,Sparks Yellow
 "@ | Set-Content $clubbersCsvPath -Encoding UTF8
-    }
+}
 
-    Write-Host "✓ clubbers.csv is ready at:" -ForegroundColor Green
-    Write-Host "  $clubbersCsvPath" -ForegroundColor Cyan
-    Write-Host ""
-    if (-not ($downloaded -and $twotimtwoUrl)) {
-        Write-Host "  NOTE: If this is a template, edit it with your real clubber data:" -ForegroundColor Yellow
-        Write-Host "  Columns: FirstName, LastName, Birthdate (YYYY-MM-DD or MM/DD/YYYY)," -ForegroundColor Yellow
-        Write-Host "           Allergies (free text), HandbookGroup (free text)" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "✓ clubbers.csv already exists — keeping your current file." -ForegroundColor Green
+Write-Host "✓ clubbers.csv is ready at:" -ForegroundColor Green
+Write-Host "  $clubbersCsvPath" -ForegroundColor Cyan
+Write-Host ""
+if (-not $downloaded) {
+    Write-Host "  NOTE: If this is a template, edit it with your real clubber data:" -ForegroundColor Yellow
+    Write-Host "  Columns: FirstName, LastName, Birthdate (YYYY-MM-DD or MM/DD/YYYY)," -ForegroundColor Yellow
+    Write-Host "           Allergies (free text), HandbookGroup (free text)" -ForegroundColor Yellow
 }
 
 # --- 5. Configure printer and URL ---
