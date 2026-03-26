@@ -1,6 +1,6 @@
 # Awana Label Print Server — All-in-One Installer
-# Version    : 1.4.0
-# Updated    : 2026-03-26 13:00:00
+# Version    : 1.4.1
+# Updated    : 2026-03-26
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.4.0"
+$ScriptVersion = "1.4.1"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -378,9 +378,27 @@ $twotimtwoUrl = "https://kvbchurch.twotimtwo.com/clubber/csv"
 try {
     $ProgressPreference = 'SilentlyContinue'
     Write-Host "  Attempting to download from TwoTimTwo..." -ForegroundColor Gray
-    Invoke-WebRequest -Uri $twotimtwoUrl -OutFile $clubbersCsvPath -ErrorAction Stop
-    $downloaded = $true
-    Write-Host "  ✓ Downloaded fresh data from TwoTimTwo" -ForegroundColor Green
+    $response = Invoke-WebRequest -Uri $twotimtwoUrl -ErrorAction Stop
+
+    # Validate that we actually got CSV data, not an HTML login/error page
+    $contentType = $response.Headers['Content-Type']
+    $body = $response.Content
+    $isHtml = ($contentType -and $contentType -match 'text/html') -or
+              ($body -and ($body.TrimStart().StartsWith('<!') -or $body.TrimStart().StartsWith('<html')))
+
+    if ($isHtml) {
+        Write-Host "  ⚠ TwoTimTwo returned an HTML page instead of CSV data." -ForegroundColor Yellow
+        Write-Host "    (The site may require login, or the URL may have changed.)" -ForegroundColor Yellow
+        Write-Host "    Skipping — will use existing/template data instead." -ForegroundColor Yellow
+    } elseif (-not $body -or $body.Trim().Length -eq 0) {
+        Write-Host "  ⚠ TwoTimTwo returned an empty response — skipping." -ForegroundColor Yellow
+    } else {
+        # Content looks like CSV — save it
+        Set-Content -Path $clubbersCsvPath -Value $body -Encoding UTF8
+        $downloaded = $true
+        $lineCount = ($body -split "`n" | Where-Object { $_.Trim() }).Count - 1
+        Write-Host "  ✓ Downloaded fresh CSV from TwoTimTwo ($lineCount clubber(s))" -ForegroundColor Green
+    }
 } catch {
     Write-Host "  ⚠ Could not download from TwoTimTwo: $($_.Exception.Message)" -ForegroundColor Yellow
 }
