@@ -1,14 +1,20 @@
 # Awana Label Print Server — All-in-One Installer
-# Version    : 1.2.1
-# Updated    : 2026-03-24 14:45:00
+# Version    : 1.3.0
+# Updated    : 2026-03-26 12:00:00
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
-#   2. Installs Node.js LTS if needed
+#   2. Installs Node.js LTS if needed  (requires admin on first run only)
 #   3. Downloads the Print-TwoTimTwo-Labels project
+#   3b.Creates a clubbers.csv template for enriched labels (allergy alerts,
+#      birthday banners, handbook groups) — edit with your real data
 #   4. Installs npm packages (~300 MB, first time only)
 #   5. Asks for printer + check-in URL
 #   6. Starts the server and opens Edge
+#
+# ADMIN NOTE: Administrator rights are only needed on the very first run if
+# Node.js is not yet installed. Once Node.js is installed, the script runs
+# fine without elevation.
 
 param(
     [string]$PrinterName,
@@ -18,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.2.1"
+$ScriptVersion = "1.3.0"
 
 # Set window properties
 $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
@@ -29,6 +35,46 @@ Write-Host "  Awana Label Print Server — All-in-One Installer" -ForegroundColo
 Write-Host "  Version $ScriptVersion" -ForegroundColor Cyan
 Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# --- Admin rights check ---
+# Node.js MSI installs to C:\Program Files and requires elevation.
+# All other steps (npm, node, writing to AppData) work without admin.
+# So: only warn/offer elevation if Node.js is not yet installed.
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$nodeAlreadyInstalled = (Get-Command node -ErrorAction SilentlyContinue) -ne $null
+
+if (-not $isAdmin -and -not $nodeAlreadyInstalled -and -not $SkipNodeCheck) {
+    Write-Host ""
+    Write-Host "  !! Not running as Administrator" -ForegroundColor Yellow
+    Write-Host "  Node.js is not installed yet. Installing it requires admin rights." -ForegroundColor Yellow
+    Write-Host ""
+
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if ($scriptPath) {
+        # Script was saved as a file — we can re-launch it elevated automatically
+        Write-Host "  Relaunching as Administrator..." -ForegroundColor Cyan
+        $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+        if ($PrinterName)  { $argList += " -PrinterName `"$PrinterName`""  }
+        if ($CheckinUrl)   { $argList += " -CheckinUrl `"$CheckinUrl`""    }
+        if ($InstallPath)  { $argList += " -InstallPath `"$InstallPath`""  }
+        Start-Process powershell -Verb RunAs -ArgumentList $argList
+        exit 0
+    } else {
+        # Script was pasted into PowerShell — cannot auto-elevate (no file path)
+        Write-Host "  To run as Administrator:" -ForegroundColor White
+        Write-Host "    1. Close this window." -ForegroundColor White
+        Write-Host "    2. Right-click PowerShell in the Start menu." -ForegroundColor White
+        Write-Host "    3. Choose 'Run as administrator'." -ForegroundColor White
+        Write-Host "    4. Paste and run the script again." -ForegroundColor White
+        Write-Host ""
+        Write-Host "  OR: if you already have Node.js installed elsewhere, press Enter to try anyway." -ForegroundColor Gray
+        $null = Read-Host "  Press Enter to continue without admin, or Ctrl+C to cancel"
+    }
+} elseif ($isAdmin) {
+    Write-Host "  Running as Administrator." -ForegroundColor Gray
+} else {
+    Write-Host "  (Node.js already installed — admin not required)" -ForegroundColor Gray
+}
 
 # --- 0. Check PowerShell version ---
 Write-Host "Checking PowerShell version..." -ForegroundColor Gray
@@ -180,6 +226,14 @@ if (Test-Path $versionFile) {
         if ($installedVersion -ne $ScriptVersion) {
             Write-Host "Updating to script version $ScriptVersion..." -ForegroundColor Cyan
             if (Test-Path $projectPath) {
+                # Back up clubbers.csv before deleting the project so user data survives the update
+                $csvBackupPath   = Join-Path $installDir "clubbers-backup.csv"
+                $existingCsvPath = Join-Path $projectPath "print-server\clubbers.csv"
+                if (Test-Path $existingCsvPath) {
+                    Copy-Item $existingCsvPath $csvBackupPath -Force
+                    Write-Host "  Backed up clubbers.csv (will restore after update)." -ForegroundColor Gray
+                }
+
                 Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
                 Write-Host "  Old installation removed." -ForegroundColor Gray
             }
@@ -245,6 +299,14 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
 
     Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
     Write-Host "✓ Extracted to $projectPath" -ForegroundColor Green
+
+    # Restore any clubbers.csv that was backed up before the update
+    $csvBackupPath = Join-Path $installDir "clubbers-backup.csv"
+    if (Test-Path $csvBackupPath) {
+        $csvRestorePath = Join-Path $printServerPath "clubbers.csv"
+        Move-Item $csvBackupPath $csvRestorePath -Force
+        Write-Host "✓ Restored your clubbers.csv data." -ForegroundColor Green
+    }
 }
 
 # --- 4. Install npm packages (if not already installed) ---
@@ -268,6 +330,47 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
     }
 } else {
     Write-Host "✓ npm packages already installed." -ForegroundColor Green
+}
+
+# --- 3b. Create clubbers.csv template (first install only, never overwrites) ---
+# clubbers.csv lives alongside server.js and unlocks enriched labels:
+#   - Red allergy strip (NUTS, DAIRY, GLUTEN, EGG, SHELLFISH auto-detected)
+#   - "Happy Birthday!" banner for birthdays within the next 7 days
+#   - Handbook group line below the club name
+# The server re-reads this file on every check-in so you can edit it mid-event.
+# If the file is missing or locked the server continues printing basic labels.
+$clubbersCsvPath = Join-Path $printServerPath "clubbers.csv"
+if (-not (Test-Path $clubbersCsvPath)) {
+    Write-Host ""
+    Write-Host "Creating clubbers.csv template..." -ForegroundColor Gray
+
+    $downloaded = $false
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        $templateUrl = "https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/print-server/clubbers-template.csv"
+        Invoke-WebRequest -Uri $templateUrl -OutFile $clubbersCsvPath -ErrorAction Stop
+        $downloaded = $true
+    } catch {}
+
+    if (-not $downloaded) {
+        # Fallback: write the template inline if GitHub is unreachable
+        @"
+FirstName,LastName,Birthdate,Allergies,HandbookGroup
+Alice,Smith,2018-03-15,peanut allergy,Cubbies A
+Bob,Jones,2019-07-22,,T&T Group B
+Carol,White,05/12/2020,dairy and tree nut,Sparks Yellow
+"@ | Set-Content $clubbersCsvPath -Encoding UTF8
+    }
+
+    Write-Host "✓ Created clubbers.csv at:" -ForegroundColor Green
+    Write-Host "  $clubbersCsvPath" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  ACTION NEEDED: Replace the example rows with your real clubber data." -ForegroundColor Yellow
+    Write-Host "  Columns: FirstName, LastName, Birthdate (YYYY-MM-DD or MM/DD/YYYY)," -ForegroundColor Yellow
+    Write-Host "           Allergies (free text), HandbookGroup (free text)" -ForegroundColor Yellow
+    Write-Host "  Leave blank cells for fields you don't have — the server handles it." -ForegroundColor Gray
+} else {
+    Write-Host "✓ clubbers.csv already exists — keeping your data." -ForegroundColor Green
 }
 
 # --- 5. Configure printer and URL ---
@@ -377,6 +480,10 @@ Write-Host "  1. Open http://localhost:3456 in your browser" -ForegroundColor Gr
 Write-Host "  2. Click 'Create Bookmarklet'" -ForegroundColor Gray
 Write-Host "  3. Drag the button to your bookmark bar" -ForegroundColor Gray
 Write-Host "  4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  Optional — for enriched labels (allergy alerts, birthday banners):" -ForegroundColor Gray
+Write-Host "  Edit clubbers.csv in: $printServerPath" -ForegroundColor Cyan
+Write-Host "  Replace the example rows with your real clubber data." -ForegroundColor Gray
 Write-Host ""
 Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
