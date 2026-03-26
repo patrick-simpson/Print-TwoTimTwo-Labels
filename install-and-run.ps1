@@ -26,6 +26,19 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptVersion = "1.4.0"
 
+# Global error handler: pause before exiting on error so user can see what went wrong
+trap {
+    Write-Host ""
+    Write-Host "╔═══════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+    Write-Host "║ ERROR:" -ForegroundColor Red
+    Write-Host "║ $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "╚═══════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Press any key to exit..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
+
 # Set window properties
 $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
 
