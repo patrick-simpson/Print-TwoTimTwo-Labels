@@ -1,6 +1,6 @@
 # Awana Label Print Server — All-in-One Installer
-# Version : 1.2.0
-# Updated : 2026-03-24
+# Version    : 1.2.2
+# Updated    : 2026-03-26
 #
 # This script:
 #   1. Upgrades PowerShell to v7+ if needed
@@ -18,59 +18,69 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.2.0"
-$ScriptDate    = "2026-03-24"
+$ScriptVersion = "1.2.2"
+
+# Set window properties
+$Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
 
 Write-Host ""
-Write-Host "==============================" -ForegroundColor Cyan
-Write-Host "  Awana Label Print Server" -ForegroundColor Cyan
-Write-Host "  All-in-One Installer" -ForegroundColor Cyan
-Write-Host "  v$ScriptVersion  ($ScriptDate)" -ForegroundColor Cyan
-Write-Host "==============================" -ForegroundColor Cyan
+Write-Host "=================================================================================" -ForegroundColor Cyan
+Write-Host "  Awana Label Print Server — All-in-One Installer" -ForegroundColor Cyan
+Write-Host "  Version $ScriptVersion" -ForegroundColor Cyan
+Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # --- 0. Check PowerShell version ---
 Write-Host "Checking PowerShell version..." -ForegroundColor Gray
 $psVer = $PSVersionTable.PSVersion
 if ($psVer.Major -lt 7) {
-    Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) detected. Upgrading to PowerShell 7..." -ForegroundColor Yellow
-    Write-Host ""
+    # Check if PS7 is already installed
+    $ps7Installed = (Get-Command pwsh -ErrorAction SilentlyContinue) -or `
+                    (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe")
 
-    $upgraded = $false
-
-    # Try winget first (built into Windows 10 1709+ and Windows 11)
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host "  Installing via winget..." -ForegroundColor Gray
-        try {
-            winget install --id Microsoft.PowerShell --source winget --silent `
-                --accept-package-agreements --accept-source-agreements
-            if ($LASTEXITCODE -eq 0) { $upgraded = $true }
-        } catch {}
-    }
-
-    # Fallback: download MSI directly
-    if (-not $upgraded) {
-        Write-Host "  winget unavailable. Downloading PowerShell 7 MSI..." -ForegroundColor Gray
-        $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
-        $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
-        try {
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
-            Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
-            $upgraded = $true
-        } catch {
-            Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
-            Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
-        }
-    }
-
-    if ($upgraded) {
-        Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+    if ($ps7Installed) {
+        Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) running, but PowerShell 7 is installed." -ForegroundColor Green
+        Write-Host "  Continuing with current session..." -ForegroundColor Gray
+    } else {
+        Write-Host "  PowerShell $($psVer.Major).$($psVer.Minor) detected. Installing PowerShell 7..." -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
-        Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
-        Read-Host "  Press Enter to exit"
-        exit 0
+
+        $upgraded = $false
+
+        # Try winget first (built into Windows 10 1709+ and Windows 11)
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "  Installing via winget..." -ForegroundColor Gray
+            try {
+                winget install --id Microsoft.PowerShell --source winget --silent `
+                    --accept-package-agreements --accept-source-agreements
+                if ($LASTEXITCODE -eq 0) { $upgraded = $true }
+            } catch {}
+        }
+
+        # Fallback: download MSI directly
+        if (-not $upgraded) {
+            Write-Host "  winget unavailable. Downloading PowerShell 7 MSI..." -ForegroundColor Gray
+            $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
+            $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
+            try {
+                $ProgressPreference = 'SilentlyContinue'
+                Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
+                Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
+                $upgraded = $true
+            } catch {
+                Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
+                Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
+            }
+        }
+
+        if ($upgraded) {
+            Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
+            Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
+            Read-Host "  Press Enter to exit"
+            exit 0
+        }
     }
 } else {
     Write-Host "✓ PowerShell $($psVer.Major).$($psVer.Minor) found." -ForegroundColor Green
@@ -159,8 +169,27 @@ try {
     exit 1
 }
 
-# --- 3. Download project (if not already present) ---
+# --- 2b. Check if installed version is outdated ---
 $projectPath = Join-Path $installDir "Print-TwoTimTwo-Labels"
+$versionFile = Join-Path $installDir ".script-version"
+
+if (Test-Path $versionFile) {
+    try {
+        $installedVersion = Get-Content $versionFile -Raw | ForEach-Object { $_.Trim() }
+        # Compare versions: if installed version is different from current script version
+        if ($installedVersion -ne $ScriptVersion) {
+            Write-Host "Updating to script version $ScriptVersion..." -ForegroundColor Cyan
+            if (Test-Path $projectPath) {
+                Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "  Old installation removed." -ForegroundColor Gray
+            }
+        }
+    } catch {
+        # Silently ignore version file errors
+    }
+}
+
+# --- 3. Download project (if not already present) ---
 $printServerPath = Join-Path $projectPath "print-server"
 
 if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
@@ -226,7 +255,7 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
 
     Push-Location $printServerPath
     try {
-        npm install
+        npm.cmd install
         if ($LASTEXITCODE -ne 0) {
             Write-Host "✗ npm install failed" -ForegroundColor Red
             Read-Host "  Press Enter to exit"
@@ -338,16 +367,27 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
 
 # --- 6. Start server and open browser ---
 Write-Host ""
-Write-Host "==============================" -ForegroundColor Cyan
-Write-Host "  Server starting..." -ForegroundColor Cyan
-Write-Host "==============================" -ForegroundColor Cyan
+Write-Host "=================================================================================" -ForegroundColor Green
+Write-Host "  Setup Complete" -ForegroundColor Green
+Write-Host "=================================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Opening Microsoft Edge at check-in page..." -ForegroundColor Cyan
+Write-Host "Next steps:" -ForegroundColor White
+Write-Host ""
+Write-Host "  1. Open http://localhost:3456 in your browser" -ForegroundColor Gray
+Write-Host "  2. Click 'Create Bookmarklet'" -ForegroundColor Gray
+Write-Host "  3. Drag the button to your bookmark bar" -ForegroundColor Gray
+Write-Host "  4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
 
-Write-Host "Print server running at http://localhost:3456" -ForegroundColor Cyan
-Write-Host "Leave this window open during check-in." -ForegroundColor Gray
-Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Gray
+Write-Host ""
+Write-Host "Print server running" -ForegroundColor Green
+Write-Host "  Server: http://localhost:3456" -ForegroundColor Cyan
+Write-Host "  Printer: $($cfg.printerName)" -ForegroundColor White
+Write-Host ""
+Write-Host "Keep this window open during check-in." -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to stop the server." -ForegroundColor Yellow
 Write-Host ""
 
 # --- Kill any existing process on port 3456 ---
@@ -369,6 +409,13 @@ try {
     }
 } catch {
     Write-Host "  ⚠ Could not check port (non-critical): $_" -ForegroundColor Yellow
+}
+
+# Save the script version for future updates
+try {
+    Set-Content -Path $versionFile -Value $ScriptVersion -Force -ErrorAction SilentlyContinue
+} catch {
+    # Silently ignore version file write errors
 }
 
 $env:PRINTER_NAME = $cfg.printerName
