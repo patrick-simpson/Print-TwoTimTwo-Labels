@@ -38,7 +38,9 @@ export const PrintServerInfo: React.FC = () => {
   };
 
   const openBookmarklet = () => {
-    window.open('http://localhost:3456/bookmarklet.html', 'awana_bookmarklet', 'width=600,height=800');
+    // Open from GitHub Pages so users always get the latest code,
+    // not the potentially-outdated copy served by their local install.
+    window.open('https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/bookmarklet.html', 'awana_bookmarklet', 'width=600,height=800');
   };
 
   return (

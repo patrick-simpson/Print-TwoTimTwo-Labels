@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Awana Print Bookmarklet</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            padding: 40px;
+            text-align: center;
+        }
+        h1 {
+            color: #1a202c;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #718096;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .instructions {
+            text-align: left;
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 25px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #2d3748;
+        }
+        .instructions ol {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5a67d8;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #2d3748;
+        }
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #68d391;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            margin: 15px 0;
+            max-height: 150px;
+            overflow: auto;
+            text-align: left;
+            word-break: break-all;
+            cursor: pointer;
+        }
+        .code-block:hover {
+            background: #1a202c;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 13px;
+            display: none;
+        }
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            display: block;
+        }
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🖨️ Auto-Print Bookmarklet</h1>
+        <p class="subtitle">One-click silent printing on check-in</p>
+
+        <div class="instructions">
+            <strong>How to use:</strong>
+            <ol>
+                <li><strong>Option A (Easiest):</strong> Drag the button below to your bookmark bar</li>
+                <li><strong>Option B:</strong> Click "Copy Code", then manually create a bookmark with the code</li>
+                <li>Go to your church's check-in page</li>
+                <li>Click the bookmarklet button</li>
+                <li>A small widget appears in the corner — silent printing is now active!</li>
+            </ol>
+        </div>
+
+        <div class="button-group">
+            <a id="bookmarklet-btn" class="btn btn-primary" href="javascript:void(0);" draggable="true">
+                📌 Drag to Bookmark Bar
+            </a>
+            <button id="copy-btn" class="btn btn-secondary">Copy Code</button>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+            <p style="font-size: 12px; color: #718096; margin-bottom: 10px;">Bookmarklet code:</p>
+            <div class="code-block" id="code-display" title="Click to copy"></div>
+        </div>
+    </div>
+
+    <script>
+        // Unminified bookmarklet code for clarity and debuggability
+        const DETECTION_CODE = `(function() {
+  if (window.__awanaPrinterLoaded) return;
+  window.__awanaPrinterLoaded = true;
+
+  const PRINT_COOLDOWN = 2000;
+  const DEBOUNCE_MS = 100;
+  const STATUS_TIMEOUT = 3000;
+  const PRINT_SERVER = 'http://localhost:3456';
+  const STORAGE_KEY = 'awana_selectedPrinterId';
+
+  let selectedMode = localStorage.getItem(STORAGE_KEY) || 'auto';
+  let lastPrintedName = null;
+  let lastPrintTime = 0;
+
+  function isUndo(text) {
+    return text && text.toLowerCase().includes('undo');
+  }
+
+  function getClubImageDataUrl(img) {
+    try {
+      if (!img || !img.src || !img.complete || img.naturalWidth === 0) {
+        return null;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 64;
+      canvas.getContext('2d').drawImage(img, 0, 0, 64, 64);
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      return img.src || null;
+    }
+  }
+
+  function injectWidget() {
+    const widget = document.createElement('div');
+    widget.id = 'awana-widget';
+    Object.assign(widget.style, {
+      position: 'fixed',
+      top: '10px',
+      right: '10px',
+      zIndex: '99999',
+      background: '#f8fafc',
+      padding: '10px 14px',
+      border: '1px solid #cbd5e1',
+      borderRadius: '8px',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '13px'
+    });
+
+    const controls = document.createElement('div');
+    Object.assign(controls.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px'
+    });
+
+    const icon = document.createElement('span');
+    icon.textContent = '🖨️';
+    icon.style.fontSize = '16px';
+
+    const modeSelect = document.createElement('select');
+    modeSelect.id = 'awana-mode-select';
+    Object.assign(modeSelect.style, {
+      padding: '3px 7px',
+      borderRadius: '4px',
+      border: '1px solid #cbd5e1',
+      cursor: 'pointer',
+      fontSize: '12px'
+    });
+
+    const modes = [
+      ['auto', '🖨️ Auto-Print'],
+      ['dialog', '🗔 Print Dialog'],
+      ['off', '❌ Off']
+    ];
+    modes.forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      modeSelect.appendChild(option);
+    });
+    modeSelect.value = selectedMode;
+
+    const status = document.createElement('span');
+    status.id = 'awana-status';
+    status.style.fontSize = '16px';
+
+    modeSelect.addEventListener('change', () => {
+      selectedMode = modeSelect.value;
+      localStorage.setItem(STORAGE_KEY, selectedMode);
+      console.log('[Awana] Mode changed to:', selectedMode);
+    });
+
+    const testBtn = document.createElement('button');
+    testBtn.textContent = 'Test';
+    Object.assign(testBtn.style, {
+      fontSize: '11px',
+      padding: '2px 7px',
+      background: '#e2e8f0',
+      border: '1px solid #cbd5e1',
+      borderRadius: '4px',
+      cursor: 'pointer'
+    });
+    testBtn.addEventListener('click', () => {
+      console.log('[Awana] Test button clicked');
+      doPrint('Test Child', 'Sparks', null);
+    });
+
+    controls.append(icon, modeSelect, status, testBtn);
+    widget.appendChild(controls);
+    document.body.appendChild(widget);
+    console.log('[Awana] Widget injected');
+  }
+
+  function setStatus(text) {
+    const statusEl = document.getElementById('awana-status');
+    if (statusEl) {
+      statusEl.textContent = text;
+      console.log('[Awana] Status:', text);
+    }
+  }
+
+  function clearStatus() {
+    setTimeout(() => setStatus(''), STATUS_TIMEOUT);
+  }
+
+  function watchCheckins() {
+    let debounceTimer = null;
+
+    const checkForChange = () => {
+      const lastCheckinEl = document.querySelector('#lastCheckin div');
+      if (!lastCheckinEl) {
+        lastPrintedName = null;
+        return;
+      }
+
+      const clone = lastCheckinEl.cloneNode(true);
+      const undoLink = clone.querySelector('a');
+      if (undoLink) undoLink.remove();
+
+      const text = clone.textContent.trim();
+
+      if (isUndo(text)) {
+        lastPrintedName = text;
+      } else if (text && text !== lastPrintedName) {
+        lastPrintedName = text;
+        console.log('[Awana] Check-in detected:', text);
+        onCheckin(text);
+      } else if (!text) {
+        lastPrintedName = null;
+      }
+    };
+
+    const observer = new MutationObserver(() => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(checkForChange, DEBOUNCE_MS);
+    });
+
+    const watchTarget = document.querySelector('#lastCheckin') || document.body;
+    observer.observe(watchTarget, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    console.log('[Awana] Watching for check-ins');
+  }
+
+  function lookupClub(name) {
+    for (const clubber of document.querySelectorAll('.clubber')) {
+      const nameEl = clubber.querySelector('.name');
+      if (nameEl && nameEl.innerText.trim() === name) {
+        const imgEl = clubber.querySelector('.club img');
+        if (imgEl) {
+          return {
+            clubName: (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&'),
+            clubImageData: getClubImageDataUrl(imgEl)
+          };
+        }
+        return { clubName: '', clubImageData: null };
+      }
+    }
+    return { clubName: '', clubImageData: null };
+  }
+
+  function onCheckin(name) {
+    if (selectedMode === 'off') return;
+    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
+
+    lastPrintTime = Date.now();
+    const club = lookupClub(name);
+    doPrint(name, club.clubName, club.clubImageData);
+  }
+
+  async function doPrint(fullName, clubName, imageData) {
+    setStatus('⏳');
+
+    const parts = fullName.split(' ');
+    const firstName = parts[0] || '';
+    const lastName = parts.slice(1).join(' ') || '';
+
+    // Reject undo actions
+    if (isUndo(firstName) || isUndo(lastName) || isUndo(clubName)) {
+      setStatus('🚫');
+      clearStatus();
+      return;
+    }
+
+    // Try silent print to server if not in dialog mode
+    if (selectedMode !== 'dialog') {
+      try {
+        const response = await fetch(PRINT_SERVER + '/print', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: fullName,
+            clubName: clubName,
+            clubImageData: imageData
+          }),
+          signal: AbortSignal.timeout(5000)
+        });
+
+        if (response.ok) {
+          setStatus('✅');
+          clearStatus();
+          console.log('[Awana] Silent print sent to server');
+          return;
+        }
+      } catch (err) {
+        console.log('[Awana] Server unavailable:', err.message);
+      }
+    }
+
+    // Fallback: if server failed or mode is 'dialog', show print dialog
+    if (selectedMode === 'off') return;
+
+    let frame = document.getElementById('awana-print-frame');
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.id = 'awana-print-frame';
+      Object.assign(frame.style, {
+        position: 'fixed',
+        right: '0',
+        bottom: '0',
+        width: '0',
+        height: '0',
+        border: '0',
+        visibility: 'hidden'
+      });
+      document.body.appendChild(frame);
+    }
+
+    // Build HTML without nested template literals to avoid escaping issues
+    const fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
+    const iconHtml = imageData ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>' : '';
+    const lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
+    const clubHtml = clubName ? '<div class="sep"></div><div class="cn">' + clubName + '</div>' : '';
+
+    const html = '<!DOCTYPE html><html><head><style>' +
+      '@page { size: 4in 2in; margin: 0; }' +
+      '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+      'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
+      '.badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }' +
+      '.icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }' +
+      '.icon-col img { width: 52pt; height: 52pt; object-fit: contain; }' +
+      '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
+      '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }' +
+      '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
+      '.ln { font-size: 20pt; margin-top: 2pt; }' +
+      '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
+      '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
+      '</style></head><body><div class="badge">' +
+      iconHtml +
+      '<div class="text"><div class="fn">' + firstName + '</div>' +
+      lastNameHtml +
+      clubHtml +
+      '</div></div></body></html>';
+
+    frame.contentWindow.document.open();
+    frame.contentWindow.document.write(html);
+    frame.contentWindow.document.close();
+
+    setTimeout(() => {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+        setStatus('✅');
+        console.log('[Awana] Print dialog opened');
+      } catch (err) {
+        setStatus('❌');
+        console.error('[Awana] Print failed:', err);
+      }
+      clearStatus();
+    }, 500);
+  }
+
+  // Initialize
+  injectWidget();
+  watchCheckins();
+  console.log('[Awana] Bookmarklet loaded and active');
+})();`;
+
+        // Create the bookmarklet href
+        const bookmarkletCode = `javascript:${DETECTION_CODE}`;
+
+        // Display the code
+        document.getElementById('code-display').textContent = bookmarkletCode;
+
+        // Set the bookmarklet button
+        const bookmarkletBtn = document.getElementById('bookmarklet-btn');
+        bookmarkletBtn.href = bookmarkletCode;
+        bookmarkletBtn.textContent = '📌 Drag to Bookmark Bar';
+
+        // Copy button
+        document.getElementById('copy-btn').addEventListener('click', () => {
+            navigator.clipboard.writeText(bookmarkletCode).then(() => {
+                const status = document.getElementById('status');
+                status.textContent = '✓ Bookmarklet code copied to clipboard!';
+                status.className = 'status success';
+                setTimeout(() => { status.className = 'status'; }, 3000);
+            }).catch(() => {
+                const status = document.getElementById('status');
+                status.textContent = '✗ Failed to copy. Try right-clicking the code and selecting Copy.';
+                status.className = 'status error';
+            });
+        });
+
+        // Click the code block to copy
+        document.getElementById('code-display').addEventListener('click', () => {
+            navigator.clipboard.writeText(bookmarkletCode);
+            const status = document.getElementById('status');
+            status.textContent = '✓ Copied!';
+            status.className = 'status success';
+            setTimeout(() => { status.className = 'status'; }, 2000);
+        });
+    </script>
+</body>
+</html>
