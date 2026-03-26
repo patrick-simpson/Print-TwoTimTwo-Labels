@@ -378,6 +378,43 @@ Write-Host "  2. Click 'Create Bookmarklet'" -ForegroundColor Gray
 Write-Host "  3. Drag the button to your bookmark bar" -ForegroundColor Gray
 Write-Host "  4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
 Write-Host ""
+
+# --- 6a. Download fresh clubber CSV via Edge (uses existing login session) ---
+Write-Host "Downloading clubber list from TwoTimTwo..." -ForegroundColor Cyan
+Write-Host "  Opening Edge to trigger CSV export (uses your saved login)..." -ForegroundColor Gray
+
+# Record the time just before opening Edge so we only pick up a NEW download
+$downloadStart = Get-Date
+
+# Open Edge directly to the CSV export URL; Edge will auto-download the file
+Start-Process "msedge" -ArgumentList "https://kvbchurch.twotimtwo.com/clubber/csv"
+
+# Wait for Edge to open and the download to finish before we go looking for the file
+Write-Host "  Waiting 10 seconds for download to complete..." -ForegroundColor Gray
+Start-Sleep -Seconds 10
+
+# Find the newest CSV created in the Downloads folder since we opened Edge.
+# Filtering by CreationTime ensures we don't accidentally grab a pre-existing file.
+$downloadsFolder = Join-Path $HOME "Downloads"
+$newestCsv = Get-ChildItem -Path $downloadsFolder -Filter "*.csv" -File |
+    Where-Object { $_.CreationTime -gt $downloadStart } |
+    Sort-Object CreationTime -Descending |
+    Select-Object -First 1
+
+if ($newestCsv) {
+    # Move the downloaded file into the print-server directory and standardise the name.
+    # -Force overwrites any existing clubbers.csv from a previous session.
+    $destPath = Join-Path $printServerPath "clubbers.csv"
+    Move-Item -Path $newestCsv.FullName -Destination $destPath -Force
+    Write-Host "  ✓ Clubber list saved: $($newestCsv.Name) → print-server/clubbers.csv" -ForegroundColor Green
+} else {
+    # Non-fatal: warn the user but let the server start anyway with whatever data it has
+    Write-Host "  ⚠ No new CSV found in Downloads — continuing without updated clubber list." -ForegroundColor Yellow
+    Write-Host "    (Make sure you are logged in to TwoTimTwo in Edge.)" -ForegroundColor Yellow
+}
+
+# --- 6b. Open the check-in page now that the CSV is in place ---
+Write-Host ""
 Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
 
