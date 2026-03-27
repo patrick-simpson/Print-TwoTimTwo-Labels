@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/validate-bookmarklet.cjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "validate-bookmarklet": "node scripts/validate-bookmarklet.cjs"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

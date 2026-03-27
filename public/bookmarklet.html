@@ -149,9 +149,17 @@
         </div>
     </div>
 
-    <script>
-        // Unminified bookmarklet code for clarity and debuggability
-        const DETECTION_CODE = `(function() {
+    <!--
+        The bookmarklet IIFE lives in a text/plain script block.
+        The browser will NOT execute it. The main script below reads it
+        via .textContent and prepends "javascript:" to build the bookmark URL.
+
+        This approach eliminates all template-literal escaping issues:
+        the code can freely contain backticks, ${...}, arrows, or any
+        other characters without breaking anything.
+    -->
+    <script type="text/plain" id="bookmarklet-source">
+(function() {
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
@@ -211,7 +219,7 @@
     });
 
     const icon = document.createElement('span');
-    icon.textContent = '🖨️';
+    icon.textContent = '\uD83D\uDDA8\uFE0F';
     icon.style.fontSize = '16px';
 
     const modeSelect = document.createElement('select');
@@ -225,11 +233,12 @@
     });
 
     const modes = [
-      ['auto', '🖨️ Auto-Print'],
-      ['dialog', '🗔 Print Dialog'],
-      ['off', '❌ Off']
+      ['auto', '\uD83D\uDDA8\uFE0F Auto-Print'],
+      ['dialog', '\uD83D\uDDD4 Print Dialog'],
+      ['off', '\u274C Off']
     ];
-    modes.forEach(([value, label]) => {
+    modes.forEach(function(pair) {
+      var value = pair[0], label = pair[1];
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;
@@ -237,11 +246,11 @@
     });
     modeSelect.value = selectedMode;
 
-    const status = document.createElement('span');
-    status.id = 'awana-status';
-    status.style.fontSize = '16px';
+    const statusEl = document.createElement('span');
+    statusEl.id = 'awana-status';
+    statusEl.style.fontSize = '16px';
 
-    modeSelect.addEventListener('change', () => {
+    modeSelect.addEventListener('change', function() {
       selectedMode = modeSelect.value;
       localStorage.setItem(STORAGE_KEY, selectedMode);
       console.log('[Awana] Mode changed to:', selectedMode);
@@ -257,33 +266,33 @@
       borderRadius: '4px',
       cursor: 'pointer'
     });
-    testBtn.addEventListener('click', () => {
+    testBtn.addEventListener('click', function() {
       console.log('[Awana] Test button clicked');
       doPrint('Test Child', 'Sparks', null);
     });
 
-    controls.append(icon, modeSelect, status, testBtn);
+    controls.append(icon, modeSelect, statusEl, testBtn);
     widget.appendChild(controls);
     document.body.appendChild(widget);
     console.log('[Awana] Widget injected');
   }
 
   function setStatus(text) {
-    const statusEl = document.getElementById('awana-status');
-    if (statusEl) {
-      statusEl.textContent = text;
+    const el = document.getElementById('awana-status');
+    if (el) {
+      el.textContent = text;
       console.log('[Awana] Status:', text);
     }
   }
 
   function clearStatus() {
-    setTimeout(() => setStatus(''), STATUS_TIMEOUT);
+    setTimeout(function() { setStatus(''); }, STATUS_TIMEOUT);
   }
 
   function watchCheckins() {
-    let debounceTimer = null;
+    var debounceTimer = null;
 
-    const checkForChange = () => {
+    function checkForChange() {
       const lastCheckinEl = document.querySelector('#lastCheckin div');
       if (!lastCheckinEl) {
         lastPrintedName = null;
@@ -305,9 +314,9 @@
       } else if (!text) {
         lastPrintedName = null;
       }
-    };
+    }
 
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver(function() {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(checkForChange, DEBOUNCE_MS);
     });
@@ -323,7 +332,9 @@
   }
 
   function lookupClub(name) {
-    for (const clubber of document.querySelectorAll('.clubber')) {
+    var clubbers = document.querySelectorAll('.clubber');
+    for (var i = 0; i < clubbers.length; i++) {
+      var clubber = clubbers[i];
       const nameEl = clubber.querySelector('.name');
       if (nameEl && nameEl.innerText.trim() === name) {
         const imgEl = clubber.querySelector('.club img');
@@ -344,53 +355,54 @@
     if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
 
     lastPrintTime = Date.now();
-    const club = lookupClub(name);
+    var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
   }
 
-  async function doPrint(fullName, clubName, imageData) {
-    setStatus('⏳');
+  function doPrint(fullName, clubName, imageData) {
+    setStatus('\u23F3');
 
-    const parts = fullName.split(' ');
-    const firstName = parts[0] || '';
-    const lastName = parts.slice(1).join(' ') || '';
+    var parts = fullName.split(' ');
+    var firstName = parts[0] || '';
+    var lastName = parts.slice(1).join(' ') || '';
 
-    // Reject undo actions
     if (isUndo(firstName) || isUndo(lastName) || isUndo(clubName)) {
-      setStatus('🚫');
+      setStatus('\uD83D\uDEAB');
       clearStatus();
       return;
     }
 
-    // Try silent print to server if not in dialog mode
+    var printPromise;
     if (selectedMode !== 'dialog') {
-      try {
-        const response = await fetch(PRINT_SERVER + '/print', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: fullName,
-            clubName: clubName,
-            clubImageData: imageData
-          }),
-          signal: AbortSignal.timeout(5000)
-        });
-
+      printPromise = fetch(PRINT_SERVER + '/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData }),
+        signal: AbortSignal.timeout(5000)
+      }).then(function(response) {
         if (response.ok) {
-          setStatus('✅');
+          setStatus('\u2705');
           clearStatus();
           console.log('[Awana] Silent print sent to server');
-          return;
+          return true;
         }
-      } catch (err) {
+        return false;
+      }).catch(function(err) {
         console.log('[Awana] Server unavailable:', err.message);
-      }
+        return false;
+      });
+    } else {
+      printPromise = Promise.resolve(false);
     }
 
-    // Fallback: if server failed or mode is 'dialog', show print dialog
-    if (selectedMode === 'off') return;
+    printPromise.then(function(sentToServer) {
+      if (sentToServer || selectedMode === 'off') return;
+      fallbackPrint(firstName, lastName, clubName, imageData);
+    });
+  }
 
-    let frame = document.getElementById('awana-print-frame');
+  function fallbackPrint(firstName, lastName, clubName, imageData) {
+    var frame = document.getElementById('awana-print-frame');
     if (!frame) {
       frame = document.createElement('iframe');
       frame.id = 'awana-print-frame';
@@ -406,13 +418,16 @@
       document.body.appendChild(frame);
     }
 
-    // Build HTML without nested template literals to avoid escaping issues
-    const fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
-    const iconHtml = imageData ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>' : '';
-    const lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
-    const clubHtml = clubName ? '<div class="sep"></div><div class="cn">' + clubName + '</div>' : '';
+    var fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
+    var iconHtml = imageData
+      ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
+      : '';
+    var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
+    var clubHtml = clubName
+      ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
+      : '';
 
-    const html = '<!DOCTYPE html><html><head><style>' +
+    var html = '<!DOCTYPE html><html><head><style>' +
       '@page { size: 4in 2in; margin: 0; }' +
       '* { box-sizing: border-box; margin: 0; padding: 0; }' +
       'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
@@ -436,58 +451,63 @@
     frame.contentWindow.document.write(html);
     frame.contentWindow.document.close();
 
-    setTimeout(() => {
+    setTimeout(function() {
       try {
         frame.contentWindow.focus();
         frame.contentWindow.print();
-        setStatus('✅');
+        setStatus('\u2705');
         console.log('[Awana] Print dialog opened');
       } catch (err) {
-        setStatus('❌');
+        setStatus('\u274C');
         console.error('[Awana] Print failed:', err);
       }
       clearStatus();
     }, 500);
   }
 
-  // Initialize
   injectWidget();
   watchCheckins();
   console.log('[Awana] Bookmarklet loaded and active');
-})();`;
+})();
+    </script>
 
-        // Create the bookmarklet href
-        const bookmarkletCode = `javascript:${DETECTION_CODE}`;
+    <script>
+        // Read the bookmarklet IIFE from the text/plain block above.
+        // Using text/plain prevents the browser from executing it, but
+        // .textContent gives us the raw source to build the bookmark URL.
+        const DETECTION_CODE = document.getElementById('bookmarklet-source').textContent.trim();
+        const bookmarkletCode = 'javascript:' + DETECTION_CODE;
 
         // Display the code
         document.getElementById('code-display').textContent = bookmarkletCode;
 
-        // Set the bookmarklet button
+        // Set the bookmarklet button href
         const bookmarkletBtn = document.getElementById('bookmarklet-btn');
         bookmarkletBtn.href = bookmarkletCode;
-        bookmarkletBtn.textContent = '📌 Drag to Bookmark Bar';
+        bookmarkletBtn.textContent = '\uD83D\uDCCC Drag to Bookmark Bar';
 
         // Copy button
-        document.getElementById('copy-btn').addEventListener('click', () => {
-            navigator.clipboard.writeText(bookmarkletCode).then(() => {
-                const status = document.getElementById('status');
-                status.textContent = '✓ Bookmarklet code copied to clipboard!';
-                status.className = 'status success';
-                setTimeout(() => { status.className = 'status'; }, 3000);
-            }).catch(() => {
-                const status = document.getElementById('status');
-                status.textContent = '✗ Failed to copy. Try right-clicking the code and selecting Copy.';
-                status.className = 'status error';
+        document.getElementById('copy-btn').addEventListener('click', function() {
+            navigator.clipboard.writeText(bookmarkletCode).then(function() {
+                const s = document.getElementById('status');
+                s.textContent = '\u2713 Bookmarklet code copied to clipboard!';
+                s.className = 'status success';
+                setTimeout(function() { s.className = 'status'; }, 3000);
+            }).catch(function() {
+                const s = document.getElementById('status');
+                s.textContent = '\u2717 Failed to copy. Try right-clicking the code and selecting Copy.';
+                s.className = 'status error';
             });
         });
 
         // Click the code block to copy
-        document.getElementById('code-display').addEventListener('click', () => {
-            navigator.clipboard.writeText(bookmarkletCode);
-            const status = document.getElementById('status');
-            status.textContent = '✓ Copied!';
-            status.className = 'status success';
-            setTimeout(() => { status.className = 'status'; }, 2000);
+        document.getElementById('code-display').addEventListener('click', function() {
+            navigator.clipboard.writeText(bookmarkletCode).then(function() {
+                const s = document.getElementById('status');
+                s.textContent = '\u2713 Copied!';
+                s.className = 'status success';
+                setTimeout(function() { s.className = 'status'; }, 2000);
+            });
         });
     </script>
 </body>
