@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.6.7
+# Version    : 1.6.8
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.6.7"
+$ScriptVersion = "1.6.8"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -296,7 +296,22 @@ if ($needsUpdate) {
         Copy-Item $existingCfgPath $cfgBackupPath -Force
         Write-Host "  Backed up config.json (printer & URL settings)" -ForegroundColor Gray
     }
-    Write-Host "  Clearing installation directory..." -ForegroundColor Gray; Get-ChildItem -Path $installDir -Exclude "clubbers-backup.csv", "config-backup.json", "project.zip" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Clearing installation directory (aggressive)..." -ForegroundColor Gray
+    # Force kill ANY node processes to release all possible file locks
+    Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # Aggressive multi-pass deletion loop
+    $retryCount = 0
+    while ($retryCount -lt 3) {
+        try {
+            Get-ChildItem -Path $installDir -Exclude "clubbers-backup.csv", "config-backup.json", "project.zip" | Remove-Item -Recurse -Force -ErrorAction Stop
+            break
+        } catch {
+            $retryCount++
+            Start-Sleep -Seconds 1
+        }
+    }
     Write-Host "  Old installation removed." -ForegroundColor Gray
 }
 
