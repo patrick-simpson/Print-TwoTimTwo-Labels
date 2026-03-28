@@ -483,8 +483,6 @@ if (-not $hasRealCsv) {
 
 Write-Host "[OK] clubbers.csv setup complete." -ForegroundColor Green
 Write-Host ""
-    Write-Host "           Allergies (free text), HandbookGroup (free text)" -ForegroundColor Yellow
-}
 
 # --- 7. Configure printer and URL ---
 Write-Host ""
