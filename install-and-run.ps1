@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.4.9
+# Version    : 1.5.1
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.4.9"
+$ScriptVersion = "1.5.1"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -87,6 +87,29 @@ if (-not $isAdmin -and -not $nodeAlreadyInstalled -and -not $SkipNodeCheck) {
     Write-Host "  Running as Administrator." -ForegroundColor Gray
 } else {
     Write-Host "  (Node.js already installed -- admin not required)" -ForegroundColor Gray
+}
+
+# --- 0. Kill any existing server ---
+# We must do this FIRST so that if we need to update/delete files in Step 3,
+# the files are not locked by a running Node process.
+Write-Host "Checking for existing server on port 3456..." -ForegroundColor Gray
+try {
+    $conns = @(Get-NetTCPConnection -LocalPort 3456 -ErrorAction SilentlyContinue)
+    if ($conns.Count -gt 0) {
+        foreach ($conn in $conns) {
+            $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Host "  Found: $($proc.Name) (PID $($proc.Id)). Stopping..." -ForegroundColor Yellow
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Start-Sleep -Milliseconds 800  # Brief pause to ensure port is released
+        Write-Host "  [OK] Old server stopped." -ForegroundColor Green
+    } else {
+        Write-Host "  [OK] Port is free." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  [WARN] Could not check port (non-critical): $(_)" -ForegroundColor Yellow
 }
 
 # --- 1. Check PowerShell version ---
@@ -304,34 +327,44 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
             Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } |
             ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
-        # Use .NET ZipFile directly -- avoids a Windows PowerShell 5.1 bug where
-        # Expand-Archive fails on zip entries with hidden directories (e.g. .github)
+        # Extract the zip
+        $tempExtract = Join-Path $installDir "_extract_temp"
+        if (Test-Path $tempExtract) { Remove-Item $tempExtract -Recurse -Force }
+        New-Item -ItemType Directory -Path $tempExtract | Out-Null
         Add-Type -AssemblyName System.IO.Compression.FileSystem
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $installDir)
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $tempExtract)
+
+        # Find the extracted folder inside the temp dir
+        $extractedDir = Get-ChildItem -Path $tempExtract -Directory | Select-Object -First 1
+        if (-not $extractedDir) {
+            Write-Host "[FAIL] Zip did not contain a top-level directory" -ForegroundColor Red
+            Read-Host "  Press Enter to exit"
+            exit 1
+        }
+
+        # Move to final location
+        if (Test-Path $projectPath) { Remove-Item $projectPath -Recurse -Force }
+        Move-Item -Path $extractedDir.FullName -Destination $projectPath -Force
+        Remove-Item $tempExtract -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Extracted from '$($extractedDir.Name)'" -ForegroundColor Gray
     } catch {
         Write-Host "[FAIL] Extraction failed: $_" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
         exit 1
     }
 
-    # Find the extracted directory (dynamically - don't hardcode)
-    $extractedDir = Get-ChildItem -Path $installDir -Directory | Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } | Select-Object -First 1
-    if (-not $extractedDir) {
-        Write-Host "[FAIL] Could not find extracted project directory" -ForegroundColor Red
-        Write-Host "  Expected 'Print-TwoTimTwo-Labels*' folder in $installDir" -ForegroundColor Red
+    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+
+    # Verify critical files exist
+    $serverJs = Join-Path $projectPath "print-server\server.js"
+    $pkgJson  = Join-Path $projectPath "print-server\package.json"
+    if (-not (Test-Path $serverJs) -or -not (Test-Path $pkgJson)) {
+        Write-Host "[FAIL] Extraction incomplete -- missing print-server files" -ForegroundColor Red
+        Write-Host "  Expected: $serverJs" -ForegroundColor Red
+        Write-Host "  Try deleting $installDir and running again." -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
         exit 1
     }
-
-    # Rename if necessary
-    if ($extractedDir.Name -ne "Print-TwoTimTwo-Labels") {
-        $extractedPath = $extractedDir.FullName
-        if (Test-Path $projectPath) { Remove-Item $projectPath -Recurse -Force }
-        Rename-Item -Path $extractedPath -NewName "Print-TwoTimTwo-Labels" | Out-Null
-        Write-Host "  Renamed from '$($extractedDir.Name)'" -ForegroundColor Gray
-    }
-
-    Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
     Write-Host "[OK] Extracted to $projectPath" -ForegroundColor Green
 }
 
@@ -433,9 +466,9 @@ if (-not $hasRealCsv) {
         $beforeFiles = @(Get-ChildItem -Path $downloadsDir -Filter "*.csv" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
     }
 
-    Write-Host "  Opening TwoTimTwo CSV download in Edge..." -ForegroundColor Gray
+    Write-Host "  Opening TwoTimTwo CSV download in default browser..." -ForegroundColor Gray
     Write-Host "  (Using your browser's login session)" -ForegroundColor Gray
-    Start-Process "msedge" -ArgumentList $twotimtwoUrl
+    Start-Process $twotimtwoUrl
 
     # Wait for a new CSV file to appear in Downloads (up to 15 seconds)
     $timeout = 15
@@ -578,9 +611,9 @@ Write-Host "  3. Labels print automatically when a child is checked in" -Foregro
 Write-Host ""
 # Open the check-in page in Edge, plus the bookmarklet setup page so the
 # user can drag it to their bookmark bar on first run.
-Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
-Start-Process "msedge" -ArgumentList $cfg.checkinUrl
-Start-Process "msedge" -ArgumentList "http://localhost:3456/bookmarklet.html"
+Write-Host "Opening check-in page in default browser..." -ForegroundColor Cyan
+Start-Process $cfg.checkinUrl
+Start-Process "http://localhost:3456/bookmarklet.html"
 Write-Host ""
 Write-Host "  If this is your first time, drag the bookmarklet button to your bookmark bar." -ForegroundColor Yellow
 Write-Host "  After that, just click it on the check-in page to arm auto-printing." -ForegroundColor Yellow

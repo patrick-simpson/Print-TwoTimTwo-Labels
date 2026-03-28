@@ -51,8 +51,8 @@ timeout /t 2 /nobreak >nul
 
 :: Open Edge to check-in page and bookmarklet page
 echo Opening check-in page in Edge...
-start msedge "%CHECKIN_URL%"
-start msedge "http://localhost:3456/bookmarklet.html"
+start "" "%CHECKIN_URL%"
+start "" "http://localhost:3456/bookmarklet.html"
 
 echo.
 echo Awana Print is running. You can close this window.
