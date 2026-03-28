@@ -3,7 +3,8 @@ setlocal enabledelayedexpansion
 title Awana Print -- Installer
 
 :: --- 1. Admin Check ---
-net session >nul 2>&1
+:: More robust check using fltmc (standard Windows tool that fails without admin)
+fltmc >nul 2>&1
 if %errorLevel% neq 0 (
     echo ============================================================
     echo   [!] NOT RUNNING AS ADMINISTRATOR
@@ -14,7 +15,10 @@ if %errorLevel% neq 0 (
     echo     2. Configure PowerShell
     echo     3. Setup Desktop Shortcuts
     echo.
-    echo   Relaunching with elevation...
+    echo   Attempting to relaunch with elevation in 3 seconds...
+    timeout /t 3 /nobreak >nul
+    
+    :: Use PowerShell to relaunch the exact current file as admin
     powershell -Command "Start-Process '%~f0' -Verb RunAs"
     exit /b
 )
