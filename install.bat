@@ -44,7 +44,7 @@ set "VERSION_URL=https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimT
 set "LOCAL_PS1=%~dp0install-and-run.ps1"
 
 :: Get remote version
-for /f "usebackq" %%v in (powershell -NoProfile -ExecutionPolicy Bypass -Command "(Invoke-WebRequest -Uri '%VERSION_URL%' -UseBasicParsing -ErrorAction SilentlyContinue).Content.Trim()") do set "REMOTE_VERSION=%%v"
+for /f "usebackq" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Invoke-WebRequest -Uri '%VERSION_URL%' -UseBasicParsing -ErrorAction SilentlyContinue).Content.Trim()"` ) do set "REMOTE_VERSION=%%v"
 
 if "%REMOTE_VERSION%"=="" (
     echo   [!] Could not check remote version. Continuing with local script if available.
@@ -70,7 +70,7 @@ echo.
 echo   [*] A newer version is available (%REMOTE_VERSION%).
 echo   [*] Downloading update...
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Continue = 'SilentlyContinue'; Invoke-WebRequest -Uri '%PS1_URL%' -OutFile '%LOCAL_PS1%' -ErrorAction Stop; Write-Host '  [OK] Update downloaded.' -ForegroundColor Green } catch { Write-Host '  [FAIL] Update failed: ' .Exception.Message -ForegroundColor Red; exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '%PS1_URL%' -OutFile '%LOCAL_PS1%' -UseBasicParsing -ErrorAction Stop; Write-Host '  [OK] Update downloaded.' -ForegroundColor Green } catch { Write-Host '  [FAIL] Update failed: ' + `$_.Exception.Message -ForegroundColor Red; exit 1 }"
 
 if errorlevel 1 (
     echo   [!] Update failed. Attempting to continue with local script...
