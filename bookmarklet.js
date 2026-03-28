@@ -272,7 +272,8 @@
       ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
       : '';
     var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
-    var clubHtml = clubName
+    // Removed club name from fallback
+    var clubHtml = ''
       ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
       : '';
 
@@ -379,5 +380,5 @@
   injectWidget();
   watchCheckins();
   syncCsv();
-  console.log('[Awana] Bookmarklet loaded and active (v1.4.8)');
+  console.log('[Awana] Bookmarklet loaded and active (v1.6.6)');
 })();
