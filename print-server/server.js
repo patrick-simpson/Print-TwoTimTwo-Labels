@@ -126,7 +126,9 @@ function parseCSV(raw) {
             pos++;
           }
         }
-        return val;
+        // Skip any whitespace between closing quote and delimiter
+        while (pos < len && raw[pos] === ' ') pos++;
+        return val.trim();
       } else {
         // Unquoted field — collect until comma or newline
         let val = '';
@@ -201,6 +203,9 @@ function loadClubbers() {
       const has = (k) => keys.includes(k) ? k : null;
       const detected = [has('FirstName'), has('LastName'), has('Birthdate'), has('HandbookGroup'), has('Allergies'), has('Notes')].filter(Boolean);
       console.log(`[csv] Loaded ${rows.length} clubber(s) from clubbers.csv (columns: ${detected.join(', ')})`);
+      // Log a few sample names to verify parsing
+      const samples = rows.slice(0, 3).map(r => `${r.FirstName} ${r.LastName}`).join(', ');
+      console.log(`[csv] Sample names: ${samples}`);
     } else {
       console.log('[csv] clubbers.csv is empty or has no data rows');
     }
@@ -365,7 +370,7 @@ async function generateLabel(
   const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
 
   try {
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
+    const doc = new PDFDocument({ size: [PAGE_H, PAGE_W], margin: 0, layout: 'landscape' });
     const out  = fs.createWriteStream(pdfPath);
 
     doc.pipe(out);
@@ -406,7 +411,7 @@ async function generateLabel(
 
     // ── Text area ─────────────────────────────────────────────────────────────
     const hasLast  = lastName.trim().length > 0;
-    const hasClub  = clubName.trim().length > 0;
+    const hasClub  = clubName.trim().length > 0 && !hasIcon;
     const hasGroup = handbookGroup.length > 0;
     const hasAllergy = allergyTokens.length > 0;
 
