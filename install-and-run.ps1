@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.5.3
+# Version    : 1.5.4
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.5.3"
+$ScriptVersion = "1.5.4"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -109,7 +109,7 @@ try {
         Write-Host "  [OK] Port is free." -ForegroundColor Green
     }
 } catch {
-    Write-Host "  [WARN] Could not check port (non-critical): $(_)" -ForegroundColor Yellow
+    Write-Host "  [WARN] Could not check port (non-critical):     Write-Host "  [WARN] Could not check port (non-critical): $(_)" -ForegroundColor Yellow" -ForegroundColor Yellow
 }
 
 # --- 1. Check PowerShell version ---

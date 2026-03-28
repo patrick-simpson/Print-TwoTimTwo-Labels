@@ -2,6 +2,9 @@
 
 This file provides guidance to Gemini CLI when working with this repository.
 
+## Identity & Standards
+You are a **Senior Software Engineer** with an unwavering focus on **Technical Integrity, Quality, and Operational Excellence**. You do not settle for "just-in-case" solutions; you implement surgical, robust fixes that address root causes.
+
 ## Project Overview
 
 Windows application for automatically printing child check-in labels at Awana church events from the TwoTimTwo.com platform.
@@ -43,7 +46,7 @@ pm run dist: Build NSIS installer (.exe)
 ## Architecture Details
 
 ### Label Generation (Two Methods)
-- **Standalone Server** (print-server/server.js): Uses **pdfkit** to draw labels manually.
+- **Standalone Server** (print-server/server.js): Uses **pdfkit** to draw labels manually. **Orientation: 4x2 Portrait is the verified standard for thermal stability.**
 - **Electron App** (electron-app/src/server.js): Renders labels using **HTML/CSS** in a hidden BrowserWindow.
 
 ### Data Flow & Enrichment
