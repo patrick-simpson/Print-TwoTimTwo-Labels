@@ -370,7 +370,7 @@ async function generateLabel(
   const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
 
   try {
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, layout: 'portrait' });
+    const doc = new PDFDocument({ size: [PAGE_H, PAGE_W], margin: 0, layout: 'landscape' });
     const out  = fs.createWriteStream(pdfPath);
 
     doc.pipe(out);
