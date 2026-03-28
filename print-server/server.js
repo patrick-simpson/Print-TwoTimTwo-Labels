@@ -343,7 +343,7 @@ async function resolveImageBuffer(clubImageData) {
 }
 
 // ── Auto-size a font to fit within maxWidth ───────────────────────────────────
-function fitFontSize(doc, text, fontName, maxWidth, maxSize = 44, minSize = 18) {
+function fitFontSize(doc, text, fontName, maxWidth, maxSize = 38, minSize = 18) {
   doc.font(fontName);
   for (let size = maxSize; size >= minSize; size -= 2) {
     doc.fontSize(size);
@@ -401,7 +401,7 @@ async function generateLabel(
       const iconX = BX + (ICON_COL_W - iconSize) / 2;
       const iconY = BY + (BH - iconSize) / 2;
       try {
-        doc.image(clubImageBuffer, iconX, iconY, { width: iconSize, height: iconSize, fit: [iconSize, iconSize], align: 'center', valign: 'center' });
+        doc.image(clubImageBuffer, iconX, iconY, { width: iconSize, height: iconSize, fit: [iconSize, iconSize], align: 'center', valign: 'center', align: 'center', valign: 'center' });
       } catch {
         // Image decode failed — draw a placeholder circle
         doc.circle(BX + ICON_COL_W / 2, BY + BH / 2, 20)
