@@ -55,6 +55,9 @@ pm run dist: Build NSIS installer (.exe)
 - **Enrichment Logic**: Matches irstName + lastName to find allergies (from "Notes" field).
 
 ### Reliability Mandates
+- **Zero-Loop Policy**: Any script that self-relaunchs (for elevation, updates, or retries) MUST include a recursion guard or a 'circuit breaker' to prevent infinite loops. Never assume a standard 'admin check' is bulletproof.
+- **Context-Aware Scripts**: When writing Batch or PowerShell, you must consider the parent process (e.g., CMD vs PowerShell vs Electron).
+- **Never Crash**: Use uncaughtException handlers in the server.
 - **Never Crash**: Use uncaughtException handlers.
 - **Silent Failures**: Print basic label if CSV enrichment fails.
 - **Cleanup**: Always s.unlink temporary PDFs in a inally block.
