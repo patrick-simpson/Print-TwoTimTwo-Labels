@@ -2,27 +2,31 @@
 setlocal enabledelayedexpansion
 title Awana Print -- Installer
 
-:: --- 1. Admin Check ---
-:: More robust check using fltmc (standard Windows tool that fails without admin)
-fltmc >nul 2>&1
-if %errorLevel% neq 0 (
-    echo ============================================================
-    echo   [!] NOT RUNNING AS ADMINISTRATOR
-    echo ============================================================
-    echo.
-    echo   This installer needs Administrative rights to:
-    echo     1. Install Node.js (if missing)
-    echo     2. Configure PowerShell
-    echo     3. Setup Desktop Shortcuts
-    echo.
-    echo   Attempting to relaunch with elevation in 3 seconds...
-    timeout /t 3 /nobreak >nul
-    
-    :: Use PowerShell to relaunch the exact current file as admin
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
+:: --- 1. Admin Check & Relaunch ---
+:: Circuit Breaker: If we were already relaunched, skip the check to prevent infinite loops.
+if "%1"=="--admin-relaunch" goto :pretty_header
 
+:: Robust check using PowerShell's .NET identity check
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 1 }"
+if %errorLevel% equ 0 goto :pretty_header
+
+echo ============================================================
+echo   [!] NOT RUNNING AS ADMINISTRATOR
+echo ============================================================
+echo.
+echo   This installer needs Administrative rights to:
+echo     1. Install Node.js (if missing)
+echo     2. Configure PowerShell
+echo     3. Setup Desktop Shortcuts
+echo.
+echo   Relaunching with elevation in 3 seconds...
+timeout /t 3 /nobreak >nul
+
+:: Relaunch with the circuit breaker flag
+powershell -Command "Start-Process '%~f0' -ArgumentList '--admin-relaunch' -Verb RunAs"
+exit /b
+
+:pretty_header
 :: --- 2. Pretty Header ---
 cls
 echo ============================================================
