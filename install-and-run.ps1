@@ -1,5 +1,5 @@
-# Awana Label Print Server -- All-in-One Installer
-# Version    : 1.7.1
+﻿# Awana Label Print Server -- All-in-One Installer
+# Version    : 1.7.3
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.7.1"
+$ScriptVersion = "1.7.3"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -720,3 +720,4 @@ try {
 $env:PRINTER_NAME = $cfg.printerName
 Set-Location $printServerPath
 node server.js
+

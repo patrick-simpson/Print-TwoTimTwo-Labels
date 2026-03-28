@@ -14,7 +14,7 @@ const files = [
     path: path.join(rootDir, 'install-and-run.ps1'),
     patterns: [
       { from: /# Version\s+:\s+\d+\.\d+\.\d+/g, to: '# Version    : ' + version },
-      { from: /\ = "\d+\.\d+\.\d+"/g, to: '\ = "' + version + '"' }
+      { from: /\ = "\d+\.\d+\.\d+"/g, to: ' = "' + version + '"' }
     ]
   },
   {
@@ -34,6 +34,12 @@ const files = [
       patterns: [
         { from: /"version": "\d+\.\d+\.\d+"/g, to: '"version": "' + version + '"' }
       ]
+  },
+  {
+    path: path.join(rootDir, 'VERSION'),
+    patterns: [
+      { from: /\d+\.\d+\.\d+/g, to: version }
+    ]
   }
 ];
 

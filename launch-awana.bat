@@ -1,11 +1,85 @@
-@echo off
+﻿@echo off
+setlocal enabledelayedexpansion
 title Awana Print
-echo Starting Awana Print Server...
+echo Starting Awana Print...
 
 set "INSTALL_DIR=%APPDATA%\Awana-Print"
 set "PROJECT_DIR=%INSTALL_DIR%\Print-TwoTimTwo-Labels"
 set "SERVER_DIR=%PROJECT_DIR%\print-server"
 set "CONFIG_HELPER=%INSTALL_DIR%\read-config.js"
+set "VERSION_FILE=%PROJECT_DIR%\VERSION"
+
+:: --- 1. Admin Check & Relaunch ---
+:: Circuit Breaker: If we were already relaunched, skip the check to prevent infinite loops.
+if "%1"=="--admin-relaunch" goto :check_for_updates
+
+:: Robust check using PowerShell's .NET identity check
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 1 }"
+if %errorLevel% equ 0 goto :check_for_updates
+
+echo.
+echo   [!] NOT RUNNING AS ADMINISTRATOR
+echo   Relaunching with elevation in 2 seconds...
+timeout /t 2 /nobreak >nul
+
+:: Relaunch with the circuit breaker flag
+powershell -Command "Start-Process '%~f0' -ArgumentList '--admin-relaunch' -Verb RunAs"
+exit /b
+
+:check_for_updates
+:: --- 2. Update Check ---
+echo.
+echo [#] Checking for updates...
+set "VERSION_URL=https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/VERSION"
+set "INSTALL_BAT_URL=https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install.bat"
+set "TEMP_VERSION=%TEMP%\awana_version.txt"
+
+:: Get remote version
+powershell -NoProfile -ExecutionPolicy Bypass -Command "(Invoke-WebRequest -Uri '%VERSION_URL%' -UseBasicParsing -ErrorAction SilentlyContinue).Content.Trim()" > "%TEMP_VERSION%" 2>nul
+set /p REMOTE_VERSION=<"%TEMP_VERSION%"
+del "%TEMP_VERSION%" 2>nul
+
+if "%REMOTE_VERSION%"=="" (
+    echo [!] Could not check remote version. Continuing...
+    goto :start_server
+)
+
+:: Get local version
+if exist "%VERSION_FILE%" (
+    set /p LOCAL_VERSION=<"%VERSION_FILE%"
+) else (
+    set "LOCAL_VERSION=0.0.0"
+)
+
+echo [+] Latest version: %REMOTE_VERSION%
+echo [+] Local version:  %LOCAL_VERSION%
+
+:: Compare versions
+if "%LOCAL_VERSION%"=="%REMOTE_VERSION%" (
+    echo [OK] You have the latest version.
+    goto :start_server
+)
+
+echo.
+echo [*] A newer version is available (%REMOTE_VERSION%).
+echo [*] Downloading and running installer...
+echo.
+
+set "INSTALL_BAT=%TEMP%\awana_install.bat"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%INSTALL_BAT_URL%' -OutFile '%INSTALL_BAT%' -ErrorAction SilentlyContinue"
+
+if exist "%INSTALL_BAT%" (
+    :: Run the installer and then exit this script (it will be relaunched by the installer or the user)
+    call "%INSTALL_BAT%"
+    del "%INSTALL_BAT%" 2>nul
+    exit /b
+) else (
+    echo [!] Failed to download installer. Continuing with local version...
+)
+
+:start_server
+:: --- 3. Start Server Logic ---
+echo Starting Awana Print Server...
 
 :: Check node is available
 where node >nul 2>nul

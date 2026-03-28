@@ -1,4 +1,13 @@
+﻿## [1.7.3] - 2026-03-27
+- **Auto-Update Launcher:** Added administrative check, auto-elevation, and version checking directly to \launch-awana.bat\.
+- **Desktop Shortcut:** Updated installer to always create/update the "Awana Print" desktop shortcut, ensuring it points correctly to the launcher in \AppData\.
+
 # Project Changes & Release Notes
+
+## [1.7.2] - 2026-03-27
+- **Auto-Update:** Enhanced install.bat to automatically check for new versions of the setup script on GitHub.
+- **Versioning:** Introduced a dedicated VERSION file in the project root for lightweight version checking.
+
 
 ## [1.7.1] - 2026-03-27
 - **Extension UX:** Added a popup menu (visible when clicking the extension icon) that shows the real-time status of the local KVBC Print Server.
@@ -66,3 +75,5 @@
 - **CSV Robustness:** Rewrote the server-side CSV parser to handle real TwoTimTwo exports (quoted fields, embedded newlines, and specific headers).
 - **Bookmarklet Safety:** Moved bookmarklet source into a \	ext/plain\ block to avoid template literal escaping issues and added a prebuild syntax validation script.
 - **Hosting:** Moved bookmarklet hosting to GitHub Pages for centralized updates.
+
+

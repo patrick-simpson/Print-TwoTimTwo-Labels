@@ -68,3 +68,9 @@ You **MUST** update changes.md for every functional change or version bump.
 - Format: Use release-note style with version numbers and dates.
 - Content: Summarize what changed, why, and any specific technical decisions made.
 - Consistency: This file is the canonical history of the project for both users and future AI sessions.
+
+## GitHub Mandate
+You **MUST** commit and push your changes to GitHub once they are verified.
+- Stage all relevant changes.
+- Use a descriptive commit message that aligns with the version bump if applicable.
+- Push to the main branch unless otherwise directed.
