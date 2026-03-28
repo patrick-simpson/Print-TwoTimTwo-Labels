@@ -40,13 +40,23 @@ echo.
 :: --- 3. Run Installer ---
 :: Check if install-and-run.ps1 exists locally
 if exist "%~dp0install-and-run.ps1" (
-    echo   [#] Found local setup script. Running...
+    cls
+echo ============================================================
+echo   Awana Label Print Server -- Installer
+echo ============================================================
+echo.
+echo   [#] Found local setup script. Running...
     echo.
     powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install-and-run.ps1"
     goto :done
 )
 
 :: Download the PS1 from GitHub and run it
+cls
+echo ============================================================
+echo   Awana Label Print Server -- Installer
+echo ============================================================
+echo.
 echo   [#] Downloading latest installer from GitHub...
 set "PS1_URL=https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1"
 set "PS1_PATH=%TEMP%\awana-install-and-run.ps1"
@@ -62,6 +72,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo.
+cls
+echo ============================================================
+echo   Awana Label Print Server -- Installer
+echo ============================================================
 echo.
 echo   [#] Starting installation...
 echo.
