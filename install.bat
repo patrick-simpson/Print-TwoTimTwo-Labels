@@ -50,7 +50,9 @@ if "%REMOTE_VERSION%"=="" (
 
 set "LOCAL_VERSION=0.0.0"
 if exist "%LOCAL_PS1%" (
-    for /f "tokens=3" %%a in ('findstr /C:"# Version    :" "%LOCAL_PS1%"') do set "LOCAL_VERSION=%%a"
+    for /f "tokens=3" %%a in ('findstr /C:"# Version    :" "%LOCAL_PS1%"') do (
+        set "LOCAL_VERSION=%%a"
+    )
     echo   [+] Local version:  !LOCAL_VERSION!
 )
 
@@ -64,9 +66,11 @@ echo.
 echo   [*] A newer version is available.
 echo   [*] Downloading update...
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '%PS1_URL%' -OutFile '%LOCAL_PS1%' -UseBasicParsing -ErrorAction Stop; Write-Host '  [OK] Download complete.' -ForegroundColor Green } catch { Write-Host '  [FAIL] Download failed: ' + `$_.Exception.Message -ForegroundColor Red; exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '%PS1_URL%' -OutFile '%LOCAL_PS1%' -UseBasicParsing -ErrorAction Stop"
 
-if errorlevel 1 (
+if %errorLevel% equ 0 (
+    echo   [OK] Download complete.
+) else (
     echo.
     echo   [!] Update failed. Attempting to continue with local version...
 )

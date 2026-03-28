@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion$ScriptVersion = "1.8.0"
+$ScriptVersion = "1.8.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -719,4 +719,5 @@ try {
 $env:PRINTER_NAME = $cfg.printerName
 Set-Location $printServerPath
 node server.js
+
 
