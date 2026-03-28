@@ -44,52 +44,134 @@ const TEXT_W      = BX + BW - TEXT_X; // right text zone width
 let clubbers = [];
 
 // ── CSV parser ────────────────────────────────────────────────────────────────
-// Parses a raw CSV string into an array of plain objects keyed by header names.
-// Supports quoted fields (commas or newlines inside "...") as a bonus.
-// Returns [] on empty input or any parsing error — never throws.
+// Parses a raw CSV string into an array of plain objects keyed by canonical
+// field names.  Handles both the TwoTimTwo export (quoted fields, spaces in
+// headers like "First Name") and the manual clubbers-template.csv format
+// ("FirstName").  Returns [] on empty input or any parse error — never throws.
+
+// Map every known header variation to a canonical key.
+// Add new mappings here if TwoTimTwo ever renames a column.
+const HEADER_MAP = {
+  // canonical ← variations (all compared lowercase, spaces/underscores stripped)
+  'firstname':      'FirstName',
+  'first name':     'FirstName',
+  'first_name':     'FirstName',
+  'lastname':       'LastName',
+  'last name':      'LastName',
+  'last_name':      'LastName',
+  'birthdate':      'Birthdate',
+  'birth date':     'Birthdate',
+  'birthday':       'Birthdate',
+  'date of birth':  'Birthdate',
+  'dob':            'Birthdate',
+  'allergies':      'Allergies',
+  'allergy':        'Allergies',
+  'notes':          'Notes',
+  'handbookgroup':  'HandbookGroup',
+  'handbook group': 'HandbookGroup',
+  'handbook_group': 'HandbookGroup',
+  'club':           'Club',
+  'group':          'Group',
+  'color':          'Color',
+  'grade':          'Grade',
+  'gender':         'Gender',
+  'clubber id':     'ClubberID',
+  'clubberid':      'ClubberID',
+  'inactive':       'Inactive',
+  'book':           'Book',
+};
+
+function normalizeHeader(raw) {
+  const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  return HEADER_MAP[key] || raw;  // keep original if no mapping found
+}
+
 function parseCSV(raw) {
   if (!raw || !raw.trim()) return [];
   try {
+    // The TwoTimTwo CSV has quoted fields that can contain newlines (e.g. Notes,
+    // Emergency Contact).  We need a proper stateful parser, not a simple
+    // line-by-line split.
     const rows = [];
-    const lines = raw.split('\n');
     let headers = [];
     let headerParsed = false;
+    let pos = 0;
+    const len = raw.length;
 
-    for (let li = 0; li < lines.length; li++) {
-      const line = lines[li].trim();
-      if (!line) continue;  // skip blank lines
+    // Parse one field starting at `pos`. Returns the field value and advances
+    // `pos` past the delimiter (comma or end-of-record).
+    function nextField() {
+      // Skip leading whitespace (but not newlines — those are record separators)
+      while (pos < len && raw[pos] === ' ') pos++;
 
-      // Parse this line into fields, respecting double-quoted values
-      const fields = [];
-      let field = '';
-      let inQuote = false;
+      if (pos >= len) return '';
 
-      for (let ci = 0; ci < line.length; ci++) {
-        const ch = line[ci];
-        if (ch === '"') {
-          // A doubled quote inside a quoted field escapes to a literal "
-          if (inQuote && line[ci + 1] === '"') {
-            field += '"';
-            ci++;
+      if (raw[pos] === '"') {
+        // Quoted field — collect until closing quote
+        pos++;  // skip opening quote
+        let val = '';
+        while (pos < len) {
+          if (raw[pos] === '"') {
+            if (pos + 1 < len && raw[pos + 1] === '"') {
+              // Escaped quote
+              val += '"';
+              pos += 2;
+            } else {
+              // Closing quote
+              pos++;  // skip closing quote
+              break;
+            }
           } else {
-            inQuote = !inQuote;
+            val += raw[pos];
+            pos++;
           }
-        } else if (ch === ',' && !inQuote) {
-          fields.push(field.trim());
-          field = '';
+        }
+        return val;
+      } else {
+        // Unquoted field — collect until comma or newline
+        let val = '';
+        while (pos < len && raw[pos] !== ',' && raw[pos] !== '\n' && raw[pos] !== '\r') {
+          val += raw[pos];
+          pos++;
+        }
+        return val.trim();
+      }
+    }
+
+    function parseRecord() {
+      const fields = [];
+      while (pos < len) {
+        fields.push(nextField());
+        if (pos < len && raw[pos] === ',') {
+          pos++;  // skip comma, continue to next field
         } else {
-          field += ch;
+          // End of record (newline or EOF)
+          break;
         }
       }
-      fields.push(field.trim());  // push the last field
+      // Skip trailing newlines between records
+      while (pos < len && (raw[pos] === '\r' || raw[pos] === '\n')) pos++;
+      return fields;
+    }
+
+    while (pos < len) {
+      // Skip blank lines / whitespace between records
+      while (pos < len && (raw[pos] === '\r' || raw[pos] === '\n' || raw[pos] === ' ')) pos++;
+      if (pos >= len) break;
+
+      // Stop at TwoTimTwo footer lines like "Clubber Count=116" or "FILTER,VALUE"
+      const restOfLine = raw.slice(pos, raw.indexOf('\n', pos) === -1 ? len : raw.indexOf('\n', pos));
+      if (/^Clubber Count=/i.test(restOfLine) || /^FILTER,/i.test(restOfLine)) break;
+
+      const fields = parseRecord();
+      if (fields.length === 0 || (fields.length === 1 && !fields[0])) continue;
 
       if (!headerParsed) {
-        headers = fields.map(h => h.trim());
+        headers = fields.map(normalizeHeader);
         headerParsed = true;
         continue;
       }
 
-      // Zip fields with headers into a plain object
       const obj = {};
       headers.forEach((h, i) => { obj[h] = fields[i] !== undefined ? fields[i] : ''; });
       rows.push(obj);
@@ -113,7 +195,15 @@ function loadClubbers() {
   try {
     const raw = fs.readFileSync(csvPath, 'utf8');
     const rows = parseCSV(raw);
-    console.log(`[csv] Loaded ${rows.length} clubber(s) from clubbers.csv`);
+    if (rows.length > 0) {
+      const sample = rows[0];
+      const keys = Object.keys(sample);
+      const has = (k) => keys.includes(k) ? k : null;
+      const detected = [has('FirstName'), has('LastName'), has('Birthdate'), has('HandbookGroup'), has('Allergies'), has('Notes')].filter(Boolean);
+      console.log(`[csv] Loaded ${rows.length} clubber(s) from clubbers.csv (columns: ${detected.join(', ')})`);
+    } else {
+      console.log('[csv] clubbers.csv is empty or has no data rows');
+    }
     return rows;
   } catch (e) {
     if (e.code === 'ENOENT') {
@@ -437,10 +527,48 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', printer: PRINTER_NAME || '(default)' });
 });
 
-// Explicit route for bookmarklet (debugging)
+app.get('/roster-status', (req, res) => {
+  res.json({ count: clubbers.length });
+});
+
+// Explicit route for bookmarklet page
 app.get('/bookmarklet.html', (req, res) => {
   const bookmarkletPath = path.join(__dirname, 'public', 'bookmarklet.html');
   res.sendFile(bookmarkletPath);
+});
+
+// Serve bookmarklet JS files from project root (one level up from print-server/)
+app.get('/bookmarklet.min.js', (req, res) => {
+  const filePath = path.join(__dirname, '..', 'bookmarklet.min.js');
+  if (fs.existsSync(filePath)) return res.type('js').sendFile(filePath);
+  res.status(404).send('bookmarklet.min.js not found');
+});
+app.get('/bookmarklet.js', (req, res) => {
+  const filePath = path.join(__dirname, '..', 'bookmarklet.js');
+  if (fs.existsSync(filePath)) return res.type('js').sendFile(filePath);
+  res.status(404).send('bookmarklet.js not found');
+});
+
+// ── Receive CSV from the bookmarklet (authenticated browser session) ─────────
+// The bookmarklet fetches /clubber/csv from the same origin (which has the
+// user's session cookies) and POSTs the raw CSV text here so the server can
+// write it to clubbers.csv for enriched label data.
+app.post('/update-csv', (req, res) => {
+  const { csv } = req.body || {};
+  if (!csv || typeof csv !== 'string' || !csv.trim()) {
+    return res.status(400).json({ error: 'csv field is required (string)' });
+  }
+  const csvPath = path.join(__dirname, 'clubbers.csv');
+  try {
+    fs.writeFileSync(csvPath, csv, 'utf8');
+    const rows = parseCSV(csv);
+    clubbers = rows;
+    console.log(`[csv] Updated clubbers.csv from browser (${rows.length} clubber(s))`);
+    res.json({ ok: true, count: rows.length });
+  } catch (e) {
+    console.error('[csv] Failed to write clubbers.csv:', e.message);
+    res.status(500).json({ error: 'Failed to write CSV' });
+  }
 });
 
 app.post('/print', async (req, res) => {
@@ -474,9 +602,13 @@ app.post('/print', async (req, res) => {
 
   let allergyTokens, handbookGroup, birthday;
   if (record) {
-    allergyTokens = parseAllergies(record.Allergies);
+    // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
+    // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
+    const allergySource = record.Allergies || record.Notes || '';
+    allergyTokens = parseAllergies(allergySource);
     handbookGroup = record.HandbookGroup || '';
     birthday      = isBirthdayWeek(record.Birthdate);
+    console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}`);
   } else {
     // Child not in CSV (new visitor, typo, or CSV unavailable) — print a basic
     // label using only the data from the POST request. No crash, no skip.

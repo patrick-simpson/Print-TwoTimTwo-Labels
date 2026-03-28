@@ -28,3 +28,14 @@ dist-ssr
 *.sln
 *.sw?
 migrated_prompt_history/
+
+# Real clubber data (personal info -- never commit)
+clubbers*.csv
+!print-server/clubbers-template.csv
+
+# Example/test files
+example.html
+example_files/
+
+# Claude Code session data
+.claude/

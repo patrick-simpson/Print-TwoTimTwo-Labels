@@ -1,16 +1,16 @@
-# Awana Label Print Server — All-in-One Installer
-# Version    : 1.4.1
-# Updated    : 2026-03-26
+# Awana Label Print Server -- All-in-One Installer
+# Version    : 1.4.8
+# Updated    : 2026-03-27
 #
 # This script:
-#   1. Upgrades PowerShell to v7+ if needed
+#   1. Checks/upgrades PowerShell to v7+
 #   2. Installs Node.js LTS if needed  (requires admin on first run only)
-#   3. Downloads the Print-TwoTimTwo-Labels project
-#   3b.Creates a clubbers.csv template for enriched labels (allergy alerts,
-#      birthday banners, handbook groups) — edit with your real data
-#   4. Installs npm packages (~300 MB, first time only)
-#   5. Asks for printer + check-in URL
-#   6. Starts the server and opens Edge
+#   3. Checks if installed version is outdated -> re-downloads if so
+#   4. Downloads the Print-TwoTimTwo-Labels project + npm packages
+#   5. Loads saved config (printer & check-in URL)
+#   6. Downloads clubbers.csv from TwoTimTwo for enriched labels
+#   7. Asks for printer + check-in URL (skippable on repeat runs)
+#   8. Starts the print server and opens Edge
 #
 # ADMIN NOTE: Administrator rights are only needed on the very first run if
 # Node.js is not yet installed. Once Node.js is installed, the script runs
@@ -24,15 +24,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.4.1"
+$ScriptVersion = "1.4.8"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
     Write-Host ""
-    Write-Host "╔═══════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║ ERROR:" -ForegroundColor Red
-    Write-Host "║ $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "╚═══════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host "==========================================================================" -ForegroundColor Red
+    Write-Host "  ERROR:" -ForegroundColor Red
+    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "==========================================================================" -ForegroundColor Red
     Write-Host ""
     Write-Host "Press any key to exit..." -ForegroundColor Yellow
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -44,7 +44,7 @@ $Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
 
 Write-Host ""
 Write-Host "=================================================================================" -ForegroundColor Cyan
-Write-Host "  Awana Label Print Server — All-in-One Installer" -ForegroundColor Cyan
+Write-Host "  Awana Label Print Server -- All-in-One Installer" -ForegroundColor Cyan
 Write-Host "  Version $ScriptVersion" -ForegroundColor Cyan
 Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""
@@ -64,7 +64,7 @@ if (-not $isAdmin -and -not $nodeAlreadyInstalled -and -not $SkipNodeCheck) {
 
     $scriptPath = $MyInvocation.MyCommand.Path
     if ($scriptPath) {
-        # Script was saved as a file — we can re-launch it elevated automatically
+        # Script was saved as a file -- we can re-launch it elevated automatically
         Write-Host "  Relaunching as Administrator..." -ForegroundColor Cyan
         $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
         if ($PrinterName)  { $argList += " -PrinterName `"$PrinterName`""  }
@@ -73,7 +73,7 @@ if (-not $isAdmin -and -not $nodeAlreadyInstalled -and -not $SkipNodeCheck) {
         Start-Process powershell -Verb RunAs -ArgumentList $argList
         exit 0
     } else {
-        # Script was pasted into PowerShell — cannot auto-elevate (no file path)
+        # Script was pasted into PowerShell -- cannot auto-elevate (no file path)
         Write-Host "  To run as Administrator:" -ForegroundColor White
         Write-Host "    1. Close this window." -ForegroundColor White
         Write-Host "    2. Right-click PowerShell in the Start menu." -ForegroundColor White
@@ -86,11 +86,11 @@ if (-not $isAdmin -and -not $nodeAlreadyInstalled -and -not $SkipNodeCheck) {
 } elseif ($isAdmin) {
     Write-Host "  Running as Administrator." -ForegroundColor Gray
 } else {
-    Write-Host "  (Node.js already installed — admin not required)" -ForegroundColor Gray
+    Write-Host "  (Node.js already installed -- admin not required)" -ForegroundColor Gray
 }
 
-# --- 0. Check PowerShell version ---
-Write-Host "Checking PowerShell version..." -ForegroundColor Gray
+# --- 1. Check PowerShell version ---
+Write-Host "[1/8] Checking PowerShell version..." -ForegroundColor White
 $psVer = $PSVersionTable.PSVersion
 if ($psVer.Major -lt 7) {
     # Check if PS7 is already installed
@@ -127,13 +127,13 @@ if ($psVer.Major -lt 7) {
                 Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
                 $upgraded = $true
             } catch {
-                Write-Host "  ✗ Could not install PowerShell 7: $_" -ForegroundColor Red
+                Write-Host "  [FAIL] Could not install PowerShell 7: $_" -ForegroundColor Red
                 Write-Host "  Continuing with PowerShell $($psVer.Major).$($psVer.Minor)..." -ForegroundColor Yellow
             }
         }
 
         if ($upgraded) {
-            Write-Host "✓ PowerShell 7 installed." -ForegroundColor Green
+            Write-Host "[OK] PowerShell 7 installed." -ForegroundColor Green
             Write-Host ""
             Write-Host "  Please close this window and re-run the script in PowerShell 7." -ForegroundColor Yellow
             Write-Host "  (Search for 'PowerShell 7' in the Start menu.)" -ForegroundColor Yellow
@@ -142,16 +142,16 @@ if ($psVer.Major -lt 7) {
         }
     }
 } else {
-    Write-Host "✓ PowerShell $($psVer.Major).$($psVer.Minor) found." -ForegroundColor Green
+    Write-Host "[OK] PowerShell $($psVer.Major).$($psVer.Minor) found." -ForegroundColor Green
 }
 
-# --- 1. Check for Node.js and install if needed ---
-Write-Host "Checking for Node.js..." -ForegroundColor Gray
+# --- 2. Check for Node.js and install if needed ---
+Write-Host "[2/8] Checking for Node.js..." -ForegroundColor White
 if ($SkipNodeCheck) {
-    Write-Host "⊘ Skipping Node.js check (per -SkipNodeCheck flag)" -ForegroundColor Gray
+    Write-Host "[SKIP] Skipping Node.js check (per -SkipNodeCheck flag)" -ForegroundColor Gray
 } elseif (Get-Command node -ErrorAction SilentlyContinue) {
     $nodeVersion = node --version
-    Write-Host "✓ Node.js $nodeVersion found." -ForegroundColor Green
+    Write-Host "[OK] Node.js $nodeVersion found." -ForegroundColor Green
 } else {
     Write-Host "Node.js not found. Installing Node.js LTS..." -ForegroundColor Yellow
     Write-Host ""
@@ -165,9 +165,9 @@ if ($SkipNodeCheck) {
     try {
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath -ErrorAction Stop
-        Write-Host "✓ Downloaded ($('{0:N0}' -f ((Get-Item $installerPath).Length)) bytes)" -ForegroundColor Green
+        Write-Host "[OK] Downloaded ($('{0:N0}' -f ((Get-Item $installerPath).Length)) bytes)" -ForegroundColor Green
     } catch {
-        Write-Host "✗ Download failed: $_" -ForegroundColor Red
+        Write-Host "[FAIL] Download failed: $_" -ForegroundColor Red
         Write-Host "  Please download Node.js LTS manually from https://nodejs.org" -ForegroundColor Yellow
         Write-Host "  Or run this script with -SkipNodeCheck if you already have Node.js installed" -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
@@ -178,7 +178,7 @@ if ($SkipNodeCheck) {
     try {
         Start-Process -FilePath $installerPath -ArgumentList "/qn" -Wait -ErrorAction Stop
     } catch {
-        Write-Host "✗ Node.js installation failed: $_" -ForegroundColor Red
+        Write-Host "[FAIL] Node.js installation failed: $_" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
         exit 1
     }
@@ -195,9 +195,9 @@ if ($SkipNodeCheck) {
 
     if ($nodeCheck) {
         $nodeVersion = node --version
-        Write-Host "✓ Node.js installed: $nodeVersion" -ForegroundColor Green
+        Write-Host "[OK] Node.js installed: $nodeVersion" -ForegroundColor Green
     } else {
-        Write-Host "✗ Node.js installation verification failed." -ForegroundColor Red
+        Write-Host "[FAIL] Node.js installation verification failed." -ForegroundColor Red
         Write-Host "  PATH may not have been refreshed properly." -ForegroundColor Red
         Write-Host "  Try closing PowerShell and running this script again in a new window." -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
@@ -205,8 +205,9 @@ if ($SkipNodeCheck) {
     }
 }
 
-# --- 2. Determine install location ---
+# --- 3. Determine install location and check for updates ---
 Write-Host ""
+Write-Host "[3/8] Checking installation..." -ForegroundColor White
 if ($InstallPath) {
     $installDir = $InstallPath
     Write-Host "Using custom install path: $installDir" -ForegroundColor Gray
@@ -223,7 +224,7 @@ try {
         New-Item -ItemType Directory -Path $installDir | Out-Null
     }
 } catch {
-    Write-Host "✗ Failed to create/access install directory: $_" -ForegroundColor Red
+    Write-Host "[FAIL] Failed to create/access install directory: $_" -ForegroundColor Red
     Read-Host "  Press Enter to exit"
     exit 1
 }
@@ -240,7 +241,7 @@ $versionFile = Join-Path $installDir ".script-version"
 $needsUpdate = $false
 if (-not (Test-Path $versionFile)) {
     if (Test-Path $projectPath) {
-        Write-Host "No version file found in existing install — refreshing to v$ScriptVersion..." -ForegroundColor Cyan
+        Write-Host "No version file found in existing install -- refreshing to v$ScriptVersion..." -ForegroundColor Cyan
         $needsUpdate = $true
     }
     # If neither file nor project exists this is a clean first install;
@@ -253,29 +254,35 @@ if (-not (Test-Path $versionFile)) {
             $needsUpdate = $true
         }
     } catch {
-        Write-Host "  Could not read version file — refreshing install to be safe..." -ForegroundColor Yellow
+        Write-Host "  Could not read version file -- refreshing install to be safe..." -ForegroundColor Yellow
         $needsUpdate = $true
     }
 }
 
 if ($needsUpdate -and (Test-Path $projectPath)) {
-    # Back up clubbers.csv before deleting the project so user data survives the update
-    $csvBackupPath   = Join-Path $installDir "clubbers-backup.csv"
-    $existingCsvPath = Join-Path $projectPath "print-server\clubbers.csv"
+    # Back up user data before deleting the project so it survives the update
+    $csvBackupPath    = Join-Path $installDir "clubbers-backup.csv"
+    $cfgBackupPath    = Join-Path $installDir "config-backup.json"
+    $existingCsvPath  = Join-Path $projectPath "print-server\clubbers.csv"
+    $existingCfgPath  = Join-Path $projectPath "print-server\config.json"
     if (Test-Path $existingCsvPath) {
         Copy-Item $existingCsvPath $csvBackupPath -Force
-        Write-Host "  Backed up clubbers.csv (will restore after update)." -ForegroundColor Gray
+        Write-Host "  Backed up clubbers.csv" -ForegroundColor Gray
+    }
+    if (Test-Path $existingCfgPath) {
+        Copy-Item $existingCfgPath $cfgBackupPath -Force
+        Write-Host "  Backed up config.json (printer & URL settings)" -ForegroundColor Gray
     }
     Remove-Item $projectPath -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "  Old installation removed." -ForegroundColor Gray
 }
 
-# --- 3. Download project (if not already present) ---
+# --- 4a. Download project (if not already present) ---
 $printServerPath = Join-Path $projectPath "print-server"
 
 if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     Write-Host ""
-    Write-Host "Downloading Print-TwoTimTwo-Labels..." -ForegroundColor Gray
+    Write-Host "[4/8] Downloading project..." -ForegroundColor White
 
     $zipUrl = "https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/archive/refs/heads/main.zip"
     $zipPath = Join-Path $installDir "project.zip"
@@ -283,9 +290,9 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     try {
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
-        Write-Host "✓ Downloaded." -ForegroundColor Green
+        Write-Host "[OK] Downloaded." -ForegroundColor Green
     } catch {
-        Write-Host "✗ Download failed: $_" -ForegroundColor Red
+        Write-Host "[FAIL] Download failed: $_" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
         exit 1
     }
@@ -297,12 +304,12 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
             Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } |
             ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
-        # Use .NET ZipFile directly — avoids a Windows PowerShell 5.1 bug where
+        # Use .NET ZipFile directly -- avoids a Windows PowerShell 5.1 bug where
         # Expand-Archive fails on zip entries with hidden directories (e.g. .github)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $installDir)
     } catch {
-        Write-Host "✗ Extraction failed: $_" -ForegroundColor Red
+        Write-Host "[FAIL] Extraction failed: $_" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
         exit 1
     }
@@ -310,7 +317,7 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     # Find the extracted directory (dynamically - don't hardcode)
     $extractedDir = Get-ChildItem -Path $installDir -Directory | Where-Object { $_.Name -match "Print-TwoTimTwo-Labels" } | Select-Object -First 1
     if (-not $extractedDir) {
-        Write-Host "✗ Could not find extracted project directory" -ForegroundColor Red
+        Write-Host "[FAIL] Could not find extracted project directory" -ForegroundColor Red
         Write-Host "  Expected 'Print-TwoTimTwo-Labels*' folder in $installDir" -ForegroundColor Red
         Read-Host "  Press Enter to exit"
         exit 1
@@ -325,41 +332,62 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     }
 
     Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
-    Write-Host "✓ Extracted to $projectPath" -ForegroundColor Green
-
-    # Restore any clubbers.csv that was backed up before the update
-    $csvBackupPath = Join-Path $installDir "clubbers-backup.csv"
-    if (Test-Path $csvBackupPath) {
-        $csvRestorePath = Join-Path $printServerPath "clubbers.csv"
-        Move-Item $csvBackupPath $csvRestorePath -Force
-        Write-Host "✓ Restored your clubbers.csv data." -ForegroundColor Green
-    }
+    Write-Host "[OK] Extracted to $projectPath" -ForegroundColor Green
 }
 
-# --- 4. Install npm packages (if not already installed) ---
+# Restore any user data that was backed up before a version update.
+# This runs unconditionally so backups are never left orphaned.
+$csvBackupPath = Join-Path $installDir "clubbers-backup.csv"
+$cfgBackupPath = Join-Path $installDir "config-backup.json"
+if ((Test-Path $csvBackupPath) -and (Test-Path $printServerPath)) {
+    Move-Item $csvBackupPath (Join-Path $printServerPath "clubbers.csv") -Force
+    Write-Host "[OK] Restored your clubbers.csv data." -ForegroundColor Green
+}
+if ((Test-Path $cfgBackupPath) -and (Test-Path $printServerPath)) {
+    Move-Item $cfgBackupPath (Join-Path $printServerPath "config.json") -Force
+    Write-Host "[OK] Restored your printer & URL settings." -ForegroundColor Green
+}
+
+# --- 4b. Install npm packages (if not already installed) ---
 Write-Host ""
 if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
-    Write-Host "Installing npm packages (~300 MB)..." -ForegroundColor Gray
+    Write-Host "[4/8] Installing npm packages (~300 MB)..." -ForegroundColor White
     Write-Host "This may take a few minutes on first run..." -ForegroundColor Gray
 
     Push-Location $printServerPath
     try {
         npm install
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "✗ npm install failed" -ForegroundColor Red
+            Write-Host "[FAIL] npm install failed" -ForegroundColor Red
             Read-Host "  Press Enter to exit"
             Pop-Location
             exit 1
         }
-        Write-Host "✓ Packages installed." -ForegroundColor Green
+        Write-Host "[OK] Packages installed." -ForegroundColor Green
     } finally {
         Pop-Location
     }
 } else {
-    Write-Host "✓ npm packages already installed." -ForegroundColor Green
+    Write-Host "[OK] npm packages already installed." -ForegroundColor Green
 }
 
-# --- 3b. Download clubbers.csv from TwoTimTwo or create template ---
+# --- 5. Load config (needed for CSV download URL) ---
+Write-Host ""
+Write-Host "[5/8] Loading saved settings..." -ForegroundColor White
+$configPath = Join-Path $printServerPath "config.json"
+
+$cfg = [ordered]@{ printerName = ""; checkinUrl = "https://kvbchurch.twotimtwo.com/clubber/checkin?#" }
+if (Test-Path $configPath) {
+    try {
+        $saved = Get-Content $configPath -Raw | ConvertFrom-Json
+        if ($saved.printerName) { $cfg.printerName = $saved.printerName }
+        if ($saved.checkinUrl)  { $cfg.checkinUrl  = $saved.checkinUrl  }
+    } catch {}
+}
+if ($PrinterName) { $cfg.printerName = $PrinterName }
+if ($CheckinUrl)  { $cfg.checkinUrl  = $CheckinUrl  }
+
+# --- 6. Download clubbers.csv from TwoTimTwo or create template ---
 # clubbers.csv lives alongside server.js and unlocks enriched labels:
 #   - Red allergy strip (NUTS, DAIRY, GLUTEN, EGG, SHELLFISH auto-detected)
 #   - "Happy Birthday!" banner for birthdays within the next 7 days
@@ -369,91 +397,98 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
 $clubbersCsvPath = Join-Path $printServerPath "clubbers.csv"
 
 Write-Host ""
-Write-Host "Setting up clubbers.csv..." -ForegroundColor Gray
+Write-Host "[6/8] Setting up clubbers.csv..." -ForegroundColor White
 
-# Always attempt to download from TwoTimTwo first (fresh data each time)
-# This way updates to the roster are picked up on each run
-$downloaded = $false
-$twotimtwoUrl = "https://kvbchurch.twotimtwo.com/clubber/csv"
-try {
-    $ProgressPreference = 'SilentlyContinue'
-    Write-Host "  Attempting to download from TwoTimTwo..." -ForegroundColor Gray
-    $response = Invoke-WebRequest -Uri $twotimtwoUrl -ErrorAction Stop
-
-    # Validate that we actually got CSV data, not an HTML login/error page
-    $contentType = $response.Headers['Content-Type']
-    $body = $response.Content
-    $isHtml = ($contentType -and $contentType -match 'text/html') -or
-              ($body -and ($body.TrimStart().StartsWith('<!') -or $body.TrimStart().StartsWith('<html')))
-
-    if ($isHtml) {
-        Write-Host "  ⚠ TwoTimTwo returned an HTML page instead of CSV data." -ForegroundColor Yellow
-        Write-Host "    (The site may require login, or the URL may have changed.)" -ForegroundColor Yellow
-        Write-Host "    Skipping — will use existing/template data instead." -ForegroundColor Yellow
-    } elseif (-not $body -or $body.Trim().Length -eq 0) {
-        Write-Host "  ⚠ TwoTimTwo returned an empty response — skipping." -ForegroundColor Yellow
-    } else {
-        # Content looks like CSV — save it
-        Set-Content -Path $clubbersCsvPath -Value $body -Encoding UTF8
-        $downloaded = $true
-        $lineCount = ($body -split "`n" | Where-Object { $_.Trim() }).Count - 1
-        Write-Host "  ✓ Downloaded fresh CSV from TwoTimTwo ($lineCount clubber(s))" -ForegroundColor Green
+# If a real CSV was restored from backup, keep it -- don't overwrite with a template.
+# The bookmarklet will sync fresh data from the authenticated browser session anyway.
+$hasRealCsv = $false
+if (Test-Path $clubbersCsvPath) {
+    $csvLines = @(Get-Content $clubbersCsvPath -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
+    if ($csvLines.Count -gt 4) {
+        $hasRealCsv = $true
+        Write-Host "  [OK] Using existing clubbers.csv ($($csvLines.Count - 1) clubber(s))" -ForegroundColor Green
+        Write-Host "  The bookmarklet will sync fresh data when you open the check-in page." -ForegroundColor Gray
     }
-} catch {
-    Write-Host "  ⚠ Could not download from TwoTimTwo: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# Fallback: try GitHub template if TwoTimTwo download fails
-if (-not $downloaded) {
+if (-not $hasRealCsv) {
+    # No real CSV on disk -- try to get one via the user's authenticated browser session.
+    # PowerShell can't authenticate with TwoTimTwo, but Edge has session cookies.
+    # Strategy: open the CSV URL in Edge, watch the Downloads folder for the file.
+
+    $twotimtwoUrl = "https://kvbchurch.twotimtwo.com/clubber/csv"
     try {
-        $ProgressPreference = 'SilentlyContinue'
-        $templateUrl = "https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/print-server/clubbers-template.csv"
-        Write-Host "  Downloading template from GitHub..." -ForegroundColor Gray
-        Invoke-WebRequest -Uri $templateUrl -OutFile $clubbersCsvPath -ErrorAction Stop
-        $downloaded = $true
-        Write-Host "  ✓ Downloaded template from GitHub" -ForegroundColor Green
+        $checkinUri = [System.Uri]$cfg.checkinUrl
+        $twotimtwoUrl = "$($checkinUri.Scheme)://$($checkinUri.Host)/clubber/csv"
     } catch {}
+
+    $downloaded = $false
+
+    # Find the user's Downloads folder
+    $downloadsDir = Join-Path ([System.Environment]::GetFolderPath('UserProfile')) "Downloads"
+
+    # Snapshot existing CSV files in Downloads before opening the browser
+    $beforeFiles = @()
+    if (Test-Path $downloadsDir) {
+        $beforeFiles = @(Get-ChildItem -Path $downloadsDir -Filter "*.csv" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+    }
+
+    Write-Host "  Opening TwoTimTwo CSV download in Edge..." -ForegroundColor Gray
+    Write-Host "  (Using your browser's login session)" -ForegroundColor Gray
+    Start-Process "msedge" -ArgumentList $twotimtwoUrl
+
+    # Wait for a new CSV file to appear in Downloads (up to 15 seconds)
+    $timeout = 15
+    $elapsed = 0
+    $newCsvPath = $null
+    while ($elapsed -lt $timeout) {
+        Start-Sleep -Seconds 1
+        $elapsed++
+        Write-Host -NoNewline "`r  Waiting for download... ($elapsed/$timeout sec)   "
+
+        $afterFiles = @(Get-ChildItem -Path $downloadsDir -Filter "*.csv" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+        $newFiles = @($afterFiles | Where-Object { $_ -notin $beforeFiles })
+
+        if ($newFiles.Count -gt 0) {
+            # Pick the most recently modified new CSV
+            $newCsvPath = $newFiles | Sort-Object { (Get-Item $_).LastWriteTime } -Descending | Select-Object -First 1
+            break
+        }
+    }
+    Write-Host ""
+
+    if ($newCsvPath) {
+        # Validate it looks like CSV (not HTML error page)
+        $csvContent = Get-Content $newCsvPath -Raw -ErrorAction SilentlyContinue
+        $isHtml = $csvContent -and ($csvContent.TrimStart().StartsWith('<!') -or $csvContent.TrimStart().StartsWith('<html'))
+
+        if ($isHtml -or -not $csvContent -or $csvContent.Trim().Length -eq 0) {
+            Write-Host "  [WARN] Downloaded file was not valid CSV (login may be required)." -ForegroundColor Yellow
+        } else {
+            Copy-Item $newCsvPath $clubbersCsvPath -Force
+            $downloaded = $true
+            $lineCount = ($csvContent -split "`n" | Where-Object { $_.Trim() }).Count - 1
+            Write-Host "  [OK] Downloaded roster from TwoTimTwo ($lineCount clubber(s))" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  [WARN] No CSV download detected." -ForegroundColor Yellow
+        Write-Host "    You may need to log in to TwoTimTwo first." -ForegroundColor Yellow
+    }
+
+    if (-not $downloaded) {
+        Write-Host "  No roster data yet -- the bookmarklet will sync it from your browser." -ForegroundColor Yellow
+        Write-Host "  (Labels will print without enrichment until then.)" -ForegroundColor Gray
+    }
 }
 
-# Last resort: write a minimal template inline
-if (-not $downloaded) {
-    Write-Host "  Writing fallback template..." -ForegroundColor Gray
-    @"
-FirstName,LastName,Birthdate,Allergies,HandbookGroup
-Alice,Smith,2018-03-15,peanut allergy,Cubbies A
-Bob,Jones,2019-07-22,,T&T Group B
-Carol,White,05/12/2020,dairy and tree nut,Sparks Yellow
-"@ | Set-Content $clubbersCsvPath -Encoding UTF8
-}
-
-Write-Host "✓ clubbers.csv is ready at:" -ForegroundColor Green
-Write-Host "  $clubbersCsvPath" -ForegroundColor Cyan
+Write-Host "[OK] clubbers.csv setup complete." -ForegroundColor Green
 Write-Host ""
-if (-not $downloaded) {
-    Write-Host "  NOTE: If this is a template, edit it with your real clubber data:" -ForegroundColor Yellow
-    Write-Host "  Columns: FirstName, LastName, Birthdate (YYYY-MM-DD or MM/DD/YYYY)," -ForegroundColor Yellow
     Write-Host "           Allergies (free text), HandbookGroup (free text)" -ForegroundColor Yellow
 }
 
-# --- 5. Configure printer and URL ---
+# --- 7. Configure printer and URL ---
 Write-Host ""
-$configPath = Join-Path $printServerPath "config.json"
-
-# Load existing config if available, or use command-line parameters
-$cfg = [ordered]@{ printerName = ""; checkinUrl = "https://kvbchurch.twotimtwo.com/clubber/checkin?#" }
-if (Test-Path $configPath) {
-    try {
-        $saved = Get-Content $configPath -Raw | ConvertFrom-Json
-        if ($saved.printerName) { $cfg.printerName = $saved.printerName }
-        if ($saved.checkinUrl) { $cfg.checkinUrl = $saved.checkinUrl }
-    } catch {
-        # Silently ignore parse errors
-    }
-}
-
-# Override with command-line parameters if provided
-if ($PrinterName) { $cfg.printerName = $PrinterName }
-if ($CheckinUrl) { $cfg.checkinUrl = $CheckinUrl }
+Write-Host "[7/8] Printer & URL configuration" -ForegroundColor White
 
 function Configure {
     Write-Host ""
@@ -461,14 +496,14 @@ function Configure {
 
     $printers = @(Get-Printer | Select-Object -ExpandProperty Name)
     if ($printers.Count -eq 0) {
-        Write-Host "✗ No printers found. Make sure your label printer is connected." -ForegroundColor Red
+        Write-Host "[FAIL] No printers found. Make sure your label printer is connected." -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
 
     Write-Host "Available printers:" -ForegroundColor White
     for ($i = 0; $i -lt $printers.Count; $i++) {
-        $marker = if ($printers[$i] -eq $cfg.printerName) { "  ← current" } else { "" }
+        $marker = if ($printers[$i] -eq $cfg.printerName) { "  <- current" } else { "" }
         Write-Host "  [$i] $($printers[$i])$marker"
     }
 
@@ -489,7 +524,7 @@ function Configure {
     [PSCustomObject]@{ printerName = $cfg.printerName; checkinUrl = $cfg.checkinUrl } |
         ConvertTo-Json | Set-Content $configPath
     Write-Host ""
-    Write-Host "✓ Settings saved." -ForegroundColor Green
+    Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
 
 # If parameters provided and both are set, skip interactive configuration
@@ -527,28 +562,30 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
     # Save config
     [PSCustomObject]@{ printerName = $cfg.printerName; checkinUrl = $cfg.checkinUrl } |
         ConvertTo-Json | Set-Content $configPath
-    Write-Host "✓ Settings saved." -ForegroundColor Green
+    Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
 
-# --- 6. Start server and open browser ---
+# --- 8. Start server and open browser ---
+Write-Host ""
+Write-Host "[8/8] Starting print server..." -ForegroundColor White
 Write-Host ""
 Write-Host "=================================================================================" -ForegroundColor Green
-Write-Host "  Setup Complete" -ForegroundColor Green
+Write-Host "  Setup Complete!" -ForegroundColor Green
 Write-Host "=================================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor White
+Write-Host "How it works:" -ForegroundColor White
+Write-Host "  1. Drag the bookmarklet to your bookmark bar (first time only)" -ForegroundColor Gray
+Write-Host "  2. Go to the check-in page and click the bookmarklet" -ForegroundColor Gray
+Write-Host "  3. Labels print automatically when a child is checked in" -ForegroundColor Gray
 Write-Host ""
-Write-Host "  1. Open http://localhost:3456 in your browser" -ForegroundColor Gray
-Write-Host "  2. Click 'Create Bookmarklet'" -ForegroundColor Gray
-Write-Host "  3. Drag the button to your bookmark bar" -ForegroundColor Gray
-Write-Host "  4. Visit the check-in page and click the bookmark" -ForegroundColor Gray
-Write-Host ""
-Write-Host "  Optional — for enriched labels (allergy alerts, birthday banners):" -ForegroundColor Gray
-Write-Host "  Edit clubbers.csv in: $printServerPath" -ForegroundColor Cyan
-Write-Host "  Replace the example rows with your real clubber data." -ForegroundColor Gray
-Write-Host ""
+# Open the check-in page in Edge, plus the bookmarklet setup page so the
+# user can drag it to their bookmark bar on first run.
 Write-Host "Opening check-in page in Microsoft Edge..." -ForegroundColor Cyan
 Start-Process "msedge" -ArgumentList $cfg.checkinUrl
+Start-Process "msedge" -ArgumentList "http://localhost:3456/bookmarklet.html"
+Write-Host ""
+Write-Host "  If this is your first time, drag the bookmarklet button to your bookmark bar." -ForegroundColor Yellow
+Write-Host "  After that, just click it on the check-in page to arm auto-printing." -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "Print server running" -ForegroundColor Green
@@ -572,12 +609,12 @@ try {
             }
         }
         Start-Sleep -Milliseconds 500  # Brief pause to ensure port is released
-        Write-Host "  ✓ Old server stopped." -ForegroundColor Green
+        Write-Host "  [OK] Old server stopped." -ForegroundColor Green
     } else {
-        Write-Host "  ✓ Port is free." -ForegroundColor Green
+        Write-Host "  [OK] Port is free." -ForegroundColor Green
     }
 } catch {
-    Write-Host "  ⚠ Could not check port (non-critical): $_" -ForegroundColor Yellow
+    Write-Host "  [WARN] Could not check port (non-critical): $_" -ForegroundColor Yellow
 }
 
 # Save the script version for future updates
@@ -585,6 +622,53 @@ try {
     Set-Content -Path $versionFile -Value $ScriptVersion -Force -ErrorAction SilentlyContinue
 } catch {
     # Silently ignore version file write errors
+}
+
+# --- Set up desktop launcher (launch-awana.bat + read-config.js + shortcut) ---
+Write-Host ""
+Write-Host "Setting up desktop launcher..." -ForegroundColor Gray
+try {
+    # Copy launcher files to install dir (one level above project, survives re-downloads)
+    $launcherSrc = Join-Path $projectPath "launch-awana.bat"
+    $configHelperSrc = Join-Path $projectPath "read-config.js"
+    $launcherDest = Join-Path $installDir "launch-awana.bat"
+    $configHelperDest = Join-Path $installDir "read-config.js"
+
+    if (Test-Path $launcherSrc) {
+        Copy-Item $launcherSrc $launcherDest -Force
+    }
+    if (Test-Path $configHelperSrc) {
+        Copy-Item $configHelperSrc $configHelperDest -Force
+    }
+
+    # Copy icon for the shortcut
+    $iconSrc = Join-Path $projectPath "electron-app\build\icon.ico"
+    $iconDest = Join-Path $installDir "awana-print.ico"
+    if (Test-Path $iconSrc) {
+        Copy-Item $iconSrc $iconDest -Force
+    }
+
+    # Create desktop shortcut if it doesn't already exist
+    $desktop = [System.Environment]::GetFolderPath('Desktop')
+    $lnkPath = Join-Path $desktop "Awana Print.lnk"
+    if (-not (Test-Path $lnkPath)) {
+        $ws = New-Object -ComObject WScript.Shell
+        $shortcut = $ws.CreateShortcut($lnkPath)
+        $shortcut.TargetPath = $launcherDest
+        $shortcut.WorkingDirectory = $installDir
+        $shortcut.Description = "Start Awana label print server and open check-in page"
+        if (Test-Path $iconDest) {
+            $shortcut.IconLocation = "$iconDest,0"
+        } else {
+            $shortcut.IconLocation = "msedge.exe,0"
+        }
+        $shortcut.Save()
+        Write-Host "  [OK] Created desktop shortcut: Awana Print" -ForegroundColor Green
+    } else {
+        Write-Host "  [OK] Desktop shortcut already exists." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "  [WARN] Could not create desktop shortcut (non-critical): $_" -ForegroundColor Yellow
 }
 
 $env:PRINTER_NAME = $cfg.printerName

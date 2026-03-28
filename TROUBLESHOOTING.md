@@ -164,45 +164,6 @@ Having issues with Awana Label Printer? This guide covers common problems and so
 
 ---
 
-## Extension Issues (If Using)
-
-### Chrome extension doesn't appear in toolbar
-
-**Problem:** You installed the extension but don't see an icon.
-
-**Solution:**
-1. Go to **chrome://extensions**
-2. Enable **Developer mode** (top right toggle)
-3. Find the extension in the list
-4. If it's there but disabled, click the toggle to enable it
-5. If it's not in the list at all:
-   - Load unpacked: Click **Load unpacked**
-   - Navigate to the `chrome-extension` folder in the project
-   - Click **Select**
-
----
-
-### Extension says "This item cannot be added"
-
-**Problem:** Chrome won't load the extension.
-
-**Possible causes:**
-- Extension folder is missing required files (manifest.json, etc.)
-- You selected the wrong folder
-
-**Solution:**
-1. Make sure you selected the folder that contains `manifest.json`
-2. Check that all required files are present:
-   - manifest.json
-   - content.js
-   - background.js
-   - popup.html
-   - popup.js
-   - lib/jspdf.umd.min.js
-3. Try re-loading unpacked
-
----
-
 ## General Debugging
 
 ### How to check server logs

@@ -1,59 +1,55 @@
 # Kids Club Checkin - Project Documentation
 
 ## Overview
-The **Kids Club Checkin** is a tool designed to enhance the Kids Club check-in process at Community Church. Its primary purpose is to provide a **Chrome Extension** that can be used on the official Kids Club check-in website to automatically print custom 4" x 2" labels for children as they are checked in.
+The **Kids Club Checkin** is a tool designed to enhance the Kids Club check-in process at Community Church. Its primary purpose is to automatically print custom 4" x 2" labels for children as they are checked in via the TwoTimTwo.com platform.
 
 The application serves two roles:
-1. **Chrome Extension:** Automatically prints labels to a selected printer upon check-in.
-2. **Environment Simulator:** It recreates the DOM structure of the actual check-in page, allowing users to test the extension's functionality without needing access to the live production database.
+1. **Print Server + Bookmarklet:** A local Node.js server (port 3456) paired with a bookmarklet injected into the TwoTimTwo check-in page. The bookmarklet watches for check-in events, generates a PDF label, and sends it to the server for silent printing.
+2. **Environment Simulator:** A React app (deployed to GitHub Pages) that recreates the DOM structure of the actual check-in page, allowing users to test the bookmarklet and server without needing access to the live production database.
 
 ---
 
 ## How It Works
-### The Chrome Extension
-The Chrome extension replaces the previous bookmarklet and local print server approach. It operates directly on the Kids Club check-in page:
-1. **Printer Selection UI:**
-   - Injects a dropdown menu into the top right corner of the page, allowing the user to select their local printer.
-   - Saves the selected printer to `chrome.storage.sync`.
+
+### The Bookmarklet
+The bookmarklet is injected into the TwoTimTwo check-in page from the user's browser bookmark bar:
+1. **Printer Arming:** Clicking the bookmarklet button arms the auto-print listener.
 2. **Data Extraction (Auto-Print Trigger):**
    - Uses a `MutationObserver` to watch for changes to the `#lastCheckin` element.
-   - When a new check-in appears, it extracts the child's name.
-   - It then searches the page for the corresponding "clubber" box to extract the **Club Name** from the `alt` attribute of the club's logo image.
-3. **Label Generation:**
-   - Uses the `jsPDF` library to generate a PDF document formatted exactly for a 4" x 2" label.
-   - Enhances styling with a large, bold font for the name and text wrapping for longer club names.
-4. **Silent Printing:**
-   - Converts the generated PDF to a base64 data URI.
-   - Sends the data to the extension's background service worker.
-   - The background worker uses the `chrome.printing` API to send the PDF directly to the selected printer without showing a print dialog.
+   - When a new check-in appears, it extracts the child's name and club from the page.
+3. **Label Generation & Printing:**
+   - Sends the check-in data to the local print server at `http://localhost:3456/print`.
+   - The server generates a PDF and sends it directly to the configured Windows printer.
+
+### The Print Server
+A Node.js/Express server (started via `install-and-run.ps1` or the Electron app) that:
+- Listens on port 3456
+- Generates 4" × 2" PDF labels
+- Sends them to the Windows printer via `pdf-to-printer`
 
 ### The Simulator
 The React application (`App.tsx`) mimics the production site's layout:
 - **Grid of Clubbers:** Displays children with color-coded backgrounds.
-- **Check-in Logic:** Clicking a child simulates a network request and updates the `#lastCheckin` DOM element, triggering the Chrome extension.
+- **Check-in Logic:** Clicking a child simulates a network request and updates the `#lastCheckin` DOM element, triggering the bookmarklet if armed.
 - **DOM Fidelity:** The IDs and class names used in the simulator (`#lastCheckin`, `.club img`, etc.) are identical to those found on the real Kids Club site.
 
 ---
 
 ## Design Decisions
 
-### 1. Shift to Chrome Extension
-- **Why:** The initial approach used a bookmarklet and a local Node.js print server. This was complex to set up for end-users. A Chrome extension provides a seamless, all-in-one solution that integrates directly into the browser and can access local printers via the `chrome.printing` API.
-- **Benefit:** Eliminates the need for a local server, making deployment and usage much easier.
+### 1. Bookmarklet + Local Server Approach
+- **Why:** Provides silent, automatic printing without requiring users to install a browser extension or manage extension permissions. The PowerShell installer handles all setup automatically.
+- **Benefit:** Works in any Chromium-based browser. Users only need to drag a button to their bookmarks bar.
 
 ### 2. Label Dimensions & Styling
-- **Size:** 4 inches wide by 2 inches high (288x144 points in jsPDF).
-- **Styling:** The user requested enhanced styling. The name is printed very large (36pt bold), and the club name is printed below it (24pt). If the club name is too long, `jsPDF`'s `splitTextToSize` is used to wrap the text onto multiple lines, ensuring it fits within the 4-inch width.
-
-### 3. `chrome.printing` API
-- **Silent Printing:** This API allows the extension to submit print jobs directly to a specific printer ID, bypassing the standard Chrome print preview dialog. This is crucial for the "auto-print" requirement.
+- **Size:** 4 inches wide by 2 inches high (288×144 points in jsPDF/pdfkit).
+- **Styling:** The child's name is printed large and bold; club name is printed below. Long text is wrapped to fit within the 4-inch width.
 
 ---
 
 ## Starting From Scratch: Key Considerations
 If this project were to be rebuilt or ported, keep these technical requirements in mind:
 
-1. **DOM Selectors are Critical:** The extension relies on `#lastCheckin div` and `.clubber`. If the production site changes its HTML structure, these selectors must be updated in `chrome-extension/content.js`.
-2. **`chrome.printing` Permissions:** The extension requires the `"printing"` permission in `manifest.json`. This API is available on Chrome OS, Windows, macOS, and Linux (since Chrome 104).
-3. **jsPDF Integration:** The `jspdf.umd.min.js` library must be included in the `content_scripts` array in `manifest.json` before `content.js` so that it is available in the global window scope.
-4. **Message Passing for Printing:** Content scripts cannot directly call `chrome.printing.submitJob`. The PDF data must be passed to the background service worker via `chrome.runtime.sendMessage`.
+1. **DOM Selectors are Critical:** The bookmarklet relies on `#lastCheckin div` and `.clubber`. If the production site changes its HTML structure, these selectors must be updated in the bookmarklet source (`public/bookmarklet.html`).
+2. **Port 3456:** The bookmarklet, simulator, and PowerShell script all assume the print server runs on port 3456. This is defined in `src/constants.ts` (`SERVER_PORT`).
+3. **Windows-only Printing:** `pdf-to-printer` (used by both the standalone server and the Electron embedded server) is a Windows-only package.

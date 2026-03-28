@@ -21,20 +21,8 @@ export const PrintServerInfo: React.FC = () => {
     }
   };
 
-  const [scriptStatus, setScriptStatus] = useState('');
-
-  const copyScriptToClipboard = async () => {
-    try {
-      const scriptUrl = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1';
-      const response = await fetch(scriptUrl);
-      const scriptText = await response.text();
-      await navigator.clipboard.writeText(scriptText);
-      setScriptStatus('✓ Script copied to clipboard!');
-      setTimeout(() => setScriptStatus(''), 3000);
-    } catch (err) {
-      setScriptStatus('✗ Failed to copy. Try manually downloading from GitHub.');
-      setTimeout(() => setScriptStatus(''), 3000);
-    }
+  const downloadInstaller = () => {
+    window.open('https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install.bat', '_blank');
   };
 
   const openBookmarklet = () => {
@@ -70,23 +58,18 @@ export const PrintServerInfo: React.FC = () => {
         <li className="flex gap-3">
           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">1</span>
           <div>
-            <p className="font-semibold text-gray-800 mb-3">Get the setup script</p>
+            <p className="font-semibold text-gray-800 mb-3">Download the installer</p>
             <p className="mb-3">
-              Click the button below to copy the install script to your clipboard.
-              Then paste it into PowerShell to run it.
+              Click the button below to download <code className="bg-gray-100 px-1 rounded text-xs">install.bat</code>.
+              Save it anywhere and double-click to run.
             </p>
             <button
-              onClick={copyScriptToClipboard}
+              onClick={downloadInstaller}
               className="flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded shadow transition-colors bg-green-600 hover:bg-green-700 text-white cursor-pointer"
             >
-              <i className="fa fa-copy"></i>
-              Copy Script to Clipboard
+              <i className="fa fa-download"></i>
+              Download install.bat
             </button>
-            {scriptStatus && (
-              <p className={`mt-2 text-sm ${scriptStatus.startsWith('✓') ? 'text-green-700' : 'text-red-600'}`}>
-                {scriptStatus}
-              </p>
-            )}
           </div>
         </li>
 
@@ -94,20 +77,21 @@ export const PrintServerInfo: React.FC = () => {
         <li className="flex gap-3">
           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">2</span>
           <div>
-            <p className="font-semibold text-gray-800 mb-3">Run the script</p>
-            <p className="mb-2">Right-click <code className="bg-gray-100 px-1 rounded">install-and-run.ps1</code> and select <strong>"Run with PowerShell"</strong>.</p>
-            <p className="mb-3 text-gray-600">The script will automatically:</p>
+            <p className="font-semibold text-gray-800 mb-3">Run the installer</p>
+            <p className="mb-2">Double-click <code className="bg-gray-100 px-1 rounded">install.bat</code> to start the setup.</p>
+            <p className="mb-3 text-gray-600">The installer will automatically:</p>
             <ul className="list-disc list-inside text-gray-600 space-y-1 mb-3">
               <li>Install Node.js if needed</li>
               <li>Download the project files</li>
               <li>Install dependencies (~300 MB, one time only)</li>
               <li>Ask you to choose your label printer</li>
               <li>Ask for your church's check-in URL</li>
+              <li>Create an <strong>"Awana Print"</strong> shortcut on your desktop</li>
               <li>Start the server and open Edge at the check-in page</li>
             </ul>
             <p className="text-xs text-gray-500 bg-blue-50 border border-blue-200 rounded p-2">
-              <strong>Tip:</strong> After the first run, the script remembers your printer and URL.
-              Future runs will auto-start in 5 seconds — press any key to reconfigure.
+              <strong>After setup:</strong> Just double-click the "Awana Print" icon on your desktop.
+              No installer needed again unless updating.
             </p>
           </div>
         </li>
