@@ -625,7 +625,7 @@ app.post('/print', async (req, res) => {
     }
   }
 
-  console.log(`[print] ${firstName} ${lastName} | ${clubName || 'â€”'} | printer: ${PRINTER_NAME || 'default'}`);
+  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || "—"} | printer: ${PRINTER_NAME || "default"}`);
 
   // pdfPath is declared outside try so the finally block can always delete it,
   // even if generateLabel throws before returning the path.
