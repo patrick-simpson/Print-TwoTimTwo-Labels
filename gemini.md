@@ -62,3 +62,9 @@ pm run dist: Build NSIS installer (.exe)
 - **Silent Failures**: Print basic label if CSV enrichment fails.
 - **Cleanup**: Always s.unlink temporary PDFs in a inally block.
 - **Update Safety**: Port 3456 MUST be cleared before file operations in install-and-run.ps1.
+
+## Documentation Mandate: changes.md
+You **MUST** update changes.md for every functional change or version bump. 
+- Format: Use release-note style with version numbers and dates.
+- Content: Summarize what changed, why, and any specific technical decisions made.
+- Consistency: This file is the canonical history of the project for both users and future AI sessions.

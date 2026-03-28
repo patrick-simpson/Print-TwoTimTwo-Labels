@@ -292,6 +292,7 @@ function parseAllergies(allergiesStr) {
   if (/gluten|wheat/i.test(s))                  tokens.push('GLUTEN');
   if (/\begg\b/i.test(s))                       tokens.push('EGG');  // \b avoids matching "eggnog" as both EGG and NUTS
   if (/shellfish|shrimp|crab/i.test(s))         tokens.push('SHELLFISH');
+  if (/dye|color/i.test(s))                        tokens.push('DYE');
   return tokens;
 }
 
@@ -343,7 +344,7 @@ async function resolveImageBuffer(clubImageData) {
 }
 
 // ── Auto-size a font to fit within maxWidth ───────────────────────────────────
-function fitFontSize(doc, text, fontName, maxWidth, maxSize = 38, minSize = 18) {
+function fitFontSize(doc, text, fontName, maxWidth, maxSize = 32, minSize = 18) {
   doc.font(fontName);
   for (let size = maxSize; size >= minSize; size -= 2) {
     doc.fontSize(size);
@@ -370,7 +371,7 @@ async function generateLabel(
   const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
 
   try {
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, layout: 'portrait' });
+    const doc = new PDFDocument({ size: [PAGE_H, PAGE_W], margin: 0, layout: 'landscape' });
     const out  = fs.createWriteStream(pdfPath);
 
     doc.pipe(out);
@@ -401,7 +402,7 @@ async function generateLabel(
       const iconX = BX + (ICON_COL_W - iconSize) / 2;
       const iconY = BY + (BH - iconSize) / 2;
       try {
-        doc.image(clubImageBuffer, iconX, iconY, { width: iconSize, height: iconSize, fit: [iconSize, iconSize], align: 'center', valign: 'center', align: 'center', valign: 'center' });
+        doc.image(clubImageBuffer, iconX, iconY, { fit: [iconSize, iconSize], align: 'center', valign: 'center' });
       } catch {
         // Image decode failed — draw a placeholder circle
         doc.circle(BX + ICON_COL_W / 2, BY + BH / 2, 20)

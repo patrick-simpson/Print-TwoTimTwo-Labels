@@ -1,55 +1,68 @@
-# Kids Club Checkin - Project Documentation
+# Project Changes & Release Notes
 
-## Overview
-The **Kids Club Checkin** is a tool designed to enhance the Kids Club check-in process at Community Church. Its primary purpose is to automatically print custom 4" x 2" labels for children as they are checked in via the TwoTimTwo.com platform.
+## [1.7.1] - 2026-03-27
+- **Extension UX:** Added a popup menu (visible when clicking the extension icon) that shows the real-time status of the local KVBC Print Server.
+- **Diagnostics:** Added a "Refresh Status" button and a direct link to download the installer if the server is offline.
 
-The application serves two roles:
-1. **Print Server + Bookmarklet:** A local Node.js server (port 3456) paired with a bookmarklet injected into the TwoTimTwo check-in page. The bookmarklet watches for check-in events, generates a PDF label, and sends it to the server for silent printing.
-2. **Environment Simulator:** A React app (deployed to GitHub Pages) that recreates the DOM structure of the actual check-in page, allowing users to test the bookmarklet and server without needing access to the live production database.
+## [1.7.0] - 2026-03-27
+- **Browser Extension:** Introduced a full Manifest V3 browser extension (chrome-extension/) to replace the bookmarklet.
+- **Zero-Click Auto-Printing:** The extension injects automatically on the check-in page and persists across page reloads.
+- **Reliability:** Refactored the network request logic into a background Service Worker (ackground.js) to completely bypass web page CORS and Private Network Access restrictions.
 
----
+## [1.6.9] - 2026-03-27
+- **Allergies:** Added 'DYE' (detects 'dye' or 'color' in notes) to the detected allergy list for labels.
+- **Orientation:** Fixed sideways printing in auto-mode by setting PDF size to portrait (2x4) with landscape layout.
+- **Design:** Resolved icon "crunching" by preserving the original aspect ratio when fitting icons to the label.
+- **Typography:** Capped the maximum font size for names at 32pt to prevent overflowing the label.
+- **UX:** Added version number display to the bookmarklet setup page for verification.
 
-## How It Works
+## [1.6.8] - 2026-03-27
+- **Installer Reliability:** Implemented aggressive multi-pass directory clearing in \install-and-run.ps1\.
+- **Process Management:** Added a force-kill for any running Node processes before installation/update to release file locks.
+- **Cleanup:** Ensured all remnants are removed during updates to prevent stale file issues.
 
-### The Bookmarklet
-The bookmarklet is injected into the TwoTimTwo check-in page from the user's browser bookmark bar:
-1. **Printer Arming:** Clicking the bookmarklet button arms the auto-print listener.
-2. **Data Extraction (Auto-Print Trigger):**
-   - Uses a `MutationObserver` to watch for changes to the `#lastCheckin` element.
-   - When a new check-in appears, it extracts the child's name and club from the page.
-3. **Label Generation & Printing:**
-   - Sends the check-in data to the local print server at `http://localhost:3456/print`.
-   - The server generates a PDF and sends it directly to the configured Windows printer.
+## [1.6.7] - 2026-03-27
+- **Bookmarklet Distribution:** Now serving the bookmarklet from the \print-server\ public directory for better local accessibility.
+- **Sync:** Updated internal bookmarklet logic to the latest version.
 
-### The Print Server
-A Node.js/Express server (started via `install-and-run.ps1` or the Electron app) that:
-- Listens on port 3456
-- Generates 4" × 2" PDF labels
-- Sends them to the Windows printer via `pdf-to-printer`
+## [1.6.6] - 2026-03-27
+- **Fallback Logic:** Updated bookmarklet fallback printing logic to match server behavior, ensuring consistent UX when the server is unreachable.
 
-### The Simulator
-The React application (`App.tsx`) mimics the production site's layout:
-- **Grid of Clubbers:** Displays children with color-coded backgrounds.
-- **Check-in Logic:** Clicking a child simulates a network request and updates the `#lastCheckin` DOM element, triggering the bookmarklet if armed.
-- **DOM Fidelity:** The IDs and class names used in the simulator (`#lastCheckin`, `.club img`, etc.) are identical to those found on the real Kids Club site.
+## [1.6.5] - 2026-03-27
+- **UX Improvement:** Refined \install.bat\ to show only the current step, resulting in a cleaner UI during installation.
 
----
+## [1.6.4] - 2026-03-27
+- **Label Design:** Fixed image aspect ratio, capped maximum name font size, and improved overall layout for better readability on 4x2 labels.
 
-## Design Decisions
+## [1.6.3] - 2026-03-27
+- **Label Design:** Removed redundant club name text when the logo is present.
+- **Orientation:** Reverted to standard 4x2 portrait orientation as the verified stable standard for thermal printers.
 
-### 1. Bookmarklet + Local Server Approach
-- **Why:** Provides silent, automatic printing without requiring users to install a browser extension or manage extension permissions. The PowerShell installer handles all setup automatically.
-- **Benefit:** Works in any Chromium-based browser. Users only need to drag a button to their bookmarks bar.
+## [1.6.0 - 1.6.2] - 2026-03-27
+- **Reliability:** Successive improvements to installation directory clearing.
+- **Data Integrity:** Ensured HandbookGroup is always printed and fixed club name conditional logic.
 
-### 2. Label Dimensions & Styling
-- **Size:** 4 inches wide by 2 inches high (288×144 points in jsPDF/pdfkit).
-- **Styling:** The child's name is printed large and bold; club name is printed below. Long text is wrapped to fit within the 4-inch width.
+## [1.5.9] - 2026-03-27
+- **Print Optimization:** Prioritized HandbookGroup display and finalized PDF orientation for thermal stability.
 
----
+## [1.5.6 - 1.5.8] - 2026-03-27
+- **Recursion Guard:** Fixed infinite loops in \install.bat\ elevation checks by implementing an explicit recursion guard/circuit breaker.
+- **Policy:** Added "Zero-Loop Policy" to \gemini.md\ to prevent future self-relaunching script bugs.
 
-## Starting From Scratch: Key Considerations
-If this project were to be rebuilt or ported, keep these technical requirements in mind:
+## [1.5.1 - 1.5.5] - 2026-03-27
+- **Admin Elevation:** Enhanced \install.bat\ with robust admin checks and a cleaner UI.
+- **Versioning:** Implemented automated versioning across all components via \scripts/bump-version.cjs\.
+- **Stability:** Reverted orientation to the stable 4x2 format and fixed PowerShell syntax issues.
 
-1. **DOM Selectors are Critical:** The bookmarklet relies on `#lastCheckin div` and `.clubber`. If the production site changes its HTML structure, these selectors must be updated in the bookmarklet source (`public/bookmarklet.html`).
-2. **Port 3456:** The bookmarklet, simulator, and PowerShell script all assume the print server runs on port 3456. This is defined in `src/constants.ts` (`SERVER_PORT`).
-3. **Windows-only Printing:** `pdf-to-printer` (used by both the standalone server and the Electron embedded server) is a Windows-only package.
+## [1.4.9] - 2026-03-27
+- **Label Orientation:** Configured pdfkit to use 2x4 portrait paper with landscape layout, ensuring DYMO printers receive correctly oriented pages.
+- **CSV Parser:** Fixed a bug where trailing spaces inside quotes prevented name matches; added diagnostic logging for parsed names.
+- **Redundancy:** Conditional logic added to skip club name text when the logo icon is displayed.
+
+## [Pre-1.4.9 Highlights] - 2026-03-27
+- **New Launchers:** Introduced \install.bat\ and \launch-awana.bat\ for a no-PowerShell-knowledge required experience.
+- **Desktop Integration:** Automatic creation of "Awana Print" desktop shortcuts.
+- **Authentication:** Shifted CSV downloading to use the Edge browser session to handle TwoTimTwo authentication.
+- **CSV Robustness:** Rewrote the server-side CSV parser to handle real TwoTimTwo exports (quoted fields, embedded newlines, and specific headers).
+- **Bookmarklet Safety:** Moved bookmarklet source into a \	ext/plain\ block to avoid template literal escaping issues and added a prebuild syntax validation script.
+- **Hosting:** Moved bookmarklet hosting to GitHub Pages for centralized updates.
