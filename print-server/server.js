@@ -544,12 +544,12 @@ app.get('/bookmarklet.html', (req, res) => {
 
 // Serve bookmarklet JS files from project root (one level up from print-server/)
 app.get('/bookmarklet.min.js', (req, res) => {
-  const filePath = path.join(__dirname, '..', 'bookmarklet.min.js');
+  const filePath = path.join(__dirname, 'public', 'bookmarklet.min.js');
   if (fs.existsSync(filePath)) return res.type('js').sendFile(filePath);
   res.status(404).send('bookmarklet.min.js not found');
 });
 app.get('/bookmarklet.js', (req, res) => {
-  const filePath = path.join(__dirname, '..', 'bookmarklet.js');
+  const filePath = path.join(__dirname, 'public', 'bookmarklet.js');
   if (fs.existsSync(filePath)) return res.type('js').sendFile(filePath);
   res.status(404).send('bookmarklet.js not found');
 });

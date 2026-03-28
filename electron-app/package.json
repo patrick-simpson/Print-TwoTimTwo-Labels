@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
