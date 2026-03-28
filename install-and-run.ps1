@@ -1,5 +1,5 @@
-﻿# Awana Label Print Server -- All-in-One Installer
-# Version    : 1.7.3
+# Awana Label Print Server -- All-in-One Installer
+# Version    : 1.8.0
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.7.3"
+$ScriptVersion$ScriptVersion = "1.8.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -628,7 +628,6 @@ Write-Host ""
 # user can drag it to their bookmark bar on first run.
 Write-Host "Opening check-in page in default browser..." -ForegroundColor Cyan
 Start-Process $cfg.checkinUrl
-Start-Process "http://localhost:3456/bookmarklet.html"
 Write-Host ""
 Write-Host "  If this is your first time, drag the bookmarklet button to your bookmark bar." -ForegroundColor Yellow
 Write-Host "  After that, just click it on the check-in page to arm auto-printing." -ForegroundColor Yellow

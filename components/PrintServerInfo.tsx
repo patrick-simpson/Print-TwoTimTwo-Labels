@@ -25,11 +25,7 @@ export const PrintServerInfo: React.FC = () => {
     window.open('https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install.bat', '_blank');
   };
 
-  const openBookmarklet = () => {
-    // Open from GitHub Pages so users always get the latest code,
-    // not the potentially-outdated copy served by their local install.
-    window.open('https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/bookmarklet.html', 'awana_bookmarklet', 'width=600,height=800');
-  };
+  
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-purple-600">
@@ -41,8 +37,7 @@ export const PrintServerInfo: React.FC = () => {
         </span>
       </h2>
       <p className="text-sm text-gray-500 mb-4">
-        By default the bookmarklet opens a print dialog. Use this automatic setup to print silently
-        to your label printer with a single click after each check-in.
+        By default the browser opens a print dialog. Use this automatic setup to print silently to your label printer with a single click after each check-in.
       </p>
 
       {/* Disclaimer */}
@@ -96,26 +91,7 @@ export const PrintServerInfo: React.FC = () => {
           </div>
         </li>
 
-        {/* Step 3 - Install Bookmarklet */}
-        <li className="flex gap-3">
-          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">3</span>
-          <div>
-            <p className="font-semibold text-gray-800 mb-3">Create the auto-print bookmarklet</p>
-            <p className="mb-3 text-gray-600">
-              A bookmarklet is a tiny button that runs print detection on the check-in page. No installation needed!
-            </p>
-            <button
-              onClick={openBookmarklet}
-              className="flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded shadow transition-colors bg-blue-600 hover:bg-blue-700 text-white cursor-pointer mb-4"
-            >
-              <i className="fa fa-bookmark"></i>
-              Create Bookmarklet
-            </button>
-            <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
-              <strong>Quick setup:</strong> Click the button above, then drag the "Drag to Bookmark Bar" button to your bookmark bar. Done! Now just click it on the check-in page.
-            </p>
-          </div>
-        </li>
+        {/* Step 3 - Install Extension */} <li className=\"flex gap-3\"> <span className=\"flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs\">3</span> <div> <p className=\"font-semibold text-gray-800 mb-3\">Install the browser extension</p> <p className=\"mb-3 text-gray-600\"> The extension provides the most reliable \"zero-click\" experience and survives page reloads. </p> <div className=\"bg-blue-50 border border-blue-200 rounded p-4 text-xs\"> <p className=\"font-bold text-blue-800 mb-2\">How to install (Developer Mode):</p> <ol className=\"list-decimal list-inside space-y-1.5 text-blue-700\"> <li>Open <code className=\"bg-white/50 px-1 rounded\">edge://extensions</code> or <code className=\"bg-white/50 px-1 rounded\">chrome://extensions</code></li> <li>Turn on <strong>Developer Mode</strong> (top right)</li> <li>Click <strong>Load unpacked</strong></li> <li>Select the <code className=\"bg-white/50 px-1 rounded\">chrome-extension</code> folder in the project directory</li> </ol> </div> <p className=\"mt-3 text-xs text-gray-500\"> Once installed, the KVBC Print widget will automatically appear on the check-in page! </p> </div> </li>
 
         {/* Step 4 - Optional Test */}
         <li className="flex gap-3">
@@ -251,8 +227,9 @@ export const PrintServerInfo: React.FC = () => {
       <div className="mt-6 bg-purple-50 border border-purple-200 rounded p-3 text-sm text-purple-800">
         <strong>That's it!</strong> Once configured, silent printing is automatic. Each time a child checks in,
         a label prints directly to your configured printer with no dialog. If the server isn't running,
-        the bookmarklet falls back to a normal print dialog automatically.
+        the extension falls back to a normal print dialog automatically.
       </div>
     </div>
   );
 };
+

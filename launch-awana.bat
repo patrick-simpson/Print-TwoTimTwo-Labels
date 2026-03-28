@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal enabledelayedexpansion
 title Awana Print
 echo Starting Awana Print...
@@ -126,7 +126,6 @@ timeout /t 2 /nobreak >nul
 :: Open Edge to check-in page and bookmarklet page
 echo Opening check-in page in Edge...
 start "" "%CHECKIN_URL%"
-start "" "http://localhost:3456/bookmarklet.html"
 
 echo.
 echo Awana Print is running. You can close this window.
