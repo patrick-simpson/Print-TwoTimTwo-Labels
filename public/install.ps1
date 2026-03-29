@@ -34,6 +34,7 @@ try {
 }
 
 # Run the full installer with c:\output as the install path
+# Use -ExecutionPolicy Bypass to avoid "scripts disabled" errors on restricted systems
 Write-Host "Launching installer..." -ForegroundColor Gray
 Write-Host ""
-& $installerPath -InstallPath $InstallDir
+powershell -ExecutionPolicy Bypass -File $installerPath -InstallPath $InstallDir

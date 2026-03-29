@@ -1,4 +1,8 @@
-﻿## [1.8.2] - 2026-03-29
+﻿## [1.8.3] - 2026-03-29
+- **Execution Policy Fix:** Updated bootstrap `install.ps1` to launch the full installer with `-ExecutionPolicy Bypass`, preventing "scripts disabled" errors on restricted Windows systems.
+- **Website:** Updated the one-liner command to include `powershell -ExecutionPolicy Bypass -Command` wrapper so it works out of the box on any system.
+
+## [1.8.2] - 2026-03-29
 - **Extension Install Guide:** Improved Step 3 on the website with a download button for `chrome-extension.zip` and clear path to the local extension folder for users who already ran the installer.
 - **Extension Distribution:** Added `chrome-extension.zip` to GitHub Pages so users can download it directly from the website.
 

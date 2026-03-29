@@ -55,10 +55,10 @@ export const PrintServerInfo: React.FC = () => {
           <div>
             <p className="font-semibold text-gray-800 mb-3">Install the print server</p>
             <p className="mb-3">
-              Open PowerShell and paste this one-liner:
+              Open PowerShell and paste this command:
             </p>
             <div className="bg-gray-900 rounded p-3 font-mono text-xs leading-relaxed overflow-x-auto mb-3">
-              <code className="text-green-300">irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex</code>
+              <code className="text-green-300">powershell -ExecutionPolicy Bypass -Command "irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex"</code>
             </div>
             <p className="text-xs text-gray-500 mb-3">
               Or download and double-click <code className="bg-gray-100 px-1 rounded text-xs">install.bat</code> instead:
