@@ -1,4 +1,8 @@
-﻿## [1.8.7] - 2026-03-29
+﻿## [1.8.8] - 2026-03-29
+- **Install Location Migration:** Both `launch-awana.bat` and `install-and-run.ps1` now default to `C:\output` instead of `%APPDATA%\Awana-Print`. On launch, they detect the old location, migrate user data (config.json, clubbers.csv), and remove the old folder.
+- **ProgressPreference Fix:** Moved `$ProgressPreference = 'SilentlyContinue'` to a single global assignment at the top of `install-and-run.ps1`, removing individual assignments that could error when invoked via certain shell contexts.
+
+## [1.8.7] - 2026-03-29
 - **Launcher Path Fix:** `launch-awana.bat` now derives its install directory from its own file location (`%~dp0`) instead of hardcoding `%APPDATA%\Awana-Print`. This ensures the desktop shortcut works correctly regardless of where the project was installed (e.g. `c:\output`).
 - **Launcher Update Fix:** When an update is detected, the launcher now downloads `install-and-run.ps1` directly and passes `-InstallPath` matching the current install location, instead of downloading `install.bat` which had its own hardcoded path assumptions.
 

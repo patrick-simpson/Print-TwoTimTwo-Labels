@@ -10,14 +10,51 @@ echo.
 echo   Starting server and connecting to TwoTimTwo...
 echo.
 
-:: Derive install dir from this script's own location (it lives in the install dir)
-set "INSTALL_DIR=%~dp0"
-:: Remove trailing backslash
-if "%INSTALL_DIR:~-1%"=="\" set "INSTALL_DIR=%INSTALL_DIR:~0,-1%"
+set "INSTALL_DIR=C:\output"
 set "PROJECT_DIR=%INSTALL_DIR%\Print-TwoTimTwo-Labels"
 set "SERVER_DIR=%PROJECT_DIR%\print-server"
 set "CONFIG_HELPER=%INSTALL_DIR%\read-config.js"
 set "VERSION_FILE=%PROJECT_DIR%\VERSION"
+
+:: --- 0. Migrate from old %APPDATA%\Awana-Print location ---
+set "OLD_DIR=%APPDATA%\Awana-Print"
+if exist "%OLD_DIR%\Print-TwoTimTwo-Labels\print-server\server.js" (
+    echo   [#] Migrating from old install location...
+    echo       %OLD_DIR% -^> %INSTALL_DIR%
+
+    :: Ensure new install dir exists
+    if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+
+    :: Migrate user data (config + roster) if not already present at new location
+    if exist "%OLD_DIR%\Print-TwoTimTwo-Labels\print-server\config.json" (
+        if not exist "%SERVER_DIR%\config.json" (
+            copy "%OLD_DIR%\Print-TwoTimTwo-Labels\print-server\config.json" "%SERVER_DIR%\config.json" >nul 2>nul
+            echo       Migrated config.json
+        )
+    )
+    if exist "%OLD_DIR%\Print-TwoTimTwo-Labels\print-server\clubbers.csv" (
+        if not exist "%SERVER_DIR%\clubbers.csv" (
+            copy "%OLD_DIR%\Print-TwoTimTwo-Labels\print-server\clubbers.csv" "%SERVER_DIR%\clubbers.csv" >nul 2>nul
+            echo       Migrated clubbers.csv
+        )
+    )
+
+    :: Kill any node processes that might lock old files
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3456 " ^| findstr "LISTENING" 2^>nul') do (
+        taskkill /PID %%p /F >nul 2>nul
+    )
+    timeout /t 1 /nobreak >nul
+
+    :: Remove old installation
+    rmdir /s /q "%OLD_DIR%" >nul 2>nul
+    if not exist "%OLD_DIR%" (
+        echo   [OK] Old installation removed.
+    ) else (
+        echo   [!] Could not fully remove old folder. You can delete it manually:
+        echo       %OLD_DIR%
+    )
+    echo.
+)
 
 :: --- 1. Admin Check & Relaunch ---
 if "%1"=="--admin-relaunch" goto :check_for_updates

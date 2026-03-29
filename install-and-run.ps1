@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.8.7
+# Version    : 1.8.8
 # Updated    : 2026-03-27
 #
 # This script:
@@ -24,7 +24,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.8.7"
+$ProgressPreference = "SilentlyContinue"
+$ScriptVersion = "1.8.8"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -145,7 +146,6 @@ if ($psVer.Major -lt 7) {
             $ps7Url  = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
             $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
             try {
-                $ProgressPreference = 'SilentlyContinue'
                 Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
                 Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
                 $upgraded = $true
@@ -186,7 +186,6 @@ if ($SkipNodeCheck) {
 
     Write-Host "Downloading Node.js from $nodeUrl..." -ForegroundColor Gray
     try {
-        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $nodeUrl -OutFile $installerPath -ErrorAction Stop
         Write-Host "[OK] Downloaded ($('{0:N0}' -f ((Get-Item $installerPath).Length)) bytes)" -ForegroundColor Green
     } catch {
@@ -233,10 +232,40 @@ Write-Host ""
 Write-Host "[3/8] Checking installation..." -ForegroundColor White
 if ($InstallPath) {
     $installDir = $InstallPath
-    Write-Host "Using custom install path: $installDir" -ForegroundColor Gray
 } else {
-    $installDir = Join-Path ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ApplicationData)) "Awana-Print"
-    Write-Host "Install location: $installDir" -ForegroundColor Gray
+    $installDir = "C:\output"
+}
+Write-Host "Install location: $installDir" -ForegroundColor Gray
+
+# --- Migrate from old %APPDATA%\Awana-Print location ---
+$oldDir = Join-Path ([System.Environment]::GetFolderPath([System.Environment+SpecialFolder]::ApplicationData)) "Awana-Print"
+$oldServerJs = Join-Path $oldDir "Print-TwoTimTwo-Labels\print-server\server.js"
+if ((Test-Path $oldServerJs) -and ($installDir -ne $oldDir)) {
+    Write-Host "  Migrating from old install: $oldDir" -ForegroundColor Cyan
+    $oldCfg = Join-Path $oldDir "Print-TwoTimTwo-Labels\print-server\config.json"
+    $oldCsv = Join-Path $oldDir "Print-TwoTimTwo-Labels\print-server\clubbers.csv"
+    $newPrintServer = Join-Path $installDir "Print-TwoTimTwo-Labels\print-server"
+
+    if (-not (Test-Path $newPrintServer)) {
+        New-Item -ItemType Directory -Path $newPrintServer -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+    if ((Test-Path $oldCfg) -and -not (Test-Path (Join-Path $newPrintServer "config.json"))) {
+        Copy-Item $oldCfg (Join-Path $newPrintServer "config.json") -Force
+        Write-Host "    Migrated config.json" -ForegroundColor Gray
+    }
+    if ((Test-Path $oldCsv) -and -not (Test-Path (Join-Path $newPrintServer "clubbers.csv"))) {
+        Copy-Item $oldCsv (Join-Path $newPrintServer "clubbers.csv") -Force
+        Write-Host "    Migrated clubbers.csv" -ForegroundColor Gray
+    }
+
+    Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    Remove-Item $oldDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path $oldDir)) {
+        Write-Host "  [OK] Old installation removed." -ForegroundColor Green
+    } else {
+        Write-Host "  [WARN] Could not fully remove $oldDir -- delete manually." -ForegroundColor Yellow
+    }
 }
 
 try {
@@ -326,7 +355,6 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     $zipPath = Join-Path $installDir "project.zip"
 
     try {
-        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
         Write-Host "[OK] Downloaded." -ForegroundColor Green
     } catch {
