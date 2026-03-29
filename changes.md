@@ -1,4 +1,8 @@
-﻿## [1.8.6] - 2026-03-29
+﻿## [1.8.7] - 2026-03-29
+- **Launcher Path Fix:** `launch-awana.bat` now derives its install directory from its own file location (`%~dp0`) instead of hardcoding `%APPDATA%\Awana-Print`. This ensures the desktop shortcut works correctly regardless of where the project was installed (e.g. `c:\output`).
+- **Launcher Update Fix:** When an update is detected, the launcher now downloads `install-and-run.ps1` directly and passes `-InstallPath` matching the current install location, instead of downloading `install.bat` which had its own hardcoded path assumptions.
+
+## [1.8.6] - 2026-03-29
 - **Installer Fix:** Removed `$ProgressPreference` from bootstrap `install.ps1` — it caused errors when run via `irm | iex` because double-quoted `-Command` strings interpolate `$` variables. Changed website one-liner to use single quotes.
 
 ## [1.8.5] - 2026-03-29

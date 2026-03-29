@@ -10,7 +10,10 @@ echo.
 echo   Starting server and connecting to TwoTimTwo...
 echo.
 
-set "INSTALL_DIR=%APPDATA%\Awana-Print"
+:: Derive install dir from this script's own location (it lives in the install dir)
+set "INSTALL_DIR=%~dp0"
+:: Remove trailing backslash
+if "%INSTALL_DIR:~-1%"=="\" set "INSTALL_DIR=%INSTALL_DIR:~0,-1%"
 set "PROJECT_DIR=%INSTALL_DIR%\Print-TwoTimTwo-Labels"
 set "SERVER_DIR=%PROJECT_DIR%\print-server"
 set "CONFIG_HELPER=%INSTALL_DIR%\read-config.js"
@@ -64,12 +67,12 @@ echo   [*] A newer version is available (%REMOTE_VERSION%).
 echo   [*] Downloading and running installer...
 echo.
 
-set "INSTALL_BAT=%TEMP%\awana_install.bat"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%INSTALL_BAT_URL%' -OutFile '%INSTALL_BAT%' -ErrorAction SilentlyContinue"      
+set "PS1_URL=https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/install-and-run.ps1"
+set "TEMP_PS1=%INSTALL_DIR%\install-and-run.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%PS1_URL%' -OutFile '%TEMP_PS1%' -UseBasicParsing -ErrorAction SilentlyContinue"
 
-if exist "%INSTALL_BAT%" (
-    call "%INSTALL_BAT%"
-    del "%INSTALL_BAT%" 2>nul
+if exist "%TEMP_PS1%" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP_PS1%" -InstallPath "%INSTALL_DIR%"
     exit /b
 ) else (
     echo   [!] Failed to download installer. Continuing...
