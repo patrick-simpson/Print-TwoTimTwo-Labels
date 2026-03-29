@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.9.0
+# Version    : 1.9.1
 # Updated    : 2026-03-27
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "1.9.0"
+$ScriptVersion = "1.9.1"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -741,23 +741,23 @@ try {
 
     # Create desktop shortcut if it doesn't already exist
     $desktop = [System.Environment]::GetFolderPath('Desktop')
-    $lnkPath = Join-Path $desktop "Awana Print.lnk"
-    if (-not (Test-Path $lnkPath)) {
-        $ws = New-Object -ComObject WScript.Shell
-        $shortcut = $ws.CreateShortcut($lnkPath)
-        $shortcut.TargetPath = $launcherDest
-        $shortcut.WorkingDirectory = $installDir
-        $shortcut.Description = "Start Awana label print server and open check-in page"
-        if (Test-Path $iconDest) {
-            $shortcut.IconLocation = "$iconDest,0"
-        } else {
-            $shortcut.IconLocation = "msedge.exe,0"
-        }
-        $shortcut.Save()
-        Write-Host "  [OK] Created desktop shortcut: Awana Print" -ForegroundColor Green
+    # Remove old shortcut name if it exists
+    $oldLnkPath = Join-Path $desktop "Awana Print.lnk"
+    if (Test-Path $oldLnkPath) { Remove-Item $oldLnkPath -Force -ErrorAction SilentlyContinue }
+
+    $lnkPath = Join-Path $desktop "Awana Check In.lnk"
+    $ws = New-Object -ComObject WScript.Shell
+    $shortcut = $ws.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = $launcherDest
+    $shortcut.WorkingDirectory = $installDir
+    $shortcut.Description = "Start Awana label print server and open check-in page"
+    if (Test-Path $iconDest) {
+        $shortcut.IconLocation = "$iconDest,0"
     } else {
-        Write-Host "  [OK] Desktop shortcut already exists." -ForegroundColor Green
+        $shortcut.IconLocation = "msedge.exe,0"
     }
+    $shortcut.Save()
+    Write-Host "  [OK] Created desktop shortcut: Awana Check In" -ForegroundColor Green
 } catch {
     Write-Host "  [WARN] Could not create desktop shortcut (non-critical): $_" -ForegroundColor Yellow
 }

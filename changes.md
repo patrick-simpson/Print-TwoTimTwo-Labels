@@ -1,4 +1,9 @@
-﻿## [1.9.0] - 2026-03-29
+﻿## [1.9.1] - 2026-03-29
+- **PNG Print Engine:** Replaced PDF-based printing (pdfkit + pdf-to-printer/SumatraPDF) with PNG-based printing (canvas + PowerShell System.Drawing). This eliminates all printer driver rotation issues — the label is rendered as a 1200x600 pixel image at 300 DPI and printed directly. Tested for Labelife D450 BT thermal printers.
+- **Widget Minimize Arrow:** Replaced the in-header minimize button with an arrow tab that sticks out on the left side of the widget. When minimized, the widget fully collapses and only the arrow tab remains on screen.
+- **Dependency Change:** Replaced `pdfkit` and `pdf-to-printer` with `canvas` package in print-server.
+
+## [1.9.0] - 2026-03-29
 - **Orientation Fix (for real):** The previous fix corrected the PDF page dimensions but the printer driver was still rotating the output. Now explicitly passing `orientation: 'portrait'` and `scale: 'noscale'` to `pdf-to-printer` (SumatraPDF) to prevent any driver-level rotation or scaling. The PDF is 4"x2" and should print exactly as-is.
 
 ## [1.8.9] - 2026-03-29

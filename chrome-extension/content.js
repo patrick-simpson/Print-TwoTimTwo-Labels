@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.9.0';
+  const EXTENSION_VERSION = '1.9.1';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -78,19 +78,30 @@
     });
     versionSpan.textContent = 'v' + EXTENSION_VERSION;
 
+    header.append(titleSpan, versionSpan);
+
+    // Arrow tab that sticks out on the left side of the widget
     const minimizeBtn = document.createElement('button');
     minimizeBtn.id = 'awana-minimize';
     Object.assign(minimizeBtn.style, {
-      background: 'none',
-      border: 'none',
+      position: 'absolute',
+      top: '8px',
+      left: '-22px',
+      width: '22px',
+      height: '28px',
+      background: '#f8fafc',
+      border: '1px solid #cbd5e1',
+      borderRight: 'none',
+      borderRadius: '6px 0 0 6px',
       cursor: 'pointer',
-      fontSize: '14px',
-      padding: '0 2px',
-      lineHeight: '1',
-      color: '#64748b'
+      fontSize: '12px',
+      padding: '0',
+      lineHeight: '28px',
+      textAlign: 'center',
+      color: '#64748b',
+      boxShadow: '-2px 2px 6px rgba(0,0,0,0.08)',
+      zIndex: '1'
     });
-
-    header.append(titleSpan, versionSpan, minimizeBtn);
 
     // Content wrapper (everything below the header)
     const content = document.createElement('div');
@@ -187,9 +198,18 @@
     // Minimize / restore toggle
     function applyMinimized(min) {
       isMinimized = min;
+      header.style.display = min ? 'none' : '';
       content.style.display = min ? 'none' : '';
-      minimizeBtn.textContent = min ? '+' : '\u2013';
+      widget.style.padding = min ? '0' : '10px 14px';
+      widget.style.border = min ? 'none' : '1px solid #cbd5e1';
+      widget.style.background = min ? 'transparent' : '#f8fafc';
+      widget.style.boxShadow = min ? 'none' : '0 4px 12px rgba(0,0,0,0.12)';
+      minimizeBtn.textContent = min ? '\u25C0' : '\u25B6';
       minimizeBtn.title = min ? 'Expand widget' : 'Minimize widget';
+      // When minimized, anchor the tab to right edge of screen
+      minimizeBtn.style.left = min ? 'auto' : '-22px';
+      minimizeBtn.style.right = min ? '0' : 'auto';
+      minimizeBtn.style.borderRadius = min ? '6px 0 0 6px' : '6px 0 0 6px';
       localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
     }
     minimizeBtn.addEventListener('click', function() {

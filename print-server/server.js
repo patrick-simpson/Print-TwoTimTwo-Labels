@@ -1,6 +1,6 @@
 // Awana Label Print Server
 // Started by install-and-run.ps1 — listens on http://localhost:3456
-// Accepts POST /print and silently prints a 4×2 in label via pdf-to-printer.
+// Accepts POST /print and silently prints a 4×2 in label as PNG via canvas.
 
 'use strict';
 
@@ -12,8 +12,8 @@ process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejecti
 
 const express = require('express');
 const cors    = require('cors');
-const { print } = require('pdf-to-printer');
-const PDFDocument = require('pdfkit');
+const { createCanvas, loadImage } = require('canvas');
+const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
 const fs    = require('fs');
@@ -300,16 +300,6 @@ function parseAllergies(allergiesStr) {
 // ── Text truncation helper ────────────────────────────────────────────────────
 // Returns text trimmed and suffixed with '…' if it exceeds maxWidth at the
 // given font/size. Prevents pdfkit text from printing off the edge of the label.
-function truncateText(doc, text, fontName, fontSize, maxWidth) {
-  doc.font(fontName).fontSize(fontSize);
-  if (doc.widthOfString(text) <= maxWidth) return text;
-  let t = text;
-  // Trim one character at a time from the right until it fits
-  while (t.length > 0 && doc.widthOfString(t + '…') > maxWidth) {
-    t = t.slice(0, -1);
-  }
-  return t + '…';
-}
 
 // ── Download a remote image into a Buffer ─────────────────────────────────────
 function downloadImage(url) {
@@ -344,184 +334,259 @@ async function resolveImageBuffer(clubImageData) {
   return null;
 }
 
-// ── Auto-size a font to fit within maxWidth ───────────────────────────────────
-function fitFontSize(doc, text, fontName, maxWidth, maxSize = 32, minSize = 18) {
-  doc.font(fontName);
+// ── Auto-size a font to fit within maxWidth (canvas version) ─────────────────
+function fitFontSize(ctx, text, fontStyle, maxWidth, maxSize = 32, minSize = 18) {
   for (let size = maxSize; size >= minSize; size -= 2) {
-    doc.fontSize(size);
-    if (doc.widthOfString(text) <= maxWidth) return size;
+    ctx.font = `${fontStyle} ${size}px Helvetica, Arial, sans-serif`;
+    if (ctx.measureText(text).width <= maxWidth) return size;
   }
   return minSize;
 }
 
-// ── Generate the label PDF ────────────────────────────────────────────────────
-// allergyTokens : string[] from parseAllergies()  (default: no allergies)
-// handbookGroup : string from CSV HandbookGroup   (default: not shown)
-// isBirthday    : boolean from isBirthdayWeek()   (default: no banner)
+function truncateTextCanvas(ctx, text, font, maxWidth) {
+  ctx.font = font;
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t.length > 0 && ctx.measureText(t + '…').width > maxWidth) {
+    t = t.slice(0, -1);
+  }
+  return t + '…';
+}
+
+// ── Draw a rounded rectangle on canvas ───────────────────────────────────────
+function roundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+// ── Generate the label as a PNG ──────────────────────────────────────────────
+// Returns the path to a temporary PNG file (caller must delete it).
+const DPI = 300;
+const PX_W = Math.round(4 * DPI);  // 1200 px
+const PX_H = Math.round(2 * DPI);  // 600 px
+const SCALE = DPI / 72;            // convert pt → px
+
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false
 ) {
-  // Guard the enrichment parameters defensively in case the caller passes null
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   isBirthday    = !!isBirthday;
 
-  // pdfPath is declared here so the caller's finally block can delete it even
-  // if an error is thrown partway through generation.
-  const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
+  const pngPath = path.join(os.tmpdir(), `awana-${Date.now()}.png`);
 
-  try {
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
-    const out  = fs.createWriteStream(pdfPath);
+  const canvas = createCanvas(PX_W, PX_H);
+  const ctx = canvas.getContext('2d');
 
-    doc.pipe(out);
+  // Scale all drawing from points to pixels
+  ctx.scale(SCALE, SCALE);
 
-    const hasIcon = !!clubImageBuffer;
-    const textX   = hasIcon ? TEXT_X : BX + 8;
-    const textW   = hasIcon ? TEXT_W : BW - 16;
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, PAGE_W, PAGE_H);
 
-    // ── Badge border ──────────────────────────────────────────────────────────
-    doc.roundedRect(BX, BY, BW, BH, CORNER)
-       .lineWidth(1.5).strokeColor('#000000').stroke();
+  const hasIcon = !!clubImageBuffer;
+  const textX   = hasIcon ? TEXT_X : BX + 8;
+  const textW   = hasIcon ? TEXT_W : BW - 16;
 
-    // ── Left icon panel ───────────────────────────────────────────────────────
-    if (hasIcon) {
-      // Soft gray background for the icon zone (clip to badge shape)
-      doc.save();
-      doc.roundedRect(BX, BY, BW, BH, CORNER).clip();
-      doc.rect(BX, BY, ICON_COL_W, BH).fillColor('#f4f4f4').fill();
-      doc.restore();
+  // ── Badge border ──────────────────────────────────────────────────────────
+  roundedRect(ctx, BX, BY, BW, BH, CORNER);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#000000';
+  ctx.stroke();
 
-      // Subtle vertical divider
-      doc.moveTo(DIVIDER_X, BY + 12)
-         .lineTo(DIVIDER_X, BY + BH - 12)
-         .lineWidth(0.5).strokeColor('#d0d0d0').stroke();
+  // ── Left icon panel ───────────────────────────────────────────────────────
+  if (hasIcon) {
+    ctx.save();
+    roundedRect(ctx, BX, BY, BW, BH, CORNER);
+    ctx.clip();
+    ctx.fillStyle = '#f4f4f4';
+    ctx.fillRect(BX, BY, ICON_COL_W, BH);
+    ctx.restore();
 
-      // Club icon image (56×56 pt, centred in the icon zone)
-      const iconSize = 56;
-      const iconX = BX + (ICON_COL_W - iconSize) / 2;
-      const iconY = BY + (BH - iconSize) / 2;
-      try {
-        doc.image(clubImageBuffer, iconX, iconY, { fit: [iconSize, iconSize], align: 'center', valign: 'center' });
-      } catch {
-        // Image decode failed — draw a placeholder circle
-        doc.circle(BX + ICON_COL_W / 2, BY + BH / 2, 20)
-           .lineWidth(1).strokeColor('#aaa').stroke();
-      }
+    // Subtle vertical divider
+    ctx.beginPath();
+    ctx.moveTo(DIVIDER_X, BY + 12);
+    ctx.lineTo(DIVIDER_X, BY + BH - 12);
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#d0d0d0';
+    ctx.stroke();
+
+    // Club icon image (56×56 pt, centred in the icon zone)
+    const iconSize = 56;
+    const iconX = BX + (ICON_COL_W - iconSize) / 2;
+    const iconY = BY + (BH - iconSize) / 2;
+    try {
+      const img = await loadImage(clubImageBuffer);
+      // Preserve aspect ratio
+      const aspect = img.width / img.height;
+      let drawW = iconSize, drawH = iconSize;
+      if (aspect > 1) { drawH = iconSize / aspect; }
+      else { drawW = iconSize * aspect; }
+      const dx = iconX + (iconSize - drawW) / 2;
+      const dy = iconY + (iconSize - drawH) / 2;
+      ctx.drawImage(img, dx, dy, drawW, drawH);
+    } catch {
+      // Image decode failed — draw a placeholder circle
+      ctx.beginPath();
+      ctx.arc(BX + ICON_COL_W / 2, BY + BH / 2, 20, 0, Math.PI * 2);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#aaa';
+      ctx.stroke();
     }
-
-    // ── Text area ─────────────────────────────────────────────────────────────
-    const hasLast  = lastName.trim().length > 0;
-    const hasClub  = clubName.trim().length > 0 && !hasIcon;
-    const hasGroup = handbookGroup.length > 0;
-    const hasAllergy = allergyTokens.length > 0;
-
-    // Reserve space at the bottom of the badge for the allergy strip
-    // (14 pt tall) so the main text block doesn't overlap it.
-    const ALLERGY_STRIP_H = hasAllergy ? 14 : 0;
-
-    // Font sizes
-    const fs1 = fitFontSize(doc, firstName, 'Helvetica-Bold', textW);
-    const fs2 = 20;  // last name
-    const fs3 = 12;  // club name
-    const fs4 = 10;  // handbook group
-    const fs5 = 9;   // birthday banner
-    const GAP = 4;
-    const SEP = 9;   // separator gap (4 + 1 line + 4)
-
-    // Measure total text block height so it can be vertically centred
-    let blockH = fs1;
-    if (hasLast)     blockH += GAP + fs2;
-    if (hasClub)     blockH += SEP + fs3;
-    if (hasGroup)    blockH += GAP + fs4;
-    if (isBirthday)  blockH += GAP + fs5;
-
-    // Usable vertical space above the allergy strip
-    const usableH = BH - ALLERGY_STRIP_H;
-    const centerY = BY + usableH / 2;
-    let y = centerY - blockH / 2;
-
-    // ── First name ────────────────────────────────────────────────────────────
-    // fitFontSize already shrinks the font; truncateText guards the minSize edge
-    // case where even 18pt text is wider than the column.
-    const safeFirst = truncateText(doc, firstName, 'Helvetica-Bold', fs1, textW);
-    doc.font('Helvetica-Bold').fontSize(fs1).fillColor('#000000');
-    doc.text(safeFirst, textX, y, { width: textW, align: 'center', lineBreak: false });
-    y += fs1;
-
-    // ── Last name ─────────────────────────────────────────────────────────────
-    if (hasLast) {
-      y += GAP;
-      const safeLast = truncateText(doc, lastName, 'Helvetica', fs2, textW);
-      doc.font('Helvetica').fontSize(fs2).fillColor('#222222');
-      doc.text(safeLast, textX, y, { width: textW, align: 'center', lineBreak: false });
-      y += fs2;
-    }
-
-    // ── Club name with separator ──────────────────────────────────────────────
-    if (hasClub) {
-      y += 4;
-      const sepMargin = textW * 0.1;
-      doc.moveTo(textX + sepMargin, y + 0.5)
-         .lineTo(textX + textW - sepMargin, y + 0.5)
-         .lineWidth(0.5).strokeColor('#cccccc').stroke();
-      y += 5;
-      const safeClub = truncateText(doc, clubName, 'Helvetica-Oblique', fs3, textW);
-      doc.font('Helvetica-Oblique').fontSize(fs3).fillColor('#444444');
-      doc.text(safeClub, textX, y, { width: textW, align: 'center', lineBreak: false });
-      y += fs3;
-    }
-
-    // ── Handbook group ────────────────────────────────────────────────────────
-    if (hasGroup) {
-      y += GAP;
-      // Truncate to ~30 visible characters before passing to pdfkit so that an
-      // unusually long group string (e.g. "Advanced T&T Handbook Section 4B") is
-      // clipped cleanly rather than overflowing the right edge of the label.
-      let groupStr = handbookGroup.length > 30
-        ? handbookGroup.slice(0, 29) + '…'
-        : handbookGroup;
-      groupStr = truncateText(doc, groupStr, 'Helvetica-Oblique', fs4, textW);
-      doc.font('Helvetica-Oblique').fontSize(fs4).fillColor('#666666');
-      doc.text(groupStr, textX, y, { width: textW, align: 'center', lineBreak: false });
-      y += fs4;
-    }
-
-    // ── Birthday banner ───────────────────────────────────────────────────────
-    if (isBirthday) {
-      y += GAP;
-      doc.font('Helvetica-Bold').fontSize(fs5).fillColor('#c0392b');
-      doc.text('Happy Birthday!', textX, y, { width: textW, align: 'center', lineBreak: false });
-    }
-
-    // ── Allergy strip ─────────────────────────────────────────────────────────
-    // Printed as a solid red bar at the bottom of the badge so it is visually
-    // unmissable and can't be confused with regular label text.
-    if (hasAllergy) {
-      const stripY = BY + BH - ALLERGY_STRIP_H;
-
-      // Clip the fill to the rounded badge so the strip doesn't bleed outside
-      doc.save();
-      doc.roundedRect(BX, BY, BW, BH, CORNER).clip();
-      doc.rect(BX, stripY, BW, ALLERGY_STRIP_H).fillColor('#c0392b').fill();
-      doc.restore();
-
-      const allergyText = allergyTokens.join(' • ');
-      const safeAllergy = truncateText(doc, allergyText, 'Helvetica-Bold', 8, BW - 16);
-      doc.font('Helvetica-Bold').fontSize(8).fillColor('#ffffff');
-      doc.text(safeAllergy, BX + 8, stripY + 3, { width: BW - 16, align: 'center', lineBreak: false });
-    }
-
-    doc.end();
-    return new Promise((resolve, reject) => {
-      out.on('finish', () => resolve(pdfPath));
-      out.on('error', reject);
-    });
-  } catch (err) {
-    // Re-throw so the route handler's catch block can log and respond
-    throw err;
   }
+
+  // ── Text area ─────────────────────────────────────────────────────────────
+  const hasLast  = lastName.trim().length > 0;
+  const hasClub  = clubName.trim().length > 0 && !hasIcon;
+  const hasGroup = handbookGroup.length > 0;
+  const hasAllergy = allergyTokens.length > 0;
+
+  const ALLERGY_STRIP_H = hasAllergy ? 14 : 0;
+
+  // Font sizes (in pt)
+  const fs1 = fitFontSize(ctx, firstName, 'bold', textW);
+  const fs2 = 20;
+  const fs3 = 12;
+  const fs4 = 10;
+  const fs5 = 9;
+  const GAP = 4;
+  const SEP = 9;
+
+  let blockH = fs1;
+  if (hasLast)     blockH += GAP + fs2;
+  if (hasClub)     blockH += SEP + fs3;
+  if (hasGroup)    blockH += GAP + fs4;
+  if (isBirthday)  blockH += GAP + fs5;
+
+  const usableH = BH - ALLERGY_STRIP_H;
+  const centerY = BY + usableH / 2;
+  let y = centerY - blockH / 2;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const textCenterX = textX + textW / 2;
+
+  // ── First name ────────────────────────────────────────────────────────────
+  const firstFont = `bold ${fs1}px Helvetica, Arial, sans-serif`;
+  ctx.font = firstFont;
+  const safeFirst = truncateTextCanvas(ctx, firstName, firstFont, textW);
+  ctx.fillStyle = '#000000';
+  ctx.fillText(safeFirst, textCenterX, y);
+  y += fs1;
+
+  // ── Last name ─────────────────────────────────────────────────────────────
+  if (hasLast) {
+    y += GAP;
+    const lastFont = `${fs2}px Helvetica, Arial, sans-serif`;
+    ctx.font = lastFont;
+    const safeLast = truncateTextCanvas(ctx, lastName, lastFont, textW);
+    ctx.fillStyle = '#222222';
+    ctx.fillText(safeLast, textCenterX, y);
+    y += fs2;
+  }
+
+  // ── Club name with separator ──────────────────────────────────────────────
+  if (hasClub) {
+    y += 4;
+    const sepMargin = textW * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(textX + sepMargin, y + 0.5);
+    ctx.lineTo(textX + textW - sepMargin, y + 0.5);
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#cccccc';
+    ctx.stroke();
+    y += 5;
+    const clubFont = `italic ${fs3}px Helvetica, Arial, sans-serif`;
+    ctx.font = clubFont;
+    const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
+    ctx.fillStyle = '#444444';
+    ctx.fillText(safeClub, textCenterX, y);
+    y += fs3;
+  }
+
+  // ── Handbook group ────────────────────────────────────────────────────────
+  if (hasGroup) {
+    y += GAP;
+    let groupStr = handbookGroup.length > 30
+      ? handbookGroup.slice(0, 29) + '…'
+      : handbookGroup;
+    const groupFont = `italic ${fs4}px Helvetica, Arial, sans-serif`;
+    ctx.font = groupFont;
+    groupStr = truncateTextCanvas(ctx, groupStr, groupFont, textW);
+    ctx.fillStyle = '#666666';
+    ctx.fillText(groupStr, textCenterX, y);
+    y += fs4;
+  }
+
+  // ── Birthday banner ───────────────────────────────────────────────────────
+  if (isBirthday) {
+    y += GAP;
+    ctx.font = `bold ${fs5}px Helvetica, Arial, sans-serif`;
+    ctx.fillStyle = '#c0392b';
+    ctx.fillText('Happy Birthday!', textCenterX, y);
+  }
+
+  // ── Allergy strip ─────────────────────────────────────────────────────────
+  if (hasAllergy) {
+    const stripY = BY + BH - ALLERGY_STRIP_H;
+    ctx.save();
+    roundedRect(ctx, BX, BY, BW, BH, CORNER);
+    ctx.clip();
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(BX, stripY, BW, ALLERGY_STRIP_H);
+    ctx.restore();
+
+    const allergyText = allergyTokens.join(' • ');
+    const allergyFont = `bold 8px Helvetica, Arial, sans-serif`;
+    ctx.font = allergyFont;
+    const safeAllergy = truncateTextCanvas(ctx, allergyText, allergyFont, BW - 16);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(safeAllergy, BX + BW / 2, stripY + 3);
+  }
+
+  // Write PNG
+  const buffer = canvas.toBuffer('image/png');
+  fs.writeFileSync(pngPath, buffer);
+  return pngPath;
+}
+
+// ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
+function printImage(imagePath, printerName) {
+  // Escape single quotes in paths/names for PowerShell
+  const safePath = imagePath.replace(/'/g, "''");
+  const safePrinter = printerName.replace(/'/g, "''");
+
+  const ps = `
+Add-Type -AssemblyName System.Drawing
+$img = [System.Drawing.Image]::FromFile('${safePath}')
+$pd = New-Object System.Drawing.Printing.PrintDocument
+${printerName ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
+$pd.DefaultPageSettings.Landscape = $false
+$pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0,0,0,0)
+$pd.add_PrintPage({
+  param($sender, $e)
+  $e.Graphics.DrawImage($img, 0, 0, $e.PageBounds.Width, $e.PageBounds.Height)
+})
+$pd.Print()
+$img.Dispose()
+$pd.Dispose()
+`.trim();
+
+  execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/"/g, '\\"')}"`, {
+    timeout: 15000,
+    windowsHide: true
+  });
 }
 
 // ── Express server ────────────────────────────────────────────────────────────
@@ -629,22 +694,15 @@ app.post('/print', async (req, res) => {
 
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || "�"} | printer: ${PRINTER_NAME || "default"}`);
 
-  // pdfPath is declared outside try so the finally block can always delete it,
-  // even if generateLabel throws before returning the path.
-  let pdfPath = null;
+  let pngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
-    pdfPath = await generateLabel(
+    pngPath = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday
     );
 
-    const opts = {
-      ...(PRINTER_NAME && { printer: PRINTER_NAME }),
-      orientation: 'portrait',
-      scale: 'noscale'
-    };
-    await print(pdfPath, opts);
+    printImage(pngPath, PRINTER_NAME);
 
     res.json({ success: true });
   } catch (err) {
@@ -653,9 +711,7 @@ app.post('/print', async (req, res) => {
     console.error('[print] Error:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
-    // Always clean up the temp PDF, whether printing succeeded or failed.
-    // Without this, every failed print leaves a file in the OS temp folder.
-    if (pdfPath) fs.unlink(pdfPath, () => {});
+    if (pngPath) fs.unlink(pngPath, () => {});
   }
 });
 
