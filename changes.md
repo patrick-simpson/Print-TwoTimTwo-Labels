@@ -1,4 +1,7 @@
-﻿## [1.8.9] - 2026-03-29
+﻿## [1.9.0] - 2026-03-29
+- **Orientation Fix (for real):** The previous fix corrected the PDF page dimensions but the printer driver was still rotating the output. Now explicitly passing `orientation: 'portrait'` and `scale: 'noscale'` to `pdf-to-printer` (SumatraPDF) to prevent any driver-level rotation or scaling. The PDF is 4"x2" and should print exactly as-is.
+
+## [1.8.9] - 2026-03-29
 - **Reliable Project Update:** Added a secondary version check that compares the project's own `VERSION` file against the script version. This catches stale project files (including `chrome-extension/`) even when `.script-version` was written by a previous partial update. Previously, if `.script-version` matched but the actual project ZIP was never re-downloaded, the extension and other files stayed at their old version.
 
 ## [1.8.8] - 2026-03-29

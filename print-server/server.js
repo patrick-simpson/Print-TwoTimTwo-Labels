@@ -639,7 +639,11 @@ app.post('/print', async (req, res) => {
       allergyTokens, handbookGroup, birthday
     );
 
-    const opts = PRINTER_NAME ? { printer: PRINTER_NAME } : {};
+    const opts = {
+      ...(PRINTER_NAME && { printer: PRINTER_NAME }),
+      orientation: 'portrait',
+      scale: 'noscale'
+    };
     await print(pdfPath, opts);
 
     res.json({ success: true });
