@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.9.1
+# Version    : 1.9.2
 # Updated    : 2026-03-27
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "1.9.1"
+$ScriptVersion = "1.9.2"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -442,11 +442,15 @@ if ((Test-Path $cfgBackupPath) -and (Test-Path $printServerPath)) {
     Write-Host "[OK] Restored your printer & URL settings." -ForegroundColor Green
 }
 
-# --- 4b. Install npm packages (if not already installed) ---
+# --- 4b. Install npm packages (always run after update to pick up dependency changes) ---
 Write-Host ""
-if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
-    Write-Host "[4/8] Installing npm packages (~300 MB)..." -ForegroundColor White
-    Write-Host "This may take a few minutes on first run..." -ForegroundColor Gray
+$nmPath = Join-Path $printServerPath "node_modules"
+$needsNpmInstall = $needsUpdate -or -not (Test-Path $nmPath)
+if ($needsNpmInstall) {
+    Write-Host "[4/8] Installing npm packages..." -ForegroundColor White
+    if (-not (Test-Path $nmPath)) {
+        Write-Host "This may take a few minutes on first run (~300 MB)..." -ForegroundColor Gray
+    }
 
     Push-Location $printServerPath
     try {
@@ -462,7 +466,7 @@ if (-not (Test-Path (Join-Path $printServerPath "node_modules"))) {
         Pop-Location
     }
 } else {
-    Write-Host "[OK] npm packages already installed." -ForegroundColor Green
+    Write-Host "[OK] npm packages up to date." -ForegroundColor Green
 }
 
 # --- 5. Load config (needed for CSV download URL) ---

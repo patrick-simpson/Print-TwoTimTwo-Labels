@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.9.1';
+  const EXTENSION_VERSION = '1.9.2';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -35,6 +35,7 @@
   function injectWidget() {
     var isMinimized = localStorage.getItem(MINIMIZE_KEY) === 'true';
 
+    // ── Outer container (always visible, anchored top-right) ──
     const widget = document.createElement('div');
     widget.id = 'awana-widget';
     Object.assign(widget.style, {
@@ -42,179 +43,192 @@
       top: '10px',
       right: '10px',
       zIndex: '99999',
-      background: '#f8fafc',
-      padding: '10px 14px',
-      border: '1px solid #cbd5e1',
-      borderRadius: '8px',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px',
-      fontFamily: 'system-ui, sans-serif',
-      fontSize: '13px'
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '13px',
+      transition: 'all 0.2s ease'
     });
 
-    // Header row with title, version, and minimize button
-    const header = document.createElement('div');
-    Object.assign(header.style, {
+    // ── Collapsed state: small branded pill ──
+    const pill = document.createElement('div');
+    pill.id = 'awana-pill';
+    Object.assign(pill.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      padding: '6px 12px',
+      background: '#7c3aed',
+      color: '#ffffff',
+      borderRadius: '20px',
+      cursor: 'pointer',
+      boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
+      fontSize: '12px',
+      fontWeight: '600',
+      userSelect: 'none',
+      whiteSpace: 'nowrap',
+      transition: 'all 0.15s ease'
+    });
+    pill.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span> Awana Print';
+    pill.title = 'Expand print controls';
+    pill.addEventListener('mouseenter', function() { pill.style.background = '#6d28d9'; });
+    pill.addEventListener('mouseleave', function() { pill.style.background = '#7c3aed'; });
+
+    // ── Expanded state: full panel ──
+    const panel = document.createElement('div');
+    panel.id = 'awana-panel';
+    Object.assign(panel.style, {
+      background: '#ffffff',
+      border: '1px solid #e2e8f0',
+      borderRadius: '12px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+      overflow: 'hidden',
+      width: '260px'
+    });
+
+    // Panel header (purple bar with title + close X)
+    const panelHeader = document.createElement('div');
+    Object.assign(panelHeader.style, {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: '6px'
+      padding: '8px 12px',
+      background: '#7c3aed',
+      color: '#ffffff'
     });
 
-    const titleSpan = document.createElement('span');
-    titleSpan.style.fontWeight = 'bold';
-    titleSpan.style.fontSize = '12px';
-    titleSpan.style.color = '#1e293b';
-    titleSpan.textContent = 'Awana Print';
+    const headerLeft = document.createElement('div');
+    Object.assign(headerLeft.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+    headerLeft.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span>' +
+      '<span style="font-weight:700;font-size:13px">Awana Print</span>' +
+      '<span style="font-size:10px;opacity:0.7">v' + EXTENSION_VERSION + '</span>';
 
-    const versionSpan = document.createElement('span');
-    versionSpan.id = 'awana-version';
-    Object.assign(versionSpan.style, {
-      fontSize: '10px',
-      color: '#94a3b8',
-      marginRight: 'auto'
-    });
-    versionSpan.textContent = 'v' + EXTENSION_VERSION;
-
-    header.append(titleSpan, versionSpan);
-
-    // Arrow tab that sticks out on the left side of the widget
-    const minimizeBtn = document.createElement('button');
-    minimizeBtn.id = 'awana-minimize';
-    Object.assign(minimizeBtn.style, {
-      position: 'absolute',
-      top: '8px',
-      left: '-22px',
+    const closeBtn = document.createElement('button');
+    Object.assign(closeBtn.style, {
+      background: 'rgba(255,255,255,0.2)',
+      border: 'none',
+      color: '#ffffff',
       width: '22px',
-      height: '28px',
-      background: '#f8fafc',
-      border: '1px solid #cbd5e1',
-      borderRight: 'none',
-      borderRadius: '6px 0 0 6px',
+      height: '22px',
+      borderRadius: '50%',
       cursor: 'pointer',
-      fontSize: '12px',
-      padding: '0',
-      lineHeight: '28px',
+      fontSize: '14px',
+      lineHeight: '22px',
       textAlign: 'center',
-      color: '#64748b',
-      boxShadow: '-2px 2px 6px rgba(0,0,0,0.08)',
-      zIndex: '1'
+      padding: '0',
+      transition: 'background 0.15s ease'
     });
+    closeBtn.innerHTML = '&#x2715;';
+    closeBtn.title = 'Minimize';
+    closeBtn.addEventListener('mouseenter', function() { closeBtn.style.background = 'rgba(255,255,255,0.35)'; });
+    closeBtn.addEventListener('mouseleave', function() { closeBtn.style.background = 'rgba(255,255,255,0.2)'; });
 
-    // Content wrapper (everything below the header)
-    const content = document.createElement('div');
-    content.id = 'awana-widget-content';
+    panelHeader.append(headerLeft, closeBtn);
 
+    // Panel body
+    const panelBody = document.createElement('div');
+    Object.assign(panelBody.style, { padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' });
+
+    // Controls row
     const controls = document.createElement('div');
-    Object.assign(controls.style, {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
-    });
-
-    const icon = document.createElement('span');
-    icon.textContent = '\uD83D\uDDA8\uFE0F';
-    icon.style.fontSize = '16px';
+    Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '8px' });
 
     const modeSelect = document.createElement('select');
     modeSelect.id = 'awana-mode-select';
     Object.assign(modeSelect.style, {
-      padding: '3px 7px',
-      borderRadius: '4px',
-      border: '1px solid #cbd5e1',
+      flex: '1',
+      padding: '5px 8px',
+      borderRadius: '6px',
+      border: '1px solid #e2e8f0',
       cursor: 'pointer',
-      fontSize: '12px'
+      fontSize: '12px',
+      background: '#f8fafc'
     });
 
-    const modes = [
-      ['auto', '\uD83D\uDDA8\uFE0F Auto-Print'],
-      ['dialog', '\uD83D\uDDD4 Print Dialog'],
-      ['off', '\u274C Off']
+    var modes = [
+      ['auto', 'Auto-Print'],
+      ['dialog', 'Print Dialog'],
+      ['off', 'Off']
     ];
     modes.forEach(function(pair) {
       var value = pair[0], label = pair[1];
-      const option = document.createElement('option');
+      var option = document.createElement('option');
       option.value = value;
       option.textContent = label;
       modeSelect.appendChild(option);
     });
     modeSelect.value = selectedMode;
-
-    const statusEl = document.createElement('span');
-    statusEl.id = 'awana-status';
-    statusEl.style.fontSize = '16px';
-
     modeSelect.addEventListener('change', function() {
       selectedMode = modeSelect.value;
       localStorage.setItem(STORAGE_KEY, selectedMode);
       console.log('[Awana] Mode changed to:', selectedMode);
     });
 
+    const statusEl = document.createElement('span');
+    statusEl.id = 'awana-status';
+    statusEl.style.fontSize = '16px';
+    statusEl.style.minWidth = '20px';
+    statusEl.style.textAlign = 'center';
+
     const testBtn = document.createElement('button');
     testBtn.textContent = 'Test';
     Object.assign(testBtn.style, {
       fontSize: '11px',
-      padding: '2px 7px',
-      background: '#e2e8f0',
-      border: '1px solid #cbd5e1',
-      borderRadius: '4px',
-      cursor: 'pointer'
+      padding: '5px 10px',
+      background: '#f1f5f9',
+      border: '1px solid #e2e8f0',
+      borderRadius: '6px',
+      cursor: 'pointer',
+      fontWeight: '600',
+      color: '#475569',
+      transition: 'background 0.15s ease'
     });
+    testBtn.addEventListener('mouseenter', function() { testBtn.style.background = '#e2e8f0'; });
+    testBtn.addEventListener('mouseleave', function() { testBtn.style.background = '#f1f5f9'; });
     testBtn.addEventListener('click', function() {
       console.log('[Awana] Test button clicked');
       doPrint('Test Child', 'Sparks', null);
     });
 
+    controls.append(modeSelect, statusEl, testBtn);
+
+    // Status rows
     var csvStatus = document.createElement('div');
     csvStatus.id = 'awana-csv-status';
     Object.assign(csvStatus.style, {
       fontSize: '11px',
       color: '#94a3b8',
-      whiteSpace: 'nowrap'
+      whiteSpace: 'nowrap',
+      padding: '2px 0'
     });
     csvStatus.textContent = 'Syncing roster...';
 
-    // Update notification row (hidden by default)
     var updateRow = document.createElement('div');
     updateRow.id = 'awana-update-notice';
     Object.assign(updateRow.style, {
       display: 'none',
       fontSize: '11px',
       color: '#f59e0b',
-      fontWeight: 'bold'
+      fontWeight: 'bold',
+      padding: '4px 8px',
+      background: '#fffbeb',
+      borderRadius: '6px',
+      border: '1px solid #fde68a'
     });
 
-    controls.append(icon, modeSelect, statusEl, testBtn);
-    content.appendChild(controls);
-    content.appendChild(csvStatus);
-    content.appendChild(updateRow);
-
-    widget.appendChild(header);
-    widget.appendChild(content);
+    panelBody.append(controls, csvStatus, updateRow);
+    panel.append(panelHeader, panelBody);
+    widget.append(pill, panel);
     document.body.appendChild(widget);
 
-    // Minimize / restore toggle
+    // ── Toggle logic ──
     function applyMinimized(min) {
       isMinimized = min;
-      header.style.display = min ? 'none' : '';
-      content.style.display = min ? 'none' : '';
-      widget.style.padding = min ? '0' : '10px 14px';
-      widget.style.border = min ? 'none' : '1px solid #cbd5e1';
-      widget.style.background = min ? 'transparent' : '#f8fafc';
-      widget.style.boxShadow = min ? 'none' : '0 4px 12px rgba(0,0,0,0.12)';
-      minimizeBtn.textContent = min ? '\u25C0' : '\u25B6';
-      minimizeBtn.title = min ? 'Expand widget' : 'Minimize widget';
-      // When minimized, anchor the tab to right edge of screen
-      minimizeBtn.style.left = min ? 'auto' : '-22px';
-      minimizeBtn.style.right = min ? '0' : 'auto';
-      minimizeBtn.style.borderRadius = min ? '6px 0 0 6px' : '6px 0 0 6px';
+      pill.style.display = min ? 'flex' : 'none';
+      panel.style.display = min ? 'none' : 'block';
       localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
     }
-    minimizeBtn.addEventListener('click', function() {
-      applyMinimized(!isMinimized);
-    });
+
+    pill.addEventListener('click', function() { applyMinimized(false); });
+    closeBtn.addEventListener('click', function() { applyMinimized(true); });
     applyMinimized(isMinimized);
 
     console.log('[Awana] Widget injected');

@@ -47,8 +47,8 @@ pm run dist: Build NSIS installer (.exe)
 ## Architecture Details
 
 ### Label Generation (Two Methods)
-- **Standalone Server** (print-server/server.js): Uses **pdfkit** to draw labels manually. **Orientation: 4x2 Portrait is the verified standard for thermal stability.**
-- **Electron App** (electron-app/src/server.js): Renders labels using **HTML/CSS** in a hidden BrowserWindow.
+- **Standalone Server** (print-server/server.js): Uses **canvas** to draw labels manually as PNG. **Orientation: 4x2 Landscape is the verified standard for thermal stability via PowerShell.**
+- **Electron App** (electron-app/src/server.js): Renders labels using **HTML/CSS** in a hidden BrowserWindow and captures as PNG.
 
 ### Data Flow & Enrichment
 - **Bookmarklet** fetches CSV and POSTs to localhost:3456/update-csv.

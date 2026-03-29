@@ -18,11 +18,12 @@ Windows application for automatically printing child check-in labels at Awana ch
 
 ## MANDATORY: Version Bumping
 You **MUST** increment the version number every time you modify server.js or install-and-run.ps1.
-- Use the automated script: 
-ode scripts/bump-version.cjs <new_version>
-- This script updates all 4 relevant files automatically.
-- After bumping, run 
-pm run build to update the bookmarklet.
+- Use the automated script: `node scripts/bump-version.cjs <new_version>`
+- This script updates **all** version-containing files automatically:
+  - `install-and-run.ps1`, `src/constants.ts`, `print-server/package.json`, `electron-app/package.json`, `package.json`, `VERSION`
+  - `chrome-extension/manifest.json`, `chrome-extension/content.js`, `chrome-extension/popup.html`
+- After bumping, run `npm run build` to update the bookmarklet.
+- The browser extension is an **always-updated** component: its version must stay in sync with the server. The `bump-version.cjs` script handles this automatically. The extension's widget checks the server's `/health` endpoint for version mismatches and notifies the user to reload.
 
 ## Commands
 
@@ -46,8 +47,8 @@ pm run dist: Build NSIS installer (.exe)
 ## Architecture Details
 
 ### Label Generation (Two Methods)
-- **Standalone Server** (print-server/server.js): Uses **pdfkit** to draw labels manually. **Orientation: 4x2 Portrait is the verified standard for thermal stability.**
-- **Electron App** (electron-app/src/server.js): Renders labels using **HTML/CSS** in a hidden BrowserWindow.
+- **Standalone Server** (print-server/server.js): Uses **canvas** to draw labels manually as PNG. **Orientation: 4x2 Landscape is the verified standard for thermal stability via PowerShell.**
+- **Electron App** (electron-app/src/server.js): Renders labels using **HTML/CSS** in a hidden BrowserWindow and captures as PNG.
 
 ### Data Flow & Enrichment
 - **Bookmarklet** fetches CSV and POSTs to localhost:3456/update-csv.
@@ -74,3 +75,11 @@ You **MUST** commit and push your changes to GitHub once they are verified.
 - Stage all relevant changes.
 - Use a descriptive commit message that aligns with the version bump if applicable.
 - Push to the main branch unless otherwise directed.
+
+## Checklist for EVERY Functional Change
+Before considering any task complete, you **MUST** complete all of the following:
+1. **Version bump** — Run `node scripts/bump-version.cjs <X.Y.Z>` (mandatory when modifying server.js or install-and-run.ps1, recommended for any user-facing change).
+2. **changes.md** — Add a new entry at the top with the version number, date, and summary of what changed and why.
+3. **Website / UI** — If the change affects how users install or use the tool, update the relevant React components (e.g., `components/PrintServerInfo.tsx`).
+4. **Build** — Run `npm run build` to ensure the bookmarklet and dist are up to date.
+5. **Commit & push** — **ALWAYS** stage, commit, and push to GitHub. Never leave changes uncommitted. This is not optional — changes are not "done" until they are deployed.

@@ -572,7 +572,7 @@ Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile('${safePath}')
 $pd = New-Object System.Drawing.Printing.PrintDocument
 ${printerName ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
-$pd.DefaultPageSettings.Landscape = $false
+$pd.DefaultPageSettings.Landscape = $true
 $pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0,0,0,0)
 $pd.add_PrintPage({
   param($sender, $e)

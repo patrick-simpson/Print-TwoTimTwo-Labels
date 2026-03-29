@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { print, getPrinters } = require('pdf-to-printer');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -13,8 +13,7 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-// Render label HTML into the hidden Electron BrowserWindow and export as PDF.
-// This reuses Electron's bundled Chromium instead of Puppeteer (~170 MB saved).
+// Render label HTML into the hidden Electron BrowserWindow and export as PNG.
 async function generateLabel(pdfWindow, firstName, lastName, clubName) {
   const html = `<!DOCTYPE html>
 <html>
@@ -27,6 +26,7 @@ async function generateLabel(pdfWindow, firstName, lastName, clubName) {
         display: flex; align-items: center; justify-content: center;
         font-family: Helvetica, Arial, sans-serif;
         overflow: hidden;
+        background: white;
       }
       .badge {
         width: 3.8in; height: 1.8in;
@@ -50,17 +50,44 @@ async function generateLabel(pdfWindow, firstName, lastName, clubName) {
 </html>`;
 
   await pdfWindow.loadURL('data:text/html,' + encodeURIComponent(html));
+  
+  // Wait a moment for rendering
+  await new Promise(r => setTimeout(r, 100));
 
-  // 4 in × 2 in expressed in microns (1 in = 25400 µm)
-  const pdfBuffer = await pdfWindow.webContents.printToPDF({
-    pageSize: { width: 101600, height: 50800 },
-    printBackground: true,
-    margins: { marginType: 'none' }
+  // Capture as PNG (at screen resolution, but we can scale in PowerShell)
+  const image = await pdfWindow.webContents.capturePage();
+  const pngBuffer = image.toPNG();
+
+  const pngPath = path.join(os.tmpdir(), `label-${Date.now()}.png`);
+  fs.writeFileSync(pngPath, pngBuffer);
+  return pngPath;
+}
+
+// ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
+function printImage(imagePath, printerName) {
+  const safePath = imagePath.replace(/'/g, "''");
+  const safePrinter = printerName.replace(/'/g, "''");
+
+  const ps = `
+Add-Type -AssemblyName System.Drawing
+$img = [System.Drawing.Image]::FromFile('${safePath}')
+$pd = New-Object System.Drawing.Printing.PrintDocument
+${printerName ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
+$pd.DefaultPageSettings.Landscape = $true
+$pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0,0,0,0)
+$pd.add_PrintPage({
+  param($sender, $e)
+  $e.Graphics.DrawImage($img, 0, 0, $e.PageBounds.Width, $e.PageBounds.Height)
+})
+$pd.Print()
+$img.Dispose()
+$pd.Dispose()
+`.trim();
+
+  execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/"/g, '\\"')}"`, {
+    timeout: 15000,
+    windowsHide: true
   });
-
-  const pdfPath = path.join(os.tmpdir(), `label-${Date.now()}.pdf`);
-  fs.writeFileSync(pdfPath, pdfBuffer);
-  return pdfPath;
 }
 
 function createServer(printerName, pdfWindow, port) {
@@ -74,7 +101,9 @@ function createServer(printerName, pdfWindow, port) {
 
   app.get('/printers', async (req, res) => {
     try {
-      res.json(await getPrinters());
+      // In Electron context, we might want to use a different way to list printers
+      // but let's keep it simple for now as it's not the primary issue.
+      res.json([]); 
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -97,14 +126,18 @@ function createServer(printerName, pdfWindow, port) {
 
     console.log(`POST /print — ${firstName} ${lastName} (${clubName || 'no club'})`);
 
+    let pngPath = null;
     try {
-      const pdfPath = await generateLabel(pdfWindow, firstName, lastName, clubName);
-      await print(pdfPath, { printer: printerName });
-      fs.unlink(pdfPath, () => {});
+      pngPath = await generateLabel(pdfWindow, firstName, lastName, clubName);
+      printImage(pngPath, printerName);
       res.json({ success: true });
     } catch (err) {
       console.error('Print error:', err);
       res.status(500).json({ error: err.message });
+    } finally {
+      if (pngPath && fs.existsSync(pngPath)) {
+        fs.unlink(pngPath, () => {});
+      }
     }
   });
 

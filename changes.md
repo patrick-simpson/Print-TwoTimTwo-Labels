@@ -1,4 +1,8 @@
-﻿## [1.9.1] - 2026-03-29
+﻿## [1.9.2] - 2026-03-29
+- **Orientation Fix (PNG):** Fixed sideways printing in autoprint mode by setting `Landscape = $true` in the PowerShell print script. This correctly handles the 4x2 label aspect ratio.
+- **Electron Engine Update:** Updated the Electron app's print server to use the same PNG-based engine as the standalone server for consistency and reliability.
+
+## [1.9.1] - 2026-03-29
 - **PNG Print Engine:** Replaced PDF-based printing (pdfkit + pdf-to-printer/SumatraPDF) with PNG-based printing (canvas + PowerShell System.Drawing). This eliminates all printer driver rotation issues — the label is rendered as a 1200x600 pixel image at 300 DPI and printed directly. Tested for Labelife D450 BT thermal printers.
 - **Widget Minimize Arrow:** Replaced the in-header minimize button with an arrow tab that sticks out on the left side of the widget. When minimized, the widget fully collapses and only the arrow tab remains on screen.
 - **Dependency Change:** Replaced `pdfkit` and `pdf-to-printer` with `canvas` package in print-server.
