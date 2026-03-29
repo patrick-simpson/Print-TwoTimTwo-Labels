@@ -36,6 +36,24 @@ const files = [
       ]
   },
   {
+    path: path.join(rootDir, 'chrome-extension', 'manifest.json'),
+    patterns: [
+      { from: /"version": "\d+\.\d+\.\d+"/g, to: '"version": "' + version + '"' }
+    ]
+  },
+  {
+    path: path.join(rootDir, 'chrome-extension', 'content.js'),
+    patterns: [
+      { from: /EXTENSION_VERSION = '[^']+'/g, to: "EXTENSION_VERSION = '" + version + "'" }
+    ]
+  },
+  {
+    path: path.join(rootDir, 'chrome-extension', 'popup.html'),
+    patterns: [
+      { from: /Extension v[\d.]+/g, to: 'Extension v' + version }
+    ]
+  },
+  {
     path: path.join(rootDir, 'package.json'),
     patterns: [
       { from: /"version": "\d+\.\d+\.\d+"/g, to: '"version": "' + version + '"' }

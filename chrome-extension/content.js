@@ -2,11 +2,13 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
+  const EXTENSION_VERSION = '1.8.5';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
   const PRINT_SERVER = 'http://localhost:3456';
   const STORAGE_KEY = 'awana_selectedPrinterId';
+  const MINIMIZE_KEY = 'awana_widgetMinimized';
 
   let selectedMode = localStorage.getItem(STORAGE_KEY) || 'auto';
   let lastPrintedName = null;
@@ -31,6 +33,8 @@
   }
 
   function injectWidget() {
+    var isMinimized = localStorage.getItem(MINIMIZE_KEY) === 'true';
+
     const widget = document.createElement('div');
     widget.id = 'awana-widget';
     Object.assign(widget.style, {
@@ -49,6 +53,48 @@
       fontFamily: 'system-ui, sans-serif',
       fontSize: '13px'
     });
+
+    // Header row with title, version, and minimize button
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '6px'
+    });
+
+    const titleSpan = document.createElement('span');
+    titleSpan.style.fontWeight = 'bold';
+    titleSpan.style.fontSize = '12px';
+    titleSpan.style.color = '#1e293b';
+    titleSpan.textContent = 'Awana Print';
+
+    const versionSpan = document.createElement('span');
+    versionSpan.id = 'awana-version';
+    Object.assign(versionSpan.style, {
+      fontSize: '10px',
+      color: '#94a3b8',
+      marginRight: 'auto'
+    });
+    versionSpan.textContent = 'v' + EXTENSION_VERSION;
+
+    const minimizeBtn = document.createElement('button');
+    minimizeBtn.id = 'awana-minimize';
+    Object.assign(minimizeBtn.style, {
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: '14px',
+      padding: '0 2px',
+      lineHeight: '1',
+      color: '#64748b'
+    });
+
+    header.append(titleSpan, versionSpan, minimizeBtn);
+
+    // Content wrapper (everything below the header)
+    const content = document.createElement('div');
+    content.id = 'awana-widget-content';
 
     const controls = document.createElement('div');
     Object.assign(controls.style, {
@@ -119,11 +165,55 @@
     });
     csvStatus.textContent = 'Syncing roster...';
 
+    // Update notification row (hidden by default)
+    var updateRow = document.createElement('div');
+    updateRow.id = 'awana-update-notice';
+    Object.assign(updateRow.style, {
+      display: 'none',
+      fontSize: '11px',
+      color: '#f59e0b',
+      fontWeight: 'bold'
+    });
+
     controls.append(icon, modeSelect, statusEl, testBtn);
-    widget.appendChild(controls);
-    widget.appendChild(csvStatus);
+    content.appendChild(controls);
+    content.appendChild(csvStatus);
+    content.appendChild(updateRow);
+
+    widget.appendChild(header);
+    widget.appendChild(content);
     document.body.appendChild(widget);
+
+    // Minimize / restore toggle
+    function applyMinimized(min) {
+      isMinimized = min;
+      content.style.display = min ? 'none' : '';
+      minimizeBtn.textContent = min ? '+' : '\u2013';
+      minimizeBtn.title = min ? 'Expand widget' : 'Minimize widget';
+      localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
+    }
+    minimizeBtn.addEventListener('click', function() {
+      applyMinimized(!isMinimized);
+    });
+    applyMinimized(isMinimized);
+
     console.log('[Awana] Widget injected');
+  }
+
+  // Check if the print server is running a newer version and notify the user
+  function checkForExtensionUpdate() {
+    fetch(PRINT_SERVER + '/health', { signal: AbortSignal.timeout(3000) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.version && data.version !== EXTENSION_VERSION) {
+          var notice = document.getElementById('awana-update-notice');
+          if (notice) {
+            notice.style.display = 'block';
+            notice.textContent = 'Update available: v' + data.version + ' (reload extension)';
+          }
+        }
+      })
+      .catch(function() { /* server offline, ignore */ });
   }
 
   function setStatus(text) {
@@ -380,9 +470,9 @@
       });
   }
 
-  // Version: 1.4.8
   injectWidget();
   watchCheckins();
   syncCsv();
-  console.log('[Awana] Bookmarklet loaded and active (v1.6.6)');
+  checkForExtensionUpdate();
+  console.log('[Awana] Extension loaded (v' + EXTENSION_VERSION + ')');
 })();

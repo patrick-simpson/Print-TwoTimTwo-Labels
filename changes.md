@@ -1,4 +1,11 @@
-﻿## [1.8.4] - 2026-03-29
+﻿## [1.8.5] - 2026-03-29
+- **Widget Minimize:** Added a minimize/restore button to the on-page print widget so it can be collapsed to a compact header bar.
+- **Widget Version Display:** The widget now shows the current extension version (e.g. "v1.8.5") in its header.
+- **Extension Auto-Update Notification:** The widget checks the print server's `/health` endpoint for version mismatches and displays an "Update available" notice when the server is running a newer version.
+- **Server Health Endpoint:** `/health` now returns `version` alongside `status` and `printer`.
+- **Version Sync:** `bump-version.cjs` now also updates `chrome-extension/manifest.json`, `content.js`, and `popup.html` automatically.
+
+## [1.8.4] - 2026-03-29
 - **Orientation Fix:** Fixed sideways label printing in autoprint mode. PDF page size was `[PAGE_H, PAGE_W]` with `layout: 'landscape'` — changed to `[PAGE_W, PAGE_H]` (4"x2") with no rotation, matching the browser print dialog behavior.
 
 ## [1.8.3] - 2026-03-29

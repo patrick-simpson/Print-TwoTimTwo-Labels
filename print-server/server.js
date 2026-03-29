@@ -22,6 +22,7 @@ const os    = require('os');
 
 const PORT         = 3456;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
+const SERVER_VERSION = require('./package.json').version;
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
 const PAGE_W  = 4 * 72;  // 288 pt
@@ -530,7 +531,7 @@ app.use(express.json({ limit: '2mb' }));  // allow base64 image payloads
 app.use(express.static(path.join(__dirname, 'public')));  // serve static files (bookmarklet.html, etc)
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', printer: PRINTER_NAME || '(default)' });
+  res.json({ status: 'ok', printer: PRINTER_NAME || '(default)', version: SERVER_VERSION });
 });
 
 app.get('/roster-status', (req, res) => {

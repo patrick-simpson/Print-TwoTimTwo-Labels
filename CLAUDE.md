@@ -18,11 +18,12 @@ Windows application for automatically printing child check-in labels at Awana ch
 
 ## MANDATORY: Version Bumping
 You **MUST** increment the version number every time you modify server.js or install-and-run.ps1.
-- Use the automated script: 
-ode scripts/bump-version.cjs <new_version>
-- This script updates all 4 relevant files automatically.
-- After bumping, run 
-pm run build to update the bookmarklet.
+- Use the automated script: `node scripts/bump-version.cjs <new_version>`
+- This script updates **all** version-containing files automatically:
+  - `install-and-run.ps1`, `src/constants.ts`, `print-server/package.json`, `electron-app/package.json`, `package.json`, `VERSION`
+  - `chrome-extension/manifest.json`, `chrome-extension/content.js`, `chrome-extension/popup.html`
+- After bumping, run `npm run build` to update the bookmarklet.
+- The browser extension is an **always-updated** component: its version must stay in sync with the server. The `bump-version.cjs` script handles this automatically. The extension's widget checks the server's `/health` endpoint for version mismatches and notifies the user to reload.
 
 ## Commands
 
