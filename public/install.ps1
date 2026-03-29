@@ -24,7 +24,6 @@ $installerPath = Join-Path $InstallDir "install-and-run.ps1"
 
 Write-Host "Downloading installer..." -ForegroundColor Gray
 try {
-    $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
     Write-Host "[OK] Installer downloaded." -ForegroundColor Green
 } catch {

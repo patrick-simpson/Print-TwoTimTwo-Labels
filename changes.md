@@ -1,4 +1,7 @@
-﻿## [1.8.5] - 2026-03-29
+﻿## [1.8.6] - 2026-03-29
+- **Installer Fix:** Removed `$ProgressPreference` from bootstrap `install.ps1` — it caused errors when run via `irm | iex` because double-quoted `-Command` strings interpolate `$` variables. Changed website one-liner to use single quotes.
+
+## [1.8.5] - 2026-03-29
 - **Widget Minimize:** Added a minimize/restore button to the on-page print widget so it can be collapsed to a compact header bar.
 - **Widget Version Display:** The widget now shows the current extension version (e.g. "v1.8.5") in its header.
 - **Extension Auto-Update Notification:** The widget checks the print server's `/health` endpoint for version mismatches and displays an "Update available" notice when the server is running a newer version.
