@@ -1,4 +1,7 @@
-﻿## [1.8.8] - 2026-03-29
+﻿## [1.8.9] - 2026-03-29
+- **Reliable Project Update:** Added a secondary version check that compares the project's own `VERSION` file against the script version. This catches stale project files (including `chrome-extension/`) even when `.script-version` was written by a previous partial update. Previously, if `.script-version` matched but the actual project ZIP was never re-downloaded, the extension and other files stayed at their old version.
+
+## [1.8.8] - 2026-03-29
 - **Install Location Migration:** Both `launch-awana.bat` and `install-and-run.ps1` now default to `C:\output` instead of `%APPDATA%\Awana-Print`. On launch, they detect the old location, migrate user data (config.json, clubbers.csv), and remove the old folder.
 - **ProgressPreference Fix:** Moved `$ProgressPreference = 'SilentlyContinue'` to a single global assignment at the top of `install-and-run.ps1`, removing individual assignments that could error when invoked via certain shell contexts.
 

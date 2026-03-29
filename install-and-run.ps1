@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.8.8
+# Version    : 1.8.9
 # Updated    : 2026-03-27
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "1.8.8"
+$ScriptVersion = "1.8.9"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -284,12 +284,15 @@ try {
 # --- 2b. Check if installed version is outdated ---
 $projectPath = Join-Path $installDir "Print-TwoTimTwo-Labels"
 $versionFile = Join-Path $installDir ".script-version"
+$projectVersionFile = Join-Path $projectPath "VERSION"
 
 # Determine whether a fresh download is needed.
-# Three cases require an update:
-#   1. No version file but project folder exists  = pre-versioning install, refresh it
-#   2. Version file exists but differs from current script version
-#   3. Version file is unreadable (corrupt) = force refresh to be safe
+# Four cases require an update:
+#   1. No .script-version file but project folder exists = pre-versioning install
+#   2. .script-version exists but differs from current script version
+#   3. .script-version is unreadable (corrupt) = force refresh to be safe
+#   4. Project VERSION file differs from script version (catches stale project files
+#      even when .script-version was written by a previous partial update)
 $needsUpdate = $false
 if (-not (Test-Path $versionFile)) {
     if (Test-Path $projectPath) {
@@ -307,6 +310,21 @@ if (-not (Test-Path $versionFile)) {
         }
     } catch {
         Write-Host "  Could not read version file -- refreshing install to be safe..." -ForegroundColor Yellow
+        $needsUpdate = $true
+    }
+}
+
+# Secondary check: even if .script-version matches, verify the actual project files
+# are at the correct version (catches partial updates where .script-version was written
+# but the project ZIP was not re-downloaded)
+if (-not $needsUpdate -and (Test-Path $projectVersionFile)) {
+    try {
+        $projectVersion = Get-Content $projectVersionFile -Raw | ForEach-Object { $_.Trim() }
+        if ($projectVersion -ne $ScriptVersion) {
+            Write-Host "Project files are v$projectVersion but script is v$ScriptVersion -- refreshing..." -ForegroundColor Cyan
+            $needsUpdate = $true
+        }
+    } catch {
         $needsUpdate = $true
     }
 }
