@@ -1,4 +1,8 @@
-﻿## [1.7.3] - 2026-03-27
+﻿## [1.8.1] - 2026-03-29
+- **One-Liner Installer:** Added a bootstrap `install.ps1` script served via GitHub Pages, enabling installation with a single PowerShell command: `irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex`
+- **Website:** Updated the setup page to feature the one-liner command as the primary install method, with `install.bat` as a secondary option.
+
+## [1.7.3] - 2026-03-27
 - **Auto-Update Launcher:** Added administrative check, auto-elevation, and version checking directly to \launch-awana.bat\.
 - **Desktop Shortcut:** Updated installer to always create/update the "Awana Print" desktop shortcut, ensuring it points correctly to the launcher in \AppData\.
 

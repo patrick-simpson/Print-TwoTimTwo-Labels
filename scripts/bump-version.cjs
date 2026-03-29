@@ -36,6 +36,12 @@ const files = [
       ]
   },
   {
+    path: path.join(rootDir, 'package.json'),
+    patterns: [
+      { from: /"version": "\d+\.\d+\.\d+"/g, to: '"version": "' + version + '"' }
+    ]
+  },
+  {
     path: path.join(rootDir, 'VERSION'),
     patterns: [
       { from: /\d+\.\d+\.\d+/g, to: version }

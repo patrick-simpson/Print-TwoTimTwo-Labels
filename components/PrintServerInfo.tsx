@@ -53,10 +53,15 @@ export const PrintServerInfo: React.FC = () => {
         <li className="flex gap-3">
           <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">1</span>
           <div>
-            <p className="font-semibold text-gray-800 mb-3">Download the installer</p>
+            <p className="font-semibold text-gray-800 mb-3">Install the print server</p>
             <p className="mb-3">
-              Click the button below to download <code className="bg-gray-100 px-1 rounded text-xs">install.bat</code>.
-              Save it anywhere and double-click to run.
+              Open PowerShell and paste this one-liner:
+            </p>
+            <div className="bg-gray-900 rounded p-3 font-mono text-xs leading-relaxed overflow-x-auto mb-3">
+              <code className="text-green-300">irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex</code>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">
+              Or download and double-click <code className="bg-gray-100 px-1 rounded text-xs">install.bat</code> instead:
             </p>
             <button
               onClick={downloadInstaller}
@@ -91,7 +96,28 @@ export const PrintServerInfo: React.FC = () => {
           </div>
         </li>
 
-        {/* Step 3 - Install Extension */} <li className=\"flex gap-3\"> <span className=\"flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs\">3</span> <div> <p className=\"font-semibold text-gray-800 mb-3\">Install the browser extension</p> <p className=\"mb-3 text-gray-600\"> The extension provides the most reliable \"zero-click\" experience and survives page reloads. </p> <div className=\"bg-blue-50 border border-blue-200 rounded p-4 text-xs\"> <p className=\"font-bold text-blue-800 mb-2\">How to install (Developer Mode):</p> <ol className=\"list-decimal list-inside space-y-1.5 text-blue-700\"> <li>Open <code className=\"bg-white/50 px-1 rounded\">edge://extensions</code> or <code className=\"bg-white/50 px-1 rounded\">chrome://extensions</code></li> <li>Turn on <strong>Developer Mode</strong> (top right)</li> <li>Click <strong>Load unpacked</strong></li> <li>Select the <code className=\"bg-white/50 px-1 rounded\">chrome-extension</code> folder in the project directory</li> </ol> </div> <p className=\"mt-3 text-xs text-gray-500\"> Once installed, the KVBC Print widget will automatically appear on the check-in page! </p> </div> </li>
+        {/* Step 3 - Install Extension */}
+        <li className="flex gap-3">
+          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold text-xs">3</span>
+          <div>
+            <p className="font-semibold text-gray-800 mb-3">Install the browser extension</p>
+            <p className="mb-3 text-gray-600">
+              The extension provides the most reliable "zero-click" experience and survives page reloads.
+            </p>
+            <div className="bg-blue-50 border border-blue-200 rounded p-4 text-xs">
+              <p className="font-bold text-blue-800 mb-2">How to install (Developer Mode):</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-blue-700">
+                <li>Open <code className="bg-white/50 px-1 rounded">edge://extensions</code> or <code className="bg-white/50 px-1 rounded">chrome://extensions</code></li>
+                <li>Turn on <strong>Developer Mode</strong> (top right)</li>
+                <li>Click <strong>Load unpacked</strong></li>
+                <li>Select the <code className="bg-white/50 px-1 rounded">chrome-extension</code> folder in the project directory</li>
+              </ol>
+            </div>
+            <p className="mt-3 text-xs text-gray-500">
+              Once installed, the KVBC Print widget will automatically appear on the check-in page!
+            </p>
+          </div>
+        </li>
 
         {/* Step 4 - Optional Test */}
         <li className="flex gap-3">

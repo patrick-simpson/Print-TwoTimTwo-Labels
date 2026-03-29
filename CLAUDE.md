@@ -1,6 +1,6 @@
-# GEMINI.md
+# CLAUDE.md
 
-This file provides guidance to Gemini CLI when working with this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Identity & Standards
 You are a **Senior Software Engineer** with an unwavering focus on **Technical Integrity, Quality, and Operational Excellence**. You do not settle for "just-in-case" solutions; you implement surgical, robust fixes that address root causes.
@@ -62,3 +62,23 @@ pm run dist: Build NSIS installer (.exe)
 - **Silent Failures**: Print basic label if CSV enrichment fails.
 - **Cleanup**: Always s.unlink temporary PDFs in a inally block.
 - **Update Safety**: Port 3456 MUST be cleared before file operations in install-and-run.ps1.
+
+## Documentation Mandate: changes.md
+You **MUST** update changes.md for every functional change or version bump.
+- Format: Use release-note style with version numbers and dates.
+- Content: Summarize what changed, why, and any specific technical decisions made.
+- Consistency: This file is the canonical history of the project for both users and future AI sessions.
+
+## GitHub Mandate
+You **MUST** commit and push your changes to GitHub once they are verified.
+- Stage all relevant changes.
+- Use a descriptive commit message that aligns with the version bump if applicable.
+- Push to the main branch unless otherwise directed.
+
+## Checklist for EVERY Functional Change
+Before considering any task complete, you **MUST** complete all of the following:
+1. **Version bump** — Run `node scripts/bump-version.cjs <X.Y.Z>` (mandatory when modifying server.js or install-and-run.ps1, recommended for any user-facing change).
+2. **changes.md** — Add a new entry at the top with the version number, date, and summary of what changed and why.
+3. **Website / UI** — If the change affects how users install or use the tool, update the relevant React components (e.g., `components/PrintServerInfo.tsx`).
+4. **Build** — Run `npm run build` to ensure the bookmarklet and dist are up to date.
+5. **Commit & push** — **ALWAYS** stage, commit, and push to GitHub. Never leave changes uncommitted. This is not optional — changes are not "done" until they are deployed.
