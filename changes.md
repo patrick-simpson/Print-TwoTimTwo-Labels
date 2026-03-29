@@ -1,4 +1,7 @@
-﻿## [1.8.3] - 2026-03-29
+﻿## [1.8.4] - 2026-03-29
+- **Orientation Fix:** Fixed sideways label printing in autoprint mode. PDF page size was `[PAGE_H, PAGE_W]` with `layout: 'landscape'` — changed to `[PAGE_W, PAGE_H]` (4"x2") with no rotation, matching the browser print dialog behavior.
+
+## [1.8.3] - 2026-03-29
 - **Execution Policy Fix:** Updated bootstrap `install.ps1` to launch the full installer with `-ExecutionPolicy Bypass`, preventing "scripts disabled" errors on restricted Windows systems.
 - **Website:** Updated the one-liner command to include `powershell -ExecutionPolicy Bypass -Command` wrapper so it works out of the box on any system.
 

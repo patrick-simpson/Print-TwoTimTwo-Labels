@@ -371,7 +371,7 @@ async function generateLabel(
   const pdfPath = path.join(os.tmpdir(), `awana-${Date.now()}.pdf`);
 
   try {
-    const doc = new PDFDocument({ size: [PAGE_H, PAGE_W], margin: 0, layout: 'landscape' });
+    const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0 });
     const out  = fs.createWriteStream(pdfPath);
 
     doc.pipe(out);
@@ -626,7 +626,7 @@ app.post('/print', async (req, res) => {
     }
   }
 
-  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || "—"} | printer: ${PRINTER_NAME || "default"}`);
+  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || "ï¿½"} | printer: ${PRINTER_NAME || "default"}`);
 
   // pdfPath is declared outside try so the finally block can always delete it,
   // even if generateLabel throws before returning the path.
