@@ -102,15 +102,33 @@ export const PrintServerInfo: React.FC = () => {
           <div>
             <p className="font-semibold text-gray-800 mb-3">Install the browser extension</p>
             <p className="mb-3 text-gray-600">
-              The extension provides the most reliable "zero-click" experience and survives page reloads.
+              The extension provides zero-click auto-printing — it detects check-ins and sends labels to the print server automatically. No bookmarklet needed.
             </p>
+
+            <p className="font-semibold text-gray-700 text-xs mb-2">First, get the extension files:</p>
+            <div className="flex items-center gap-3 mb-4">
+              <a
+                href="chrome-extension.zip"
+                download
+                className="flex items-center gap-2 font-bold text-sm px-5 py-2.5 rounded shadow transition-colors bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <i className="fa fa-download"></i>
+                Download chrome-extension.zip
+              </a>
+              <span className="text-xs text-gray-400">and extract it to a folder</span>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              Already ran the installer? The extension is already on your computer at:<br />
+              <code className="bg-gray-100 px-1 rounded">%APPDATA%\Awana-Print\Print-TwoTimTwo-Labels\chrome-extension</code>
+            </p>
+
             <div className="bg-blue-50 border border-blue-200 rounded p-4 text-xs">
-              <p className="font-bold text-blue-800 mb-2">How to install (Developer Mode):</p>
+              <p className="font-bold text-blue-800 mb-2">Then load it in your browser:</p>
               <ol className="list-decimal list-inside space-y-1.5 text-blue-700">
                 <li>Open <code className="bg-white/50 px-1 rounded">edge://extensions</code> or <code className="bg-white/50 px-1 rounded">chrome://extensions</code></li>
                 <li>Turn on <strong>Developer Mode</strong> (top right)</li>
                 <li>Click <strong>Load unpacked</strong></li>
-                <li>Select the <code className="bg-white/50 px-1 rounded">chrome-extension</code> folder in the project directory</li>
+                <li>Select the <code className="bg-white/50 px-1 rounded">chrome-extension</code> folder you downloaded or the one from the installer path above</li>
               </ol>
             </div>
             <p className="mt-3 text-xs text-gray-500">

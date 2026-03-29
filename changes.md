@@ -1,4 +1,8 @@
-﻿## [1.8.1] - 2026-03-29
+﻿## [1.8.2] - 2026-03-29
+- **Extension Install Guide:** Improved Step 3 on the website with a download button for `chrome-extension.zip` and clear path to the local extension folder for users who already ran the installer.
+- **Extension Distribution:** Added `chrome-extension.zip` to GitHub Pages so users can download it directly from the website.
+
+## [1.8.1] - 2026-03-29
 - **One-Liner Installer:** Added a bootstrap `install.ps1` script served via GitHub Pages, enabling installation with a single PowerShell command: `irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex`
 - **Website:** Updated the setup page to feature the one-liner command as the primary install method, with `install.bat` as a secondary option.
 
