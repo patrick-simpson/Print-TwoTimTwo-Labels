@@ -1,4 +1,9 @@
-﻿## [1.9.3] - 2026-03-30
+﻿## [1.10.0] - 2026-03-30
+- **Printer Selection Dropdown:** Added a "Printer" dropdown to the extension widget. On load it fetches `GET /printers` from the print server (which runs `Get-Printer` via PowerShell) and lists all installed Windows printers. The selected printer is stored in `localStorage` and sent with every print request. "Server Default" is always the first option, falling back to the server's configured `PRINTER_NAME` env var for backwards compatibility. Replaces the previous 5-second startup countdown in `install-and-run.ps1` as the primary way to switch printers.
+- **New `/printers` endpoint:** Added `GET /printers` to the print server, returning the printer list and the server's current default.
+- **Per-request printer override:** The `/print` endpoint now accepts an optional `printerName` field in the POST body; if provided it overrides the server's `PRINTER_NAME` env var for that job.
+
+## [1.9.3] - 2026-03-30
 - **Extension Autoprint Fix:** Fixed autoprint mode in the Chrome extension not sending jobs to the print queue. The content script was routing print requests through the background service worker (`chrome.runtime.sendMessage`), but in Manifest V3 the service worker can be terminated mid-flight, causing the Promise to never resolve and neither the print nor the fallback dialog to trigger. The content script now fetches the print server directly (matching the working bookmarklet approach), eliminating the service worker relay entirely.
 
 ## [1.9.2] - 2026-03-29

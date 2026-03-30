@@ -603,6 +603,22 @@ app.get('/roster-status', (req, res) => {
   res.json({ count: clubbers.length });
 });
 
+app.get('/printers', (req, res) => {
+  try {
+    const raw = execSync(
+      'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name, Default | ConvertTo-Json -Compress"',
+      { timeout: 8000, windowsHide: true }
+    ).toString().trim();
+    let parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) parsed = [parsed];  // PowerShell returns bare object for single printer
+    const printers = parsed.map(p => ({ name: p.Name, isWindowsDefault: !!p.Default }));
+    res.json({ printers, serverDefault: PRINTER_NAME || null });
+  } catch (err) {
+    console.error('[printers] Failed to list printers:', err.message);
+    res.status(500).json({ error: 'Failed to list printers', printers: [] });
+  }
+});
+
 // Explicit route for bookmarklet page
 app.get('/bookmarklet.html', (req, res) => {
   const bookmarkletPath = path.join(__dirname, 'public', 'bookmarklet.html');
@@ -648,9 +664,12 @@ app.post('/print', async (req, res) => {
     name,
     firstName: reqFirst,
     lastName:  reqLast,
-    clubName   = '',
-    clubImageData = null
+    clubName      = '',
+    clubImageData = null,
+    printerName   = ''
   } = req.body || {};
+
+  const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
 
   let firstName, lastName;
   if (reqFirst !== undefined) {
@@ -692,7 +711,7 @@ app.post('/print', async (req, res) => {
     }
   }
 
-  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || "�"} | printer: ${PRINTER_NAME || "default"}`);
+  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
   let pngPath = null;
   try {
@@ -702,7 +721,7 @@ app.post('/print', async (req, res) => {
       allergyTokens, handbookGroup, birthday
     );
 
-    printImage(pngPath, PRINTER_NAME);
+    printImage(pngPath, effectivePrinter);
 
     res.json({ success: true });
   } catch (err) {

@@ -2,15 +2,17 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.9.3';
+  const EXTENSION_VERSION = '1.10.0';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
   const PRINT_SERVER = 'http://localhost:3456';
   const STORAGE_KEY = 'awana_selectedPrinterId';
   const MINIMIZE_KEY = 'awana_widgetMinimized';
+  const PRINTER_KEY  = 'awana_selectedPrinterName';
 
-  let selectedMode = localStorage.getItem(STORAGE_KEY) || 'auto';
+  let selectedMode        = localStorage.getItem(STORAGE_KEY) || 'auto';
+  let selectedPrinterName = localStorage.getItem(PRINTER_KEY) || '';
   let lastPrintedName = null;
   let lastPrintTime = 0;
 
@@ -190,6 +192,36 @@
 
     controls.append(modeSelect, statusEl, testBtn);
 
+    // Printer row
+    var printerRow = document.createElement('div');
+    Object.assign(printerRow.style, { display: 'flex', flexDirection: 'column', gap: '2px' });
+
+    var printerLabel = document.createElement('div');
+    Object.assign(printerLabel.style, {
+      fontSize: '10px', color: '#94a3b8', fontWeight: '600',
+      textTransform: 'uppercase', letterSpacing: '0.05em'
+    });
+    printerLabel.textContent = 'Printer';
+
+    var printerSelect = document.createElement('select');
+    printerSelect.id = 'awana-printer-select';
+    Object.assign(printerSelect.style, {
+      width: '100%', padding: '5px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', cursor: 'pointer',
+      fontSize: '11px', background: '#f8fafc', color: '#475569'
+    });
+    var loadingOpt = document.createElement('option');
+    loadingOpt.value = ''; loadingOpt.textContent = 'Loading printers...'; loadingOpt.disabled = true;
+    printerSelect.appendChild(loadingOpt);
+
+    printerSelect.addEventListener('change', function() {
+      selectedPrinterName = printerSelect.value;
+      localStorage.setItem(PRINTER_KEY, selectedPrinterName);
+      console.log('[Awana] Printer changed to:', selectedPrinterName || '(server default)');
+    });
+
+    printerRow.append(printerLabel, printerSelect);
+
     // Status rows
     var csvStatus = document.createElement('div');
     csvStatus.id = 'awana-csv-status';
@@ -214,7 +246,7 @@
       border: '1px solid #fde68a'
     });
 
-    panelBody.append(controls, csvStatus, updateRow);
+    panelBody.append(controls, printerRow, csvStatus, updateRow);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
     document.body.appendChild(widget);
@@ -248,6 +280,44 @@
         }
       })
       .catch(function() { /* server offline, ignore */ });
+  }
+
+  function fetchPrinters() {
+    var select = document.getElementById('awana-printer-select');
+    if (!select) return;
+    fetch(PRINT_SERVER + '/printers', { signal: AbortSignal.timeout(5000) })
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data) {
+        var printers = data.printers || [];
+        var serverDefault = data.serverDefault || '';
+        while (select.firstChild) select.removeChild(select.firstChild);
+        var defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = serverDefault
+          ? 'Server Default (' + serverDefault + ')'
+          : 'Server Default (system)';
+        select.appendChild(defOpt);
+        printers.forEach(function(p) {
+          var opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = p.name + (p.isWindowsDefault ? ' \u2605' : '');
+          select.appendChild(opt);
+        });
+        var saved = localStorage.getItem(PRINTER_KEY) || '';
+        var exists = Array.from(select.options).some(function(o) { return o.value === saved; });
+        select.value = exists ? saved : '';
+        selectedPrinterName = select.value;
+        if (!exists && saved) localStorage.removeItem(PRINTER_KEY);
+        console.log('[Awana] Loaded ' + printers.length + ' printer(s)');
+      })
+      .catch(function(err) {
+        console.log('[Awana] Could not load printers:', err.message);
+        while (select.firstChild) select.removeChild(select.firstChild);
+        var fallback = document.createElement('option');
+        fallback.value = ''; fallback.textContent = 'Default (server)';
+        select.appendChild(fallback);
+        select.value = ''; selectedPrinterName = '';
+      });
   }
 
   function setStatus(text) {
@@ -350,7 +420,7 @@
       printPromise = fetch(PRINT_SERVER + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData }),
+        body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData, printerName: selectedPrinterName || '' }),
         signal: AbortSignal.timeout(5000)
       }).then(function(response) {
         if (response.ok) {
@@ -501,6 +571,7 @@
   }
 
   injectWidget();
+  fetchPrinters();
   watchCheckins();
   syncCsv();
   checkForExtensionUpdate();
