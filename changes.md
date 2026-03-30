@@ -1,4 +1,7 @@
-﻿## [1.9.2] - 2026-03-29
+﻿## [1.9.3] - 2026-03-30
+- **Extension Autoprint Fix:** Fixed autoprint mode in the Chrome extension not sending jobs to the print queue. The content script was routing print requests through the background service worker (`chrome.runtime.sendMessage`), but in Manifest V3 the service worker can be terminated mid-flight, causing the Promise to never resolve and neither the print nor the fallback dialog to trigger. The content script now fetches the print server directly (matching the working bookmarklet approach), eliminating the service worker relay entirely.
+
+## [1.9.2] - 2026-03-29
 - **Orientation Fix (PNG):** Fixed sideways printing in autoprint mode by setting `Landscape = $true` in the PowerShell print script. This correctly handles the 4x2 label aspect ratio.
 - **Electron Engine Update:** Updated the Electron app's print server to use the same PNG-based engine as the standalone server for consistency and reliability.
 

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.9.2';
+  const EXTENSION_VERSION = '1.9.3';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -347,27 +347,23 @@
 
     var printPromise;
     if (selectedMode !== 'dialog') {
-      printPromise = new Promise(function(resolve) {
-      chrome.runtime.sendMessage({
-        type: 'PRINT_LABEL',
-        payload: { name: fullName, clubName: clubName, clubImageData: imageData }
-      }, function(response) {
-        if (chrome.runtime.lastError) {
-          console.log('[Awana] Extension error:', chrome.runtime.lastError.message);
-          resolve(false);
-          return;
-        }
-        if (response && response.success) {
+      printPromise = fetch(PRINT_SERVER + '/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData }),
+        signal: AbortSignal.timeout(5000)
+      }).then(function(response) {
+        if (response.ok) {
           setStatus('\u2705');
           clearStatus();
-          console.log('[Awana] Silent print sent via background');
-          resolve(true);
-        } else {
-          console.log('[Awana] Server unavailable via background');
-          resolve(false);
+          console.log('[Awana] Silent print sent to server');
+          return true;
         }
+        return false;
+      }).catch(function(err) {
+        console.log('[Awana] Server unavailable:', err.message);
+        return false;
       });
-    });
     } else {
       printPromise = Promise.resolve(false);
     }
