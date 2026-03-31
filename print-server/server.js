@@ -562,31 +562,46 @@ async function generateLabel(
 }
 
 // ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
+// The script is written to a temp .ps1 file and run with -File (not -Command)
+// to avoid multiline quoting issues.  The image path is stored on the
+// PrintDocument object itself so the PrintPage handler can load it fresh —
+// this sidesteps the .NET event handler scope issue where outer-scope
+// variables are not reliably accessible inside add_PrintPage scriptblocks.
 function printImage(imagePath, printerName) {
-  // Escape single quotes in paths/names for PowerShell
-  const safePath = imagePath.replace(/'/g, "''");
-  const safePrinter = printerName.replace(/'/g, "''");
+  // Escape single quotes in paths/names for PowerShell single-quoted strings
+  const safePath    = imagePath.replace(/'/g, "''");
+  const safePrinter = (printerName || '').replace(/'/g, "''");
 
   const ps = `
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$img = [System.Drawing.Image]::FromFile('${safePath}')
 $pd = New-Object System.Drawing.Printing.PrintDocument
-${printerName ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
+${safePrinter ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
 $pd.DefaultPageSettings.Landscape = $true
 $pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0,0,0,0)
+$pd | Add-Member -NotePropertyName LabelImagePath -NotePropertyValue '${safePath}'
 $pd.add_PrintPage({
   param($sender, $e)
-  $e.Graphics.DrawImage($img, 0, 0, $e.PageBounds.Width, $e.PageBounds.Height)
+  $img = [System.Drawing.Image]::FromFile($sender.LabelImagePath)
+  try { $e.Graphics.DrawImage($img, 0, 0, $e.PageBounds.Width, $e.PageBounds.Height) }
+  finally { $img.Dispose() }
 })
 $pd.Print()
-$img.Dispose()
 $pd.Dispose()
 `.trim();
 
-  execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/"/g, '\\"')}"`, {
-    timeout: 15000,
-    windowsHide: true
-  });
+  const psPath = path.join(os.tmpdir(), `awana-print-${Date.now()}.ps1`);
+  try {
+    fs.writeFileSync(psPath, ps, 'utf8');
+    const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: 15000,
+      windowsHide: true,
+      encoding: 'utf8'
+    });
+    if (result) console.log('[print] PowerShell:', result.trim());
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
 }
 
 // ── Express server ────────────────────────────────────────────────────────────

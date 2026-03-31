@@ -1,4 +1,7 @@
-﻿## [1.10.0] - 2026-03-30
+﻿## [1.10.1] - 2026-03-30
+- **Silent Print Fix:** Rewrote `printImage()` in the print server to fix jobs being submitted with a blank page. The root cause: `$img` loaded in the outer PowerShell scope was not reliably accessible inside the `add_PrintPage` scriptblock (a known .NET event handler scope issue in headless PowerShell). The image path is now stored as a property on the `PrintDocument` object and loaded fresh inside the handler via `$sender.LabelImagePath`, completely avoiding the closure. The script is also now written to a temp `.ps1` file and run with `-File` (instead of embedding in `-Command`) to avoid multiline quoting issues. Added `$ErrorActionPreference = 'Stop'` so any future print failure surfaces as a real error rather than a silent success.
+
+## [1.10.0] - 2026-03-30
 - **Printer Selection Dropdown:** Added a "Printer" dropdown to the extension widget. On load it fetches `GET /printers` from the print server (which runs `Get-Printer` via PowerShell) and lists all installed Windows printers. The selected printer is stored in `localStorage` and sent with every print request. "Server Default" is always the first option, falling back to the server's configured `PRINTER_NAME` env var for backwards compatibility. Replaces the previous 5-second startup countdown in `install-and-run.ps1` as the primary way to switch printers.
 - **New `/printers` endpoint:** Added `GET /printers` to the print server, returning the printer list and the server's current default.
 - **Per-request printer override:** The `/print` endpoint now accepts an optional `printerName` field in the POST body; if provided it overrides the server's `PRINTER_NAME` env var for that job.
