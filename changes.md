@@ -1,4 +1,8 @@
-﻿## [1.10.1] - 2026-03-30
+﻿## [1.10.2] - 2026-03-30
+- **Orientation Fix:** Replaced `Landscape = $true` in the PowerShell print script with an explicit `PaperSize("Label", 400, 200)` (4"×2" in hundredths of inches). The D450's label stock is already oriented 4"×2" by the driver; the Landscape flag was rotating it an additional 90° and producing a portrait (4" tall × 2" wide) output.
+- **Emoji Allergy Icons:** Replaced the plain-text allergy strip ("NUTS • DAIRY") with emoji icons (🥜🥛🌾🥚🦐⚠) rendered using the Segoe UI Emoji font. Strip height increased from 14pt to 20pt to accommodate the icons. Each allergy token maps to its emoji and is drawn centered in the red strip.
+
+## [1.10.1] - 2026-03-30
 - **Silent Print Fix:** Rewrote `printImage()` in the print server to fix jobs being submitted with a blank page. The root cause: `$img` loaded in the outer PowerShell scope was not reliably accessible inside the `add_PrintPage` scriptblock (a known .NET event handler scope issue in headless PowerShell). The image path is now stored as a property on the `PrintDocument` object and loaded fresh inside the handler via `$sender.LabelImagePath`, completely avoiding the closure. The script is also now written to a temp `.ps1` file and run with `-File` (instead of embedding in `-Command`) to avoid multiline quoting issues. Added `$ErrorActionPreference = 'Stop'` so any future print failure surfaces as a real error rather than a silent success.
 
 ## [1.10.0] - 2026-03-30

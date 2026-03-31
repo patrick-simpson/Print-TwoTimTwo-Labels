@@ -82,6 +82,15 @@ const HEADER_MAP = {
   'book':           'Book',
 };
 
+const ALLERGY_EMOJI = {
+  'NUTS':      '\uD83E\uDD5C',  // 🥜
+  'DAIRY':     '\uD83E\uDD5B',  // 🥛
+  'GLUTEN':    '\uD83C\uDF3E',  // 🌾
+  'EGG':       '\uD83E\uDD5A',  // 🥚
+  'SHELLFISH': '\uD83E\uDD90',  // 🦐
+  'DYE':       '\u26A0',        // ⚠
+};
+
 function normalizeHeader(raw) {
   const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').trim();
   return HEADER_MAP[key] || raw;  // keep original if no mapping found
@@ -452,7 +461,7 @@ async function generateLabel(
   const hasGroup = handbookGroup.length > 0;
   const hasAllergy = allergyTokens.length > 0;
 
-  const ALLERGY_STRIP_H = hasAllergy ? 14 : 0;
+  const ALLERGY_STRIP_H = hasAllergy ? 20 : 0;
 
   // Font sizes (in pt)
   const fs1 = fitFontSize(ctx, firstName, 'bold', textW);
@@ -547,12 +556,18 @@ async function generateLabel(
     ctx.fillRect(BX, stripY, BW, ALLERGY_STRIP_H);
     ctx.restore();
 
-    const allergyText = allergyTokens.join(' • ');
-    const allergyFont = `bold 8px Helvetica, Arial, sans-serif`;
-    ctx.font = allergyFont;
-    const safeAllergy = truncateTextCanvas(ctx, allergyText, allergyFont, BW - 16);
+    const emojiSize = 13;  // pt — fits inside 20pt strip with vertical padding
+    ctx.font = `${emojiSize}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(safeAllergy, BX + BW / 2, stripY + 3);
+    const emojis = allergyTokens.map(t => ALLERGY_EMOJI[t] || t.charAt(0));
+    const spacing = emojiSize + 6;
+    const totalW = emojis.length * spacing - 6;
+    let ex = BX + BW / 2 - totalW / 2;
+    const ey = stripY + ALLERGY_STRIP_H / 2;
+    emojis.forEach(function(em) { ctx.fillText(em, ex, ey); ex += spacing; });
+    ctx.textBaseline = 'top';
   }
 
   // Write PNG
@@ -577,7 +592,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $pd = New-Object System.Drawing.Printing.PrintDocument
 ${safePrinter ? `$pd.PrinterSettings.PrinterName = '${safePrinter}'` : ''}
-$pd.DefaultPageSettings.Landscape = $true
+$pd.DefaultPageSettings.PaperSize = New-Object System.Drawing.Printing.PaperSize("Label", 400, 200)
 $pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0,0,0,0)
 $pd | Add-Member -NotePropertyName LabelImagePath -NotePropertyValue '${safePath}'
 $pd.add_PrintPage({
