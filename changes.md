@@ -1,0 +1,154 @@
+﻿## [1.12.0] - 2026-03-30
+- **Decorative Weather Banners:** Added a fun new feature that prints a weather-themed decorative border and icons on every 10th label.
+- **Weather Integration:** Automatically fetches local weather (temp + conditions) via `wttr.in`. Themes include Sunny (☀️), Cloudy (☁️), Rain (🌧️), Snow (❄️), Storm (⚡), Cold (🧊), and Hot (🔥).
+- **Print Tracking:** Both the print server and browser extension now track total labels printed to trigger the decortive banner every 10 clubbers.
+- **Consistent Design:** Weather banners are implemented in both the silent print server (Canvas) and the extension's fallback print path (HTML/CSS).
+
+## [1.11.0] - 2026-03-30
+- **Bookmarklet Removal:** Completely removed all bookmarklet-related files and scripts. The project now exclusively uses the Chrome Extension for browser integration.
+- **Extension Enrichment:** The extension now parses the clubbers CSV during sync and stores allergy data locally in `localStorage`.
+- **Enhanced Fallback Print:** Added support for Emoji Allergy Icons (🥜🥛🌾🥚🦐⚠) in the extension's `fallbackPrint` mode, ensuring consistent label design even when the print server is offline.
+- **Label Design:** Refined the fallback label layout and CSS for better emoji visibility and orientation consistency.
+
+## [1.10.2] - 2026-03-30
+- **Orientation Fix:** Replaced `Landscape = $true` in the PowerShell print script with an explicit `PaperSize("Label", 400, 200)` (4"×2" in hundredths of inches). The D450's label stock is already oriented 4"×2" by the driver; the Landscape flag was rotating it an additional 90° and producing a portrait (4" tall × 2" wide) output.
+- **Emoji Allergy Icons:** Replaced the plain-text allergy strip ("NUTS • DAIRY") with emoji icons (🥜🥛🌾🥚🦐⚠) rendered using the Segoe UI Emoji font. Strip height increased from 14pt to 20pt to accommodate the icons. Each allergy token maps to its emoji and is drawn centered in the red strip.
+
+## [1.10.1] - 2026-03-30
+- **Silent Print Fix:** Rewrote `printImage()` in the print server to fix jobs being submitted with a blank page. The root cause: `$img` loaded in the outer PowerShell scope was not reliably accessible inside the `add_PrintPage` scriptblock (a known .NET event handler scope issue in headless PowerShell). The image path is now stored as a property on the `PrintDocument` object and loaded fresh inside the handler via `$sender.LabelImagePath`, completely avoiding the closure. The script is also now written to a temp `.ps1` file and run with `-File` (instead of embedding in `-Command`) to avoid multiline quoting issues. Added `$ErrorActionPreference = 'Stop'` so any future print failure surfaces as a real error rather than a silent success.
+
+## [1.10.0] - 2026-03-30
+- **Printer Selection Dropdown:** Added a "Printer" dropdown to the extension widget. On load it fetches `GET /printers` from the print server (which runs `Get-Printer` via PowerShell) and lists all installed Windows printers. The selected printer is stored in `localStorage` and sent with every print request. "Server Default" is always the first option, falling back to the server's configured `PRINTER_NAME` env var for backwards compatibility. Replaces the previous 5-second startup countdown in `install-and-run.ps1` as the primary way to switch printers.
+- **New `/printers` endpoint:** Added `GET /printers` to the print server, returning the printer list and the server's current default.
+- **Per-request printer override:** The `/print` endpoint now accepts an optional `printerName` field in the POST body; if provided it overrides the server's `PRINTER_NAME` env var for that job.
+
+## [1.9.3] - 2026-03-30
+- **Extension Autoprint Fix:** Fixed autoprint mode in the Chrome extension not sending jobs to the print queue. The content script was routing print requests through the background service worker (`chrome.runtime.sendMessage`), but in Manifest V3 the service worker can be terminated mid-flight, causing the Promise to never resolve and neither the print nor the fallback dialog to trigger. The content script now fetches the print server directly (matching the working bookmarklet approach), eliminating the service worker relay entirely.
+
+## [1.9.2] - 2026-03-29
+- **Orientation Fix (PNG):** Fixed sideways printing in autoprint mode by setting `Landscape = $true` in the PowerShell print script. This correctly handles the 4x2 label aspect ratio.
+- **Electron Engine Update:** Updated the Electron app's print server to use the same PNG-based engine as the standalone server for consistency and reliability.
+
+## [1.9.1] - 2026-03-29
+- **PNG Print Engine:** Replaced PDF-based printing (pdfkit + pdf-to-printer/SumatraPDF) with PNG-based printing (canvas + PowerShell System.Drawing). This eliminates all printer driver rotation issues — the label is rendered as a 1200x600 pixel image at 300 DPI and printed directly. Tested for Labelife D450 BT thermal printers.
+- **Widget Minimize Arrow:** Replaced the in-header minimize button with an arrow tab that sticks out on the left side of the widget. When minimized, the widget fully collapses and only the arrow tab remains on screen.
+- **Dependency Change:** Replaced `pdfkit` and `pdf-to-printer` with `canvas` package in print-server.
+
+## [1.9.0] - 2026-03-29
+- **Orientation Fix (for real):** The previous fix corrected the PDF page dimensions but the printer driver was still rotating the output. Now explicitly passing `orientation: 'portrait'` and `scale: 'noscale'` to `pdf-to-printer` (SumatraPDF) to prevent any driver-level rotation or scaling. The PDF is 4"x2" and should print exactly as-is.
+
+## [1.8.9] - 2026-03-29
+- **Reliable Project Update:** Added a secondary version check that compares the project's own `VERSION` file against the script version. This catches stale project files (including `chrome-extension/`) even when `.script-version` was written by a previous partial update. Previously, if `.script-version` matched but the actual project ZIP was never re-downloaded, the extension and other files stayed at their old version.
+
+## [1.8.8] - 2026-03-29
+- **Install Location Migration:** Both `launch-awana.bat` and `install-and-run.ps1` now default to `C:\output` instead of `%APPDATA%\Awana-Print`. On launch, they detect the old location, migrate user data (config.json, clubbers.csv), and remove the old folder.
+- **ProgressPreference Fix:** Moved `$ProgressPreference = 'SilentlyContinue'` to a single global assignment at the top of `install-and-run.ps1`, removing individual assignments that could error when invoked via certain shell contexts.
+
+## [1.8.7] - 2026-03-29
+- **Launcher Path Fix:** `launch-awana.bat` now derives its install directory from its own file location (`%~dp0`) instead of hardcoding `%APPDATA%\Awana-Print`. This ensures the desktop shortcut works correctly regardless of where the project was installed (e.g. `c:\output`).
+- **Launcher Update Fix:** When an update is detected, the launcher now downloads `install-and-run.ps1` directly and passes `-InstallPath` matching the current install location, instead of downloading `install.bat` which had its own hardcoded path assumptions.
+
+## [1.8.6] - 2026-03-29
+- **Installer Fix:** Removed `$ProgressPreference` from bootstrap `install.ps1` — it caused errors when run via `irm | iex` because double-quoted `-Command` strings interpolate `$` variables. Changed website one-liner to use single quotes.
+
+## [1.8.5] - 2026-03-29
+- **Widget Minimize:** Added a minimize/restore button to the on-page print widget so it can be collapsed to a compact header bar.
+- **Widget Version Display:** The widget now shows the current extension version (e.g. "v1.8.5") in its header.
+- **Extension Auto-Update Notification:** The widget checks the print server's `/health` endpoint for version mismatches and displays an "Update available" notice when the server is running a newer version.
+- **Server Health Endpoint:** `/health` now returns `version` alongside `status` and `printer`.
+- **Version Sync:** `bump-version.cjs` now also updates `chrome-extension/manifest.json`, `content.js`, and `popup.html` automatically.
+
+## [1.8.4] - 2026-03-29
+- **Orientation Fix:** Fixed sideways label printing in autoprint mode. PDF page size was `[PAGE_H, PAGE_W]` with `layout: 'landscape'` — changed to `[PAGE_W, PAGE_H]` (4"x2") with no rotation, matching the browser print dialog behavior.
+
+## [1.8.3] - 2026-03-29
+- **Execution Policy Fix:** Updated bootstrap `install.ps1` to launch the full installer with `-ExecutionPolicy Bypass`, preventing "scripts disabled" errors on restricted Windows systems.
+- **Website:** Updated the one-liner command to include `powershell -ExecutionPolicy Bypass -Command` wrapper so it works out of the box on any system.
+
+## [1.8.2] - 2026-03-29
+- **Extension Install Guide:** Improved Step 3 on the website with a download button for `chrome-extension.zip` and clear path to the local extension folder for users who already ran the installer.
+- **Extension Distribution:** Added `chrome-extension.zip` to GitHub Pages so users can download it directly from the website.
+
+## [1.8.1] - 2026-03-29
+- **One-Liner Installer:** Added a bootstrap `install.ps1` script served via GitHub Pages, enabling installation with a single PowerShell command: `irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex`
+- **Website:** Updated the setup page to feature the one-liner command as the primary install method, with `install.bat` as a secondary option.
+
+## [1.7.3] - 2026-03-27
+- **Auto-Update Launcher:** Added administrative check, auto-elevation, and version checking directly to \launch-awana.bat\.
+- **Desktop Shortcut:** Updated installer to always create/update the "Awana Print" desktop shortcut, ensuring it points correctly to the launcher in \AppData\.
+
+# Project Changes & Release Notes
+
+## [1.7.2] - 2026-03-27
+- **Auto-Update:** Enhanced install.bat to automatically check for new versions of the setup script on GitHub.
+- **Versioning:** Introduced a dedicated VERSION file in the project root for lightweight version checking.
+
+
+## [1.7.1] - 2026-03-27
+- **Extension UX:** Added a popup menu (visible when clicking the extension icon) that shows the real-time status of the local KVBC Print Server.
+- **Diagnostics:** Added a "Refresh Status" button and a direct link to download the installer if the server is offline.
+
+## [1.7.0] - 2026-03-27
+- **Browser Extension:** Introduced a full Manifest V3 browser extension (chrome-extension/) to replace the bookmarklet.
+- **Zero-Click Auto-Printing:** The extension injects automatically on the check-in page and persists across page reloads.
+- **Reliability:** Refactored the network request logic into a background Service Worker (ackground.js) to completely bypass web page CORS and Private Network Access restrictions.
+
+## [1.6.9] - 2026-03-27
+- **Allergies:** Added 'DYE' (detects 'dye' or 'color' in notes) to the detected allergy list for labels.
+- **Orientation:** Fixed sideways printing in auto-mode by setting PDF size to portrait (2x4) with landscape layout.
+- **Design:** Resolved icon "crunching" by preserving the original aspect ratio when fitting icons to the label.
+- **Typography:** Capped the maximum font size for names at 32pt to prevent overflowing the label.
+- **UX:** Added version number display to the bookmarklet setup page for verification.
+
+## [1.6.8] - 2026-03-27
+- **Installer Reliability:** Implemented aggressive multi-pass directory clearing in \install-and-run.ps1\.
+- **Process Management:** Added a force-kill for any running Node processes before installation/update to release file locks.
+- **Cleanup:** Ensured all remnants are removed during updates to prevent stale file issues.
+
+## [1.6.7] - 2026-03-27
+- **Bookmarklet Distribution:** Now serving the bookmarklet from the \print-server\ public directory for better local accessibility.
+- **Sync:** Updated internal bookmarklet logic to the latest version.
+
+## [1.6.6] - 2026-03-27
+- **Fallback Logic:** Updated bookmarklet fallback printing logic to match server behavior, ensuring consistent UX when the server is unreachable.
+
+## [1.6.5] - 2026-03-27
+- **UX Improvement:** Refined \install.bat\ to show only the current step, resulting in a cleaner UI during installation.
+
+## [1.6.4] - 2026-03-27
+- **Label Design:** Fixed image aspect ratio, capped maximum name font size, and improved overall layout for better readability on 4x2 labels.
+
+## [1.6.3] - 2026-03-27
+- **Label Design:** Removed redundant club name text when the logo is present.
+- **Orientation:** Reverted to standard 4x2 portrait orientation as the verified stable standard for thermal printers.
+
+## [1.6.0 - 1.6.2] - 2026-03-27
+- **Reliability:** Successive improvements to installation directory clearing.
+- **Data Integrity:** Ensured HandbookGroup is always printed and fixed club name conditional logic.
+
+## [1.5.9] - 2026-03-27
+- **Print Optimization:** Prioritized HandbookGroup display and finalized PDF orientation for thermal stability.
+
+## [1.5.6 - 1.5.8] - 2026-03-27
+- **Recursion Guard:** Fixed infinite loops in \install.bat\ elevation checks by implementing an explicit recursion guard/circuit breaker.
+- **Policy:** Added "Zero-Loop Policy" to \gemini.md\ to prevent future self-relaunching script bugs.
+
+## [1.5.1 - 1.5.5] - 2026-03-27
+- **Admin Elevation:** Enhanced \install.bat\ with robust admin checks and a cleaner UI.
+- **Versioning:** Implemented automated versioning across all components via \scripts/bump-version.cjs\.
+- **Stability:** Reverted orientation to the stable 4x2 format and fixed PowerShell syntax issues.
+
+## [1.4.9] - 2026-03-27
+- **Label Orientation:** Configured pdfkit to use 2x4 portrait paper with landscape layout, ensuring DYMO printers receive correctly oriented pages.
+- **CSV Parser:** Fixed a bug where trailing spaces inside quotes prevented name matches; added diagnostic logging for parsed names.
+- **Redundancy:** Conditional logic added to skip club name text when the logo icon is displayed.
+
+## [Pre-1.4.9 Highlights] - 2026-03-27
+- **New Launchers:** Introduced \install.bat\ and \launch-awana.bat\ for a no-PowerShell-knowledge required experience.
+- **Desktop Integration:** Automatic creation of "Awana Print" desktop shortcuts.
+- **Authentication:** Shifted CSV downloading to use the Edge browser session to handle TwoTimTwo authentication.
+- **CSV Robustness:** Rewrote the server-side CSV parser to handle real TwoTimTwo exports (quoted fields, embedded newlines, and specific headers).
+- **Bookmarklet Safety:** Moved bookmarklet source into a \	ext/plain\ block to avoid template literal escaping issues and added a prebuild syntax validation script.
+- **Hosting:** Moved bookmarklet hosting to GitHub Pages for centralized updates.
+
+

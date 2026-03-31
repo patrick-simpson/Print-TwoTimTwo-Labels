@@ -1,0 +1,5 @@
+{
+  "name": "Check-in Label Generator",
+  "description": "A utility dashboard that simulates the Kids Club check-in process and provides a Chrome extension to automatically print 4x2 labels for the last checked-in child.",
+  "requestFramePermissions": []
+}
