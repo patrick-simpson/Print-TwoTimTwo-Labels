@@ -1,4 +1,14 @@
-﻿## [1.12.0] - 2026-03-30
+﻿## [1.13.0] - 2026-03-30
+- **Club-Specific Fonts:** Each Awana club now has a unique, theme-appropriate font for the clubber's name:
+  - **Puggles:** Comic Sans MS (Kid-friendly)
+  - **Cubbies:** Segoe Print (Friendly/Handwritten)
+  - **Sparks:** Impact (Electric and high-visibility)
+  - **T&T:** Segoe UI (Modern)
+  - **Trek:** Arial (Clean)
+- **Black & White Optimization:** Explicitly optimized the label generation for B&W thermal printers. Colors (allergy strips, weather banners) are rendered using high-contrast grayscale to ensure clarity without color ink.
+- **Documentation:** Updated README and Troubleshooting guides with B&W printing notes.
+
+## [1.12.0] - 2026-03-30
 - **Decorative Weather Banners:** Added a fun new feature that prints a weather-themed decorative border and icons on every 10th label.
 - **Weather Integration:** Automatically fetches local weather (temp + conditions) via `wttr.in`. Themes include Sunny (☀️), Cloudy (☁️), Rain (🌧️), Snow (❄️), Storm (⚡), Cold (🧊), and Hot (🔥).
 - **Print Tracking:** Both the print server and browser extension now track total labels printed to trigger the decortive banner every 10 clubbers.

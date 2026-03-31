@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.12.0';
+  const EXTENSION_VERSION = '1.13.0';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -79,6 +79,16 @@
     if (desc.includes('rain')) return WEATHER_THEMES.rain;
     if (desc.includes('snow')) return WEATHER_THEMES.snow;
     return WEATHER_THEMES.sunny;
+  }
+
+  function getClubFont(clubName) {
+    const c = (clubName || '').toLowerCase();
+    if (c.includes('puggle')) return '"Comic Sans MS", cursive';
+    if (c.includes('cubbie')) return '"Segoe Print", "Trebuchet MS", sans-serif';
+    if (c.includes('spark'))  return 'Impact, sans-serif';
+    if (c.includes('t&t') || c.includes('t & t')) return '"Segoe UI", Tahoma, sans-serif';
+    if (c.includes('trek'))   return 'Arial, Helvetica, sans-serif';
+    return 'Helvetica, Arial, sans-serif';
   }
 
   function getAllergyEmoji(allergies) {
@@ -559,6 +569,7 @@
     }
 
     var fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
+    var clubFont = getClubFont(clubName);
     var iconHtml = imageData
       ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
       : '';
@@ -590,7 +601,7 @@
       '.icon-col img { width: 48pt; height: 48pt; object-fit: contain; }' +
       '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
       '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4pt 10pt; text-align: center; }' +
-      '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
+      '.fn { font-family: ' + clubFont + '; font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
       '.ln { font-size: 20pt; margin-top: 2pt; }' +
       '.allergy-strip { position: absolute; bottom: 8pt; right: 8pt; font-size: 24pt; line-height: 1; }' +
       '.w-icon { position: absolute; font-size: 24pt; line-height: 1; z-index: 10; }' +

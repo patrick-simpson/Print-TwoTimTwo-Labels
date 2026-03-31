@@ -46,6 +46,7 @@ Then just use TwoTimTwo check-in normally — labels print silently as children 
 
 - **Windows 10 or 11** (PowerShell 5.0+)
 - **Label printer** (connected and working, e.g., DYMO LabelWriter, Brother QL series)
+- **Black & White Optimization:** The system is optimized for thermal B&W printers. Colors (like allergy strips and weather banners) are rendered as high-contrast grayscale for maximum clarity.
 - **Internet** (one-time download of ~300 MB for dependencies)
 
 The printer should appear in Windows Settings → Bluetooth & devices → Printers & scanners.

@@ -65,7 +65,8 @@ Having issues with Awana Label Printer? This guide covers common problems and so
 
 **Checklist:**
 1. **Verify label size:** Settings → Printers → Your Printer → Preferences → Paper size should be **4×2 inches**
-2. **Check printer driver:** Some printers need specific label-size drivers
+2. **Black & White Optimization:** This tool is designed for B&W thermal printers. Colors (like allergy strips) are converted to high-contrast grayscale. If a logo or emoji looks fuzzy, try a higher contrast image or font.
+3. **Check printer driver:** Some printers need specific label-size drivers
 3. **Test with a manual print:** Use Windows print dialog to test one label manually
 4. **Check for paper jams:** Some printers fail silently
 

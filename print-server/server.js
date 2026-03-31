@@ -82,6 +82,16 @@ function getWeatherTheme(weather) {
   return WEATHER_THEMES.sunny;
 }
 
+function getClubFont(clubName) {
+  const c = (clubName || '').toLowerCase();
+  if (c.includes('puggle')) return '"Comic Sans MS", cursive';
+  if (c.includes('cubbie')) return '"Segoe Print", "Trebuchet MS", sans-serif';
+  if (c.includes('spark'))  return 'Impact, sans-serif';
+  if (c.includes('t&t') || c.includes('t & t')) return '"Segoe UI", Tahoma, sans-serif';
+  if (c.includes('trek'))   return 'Arial, Helvetica, sans-serif';
+  return 'Helvetica, Arial, sans-serif';
+}
+
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
 const PAGE_W  = 4 * 72;  // 288 pt
 const PAGE_H  = 2 * 72;  // 144 pt
@@ -567,7 +577,8 @@ async function generateLabel(
   const textCenterX = textX + textW / 2;
 
   // ── First name ────────────────────────────────────────────────────────────
-  const firstFont = `bold ${fs1}px Helvetica, Arial, sans-serif`;
+  const clubFontBase = getClubFont(clubName);
+  const firstFont = `bold ${fs1}px ${clubFontBase}`;
   ctx.font = firstFont;
   const safeFirst = truncateTextCanvas(ctx, firstName, firstFont, textW);
   ctx.fillStyle = '#000000';
