@@ -83,12 +83,11 @@ const HEADER_MAP = {
 };
 
 const ALLERGY_EMOJI = {
-  'NUTS':      '\uD83E\uDD5C',  // 🥜
-  'DAIRY':     '\uD83E\uDD5B',  // 🥛
-  'GLUTEN':    '\uD83C\uDF3E',  // 🌾
-  'EGG':       '\uD83E\uDD5A',  // 🥚
-  'SHELLFISH': '\uD83E\uDD90',  // 🦐
-  'DYE':       '\u26A0',        // ⚠
+  'NUTS':   '\uD83E\uDD5C',  // 🥜
+  'DAIRY':  '\uD83E\uDD5B',  // 🥛
+  'GLUTEN': '\uD83C\uDF3E',  // 🌾
+  'EGG':    '\uD83E\uDD5A',  // 🥚
+  'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
 };
 
 function normalizeHeader(raw) {
@@ -301,8 +300,7 @@ function parseAllergies(allergiesStr) {
   if (/dairy|milk|lactose/i.test(s))            tokens.push('DAIRY');
   if (/gluten|wheat/i.test(s))                  tokens.push('GLUTEN');
   if (/\begg\b/i.test(s))                       tokens.push('EGG');  // \b avoids matching "eggnog" as both EGG and NUTS
-  if (/shellfish|shrimp|crab/i.test(s))         tokens.push('SHELLFISH');
-  if (/dye|color/i.test(s))                        tokens.push('DYE');
+  if (/dye|color/i.test(s))                     tokens.push('DYE');
   return tokens;
 }
 
@@ -461,7 +459,7 @@ async function generateLabel(
   const hasGroup = handbookGroup.length > 0;
   const hasAllergy = allergyTokens.length > 0;
 
-  const ALLERGY_STRIP_H = hasAllergy ? 20 : 0;
+  const ALLERGY_STRIP_H = 0;  // No bottom strip — allergy icons go in bottom-right corner
 
   // Font sizes (in pt)
   const fs1 = fitFontSize(ctx, firstName, 'bold', textW);
@@ -546,26 +544,18 @@ async function generateLabel(
     ctx.fillText('Happy Birthday!', textCenterX, y);
   }
 
-  // ── Allergy strip ─────────────────────────────────────────────────────────
+  // ── Allergy icons (bottom-right corner) ──────────────────────────────────
   if (hasAllergy) {
-    const stripY = BY + BH - ALLERGY_STRIP_H;
-    ctx.save();
-    roundedRect(ctx, BX, BY, BW, BH, CORNER);
-    ctx.clip();
-    ctx.fillStyle = '#c0392b';
-    ctx.fillRect(BX, stripY, BW, ALLERGY_STRIP_H);
-    ctx.restore();
-
-    const emojiSize = 13;  // pt — fits inside 20pt strip with vertical padding
+    const emojiSize = 16;
     ctx.font = `${emojiSize}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
-    ctx.textBaseline = 'middle';
+    ctx.textBaseline = 'bottom';
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffffff';
     const emojis = allergyTokens.map(t => ALLERGY_EMOJI[t] || t.charAt(0));
-    const spacing = emojiSize + 6;
-    const totalW = emojis.length * spacing - 6;
-    let ex = BX + BW / 2 - totalW / 2;
-    const ey = stripY + ALLERGY_STRIP_H / 2;
+    const spacing = emojiSize + 2;
+    const PAD = 6;
+    const totalW = emojis.length * spacing - 2;
+    let ex = BX + BW - PAD - totalW;
+    const ey = BY + BH - PAD;
     emojis.forEach(function(em) { ctx.fillText(em, ex, ey); ex += spacing; });
     ctx.textBaseline = 'top';
   }

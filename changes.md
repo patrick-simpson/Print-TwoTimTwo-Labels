@@ -1,3 +1,8 @@
+## [1.10.4] - 2026-04-04
+- **Allergy Icons Redesign:** Removed red bottom bar. Allergy icons now appear in the lower-right corner of the label. Icons are larger (16pt vs 13pt).
+- **Removed Shellfish:** Dropped SHELLFISH (🦐) from allergy detection and icon map.
+- **DYE Icon:** Changed from ⚠ to 💧 (water drop) for food dye/artificial coloring sensitivity.
+
 ## [1.10.3] - 2026-04-04
 - **Aspect Ratio Fix:** Club logo images were squished to 64×64 square before being sent to the print server. Fixed `getClubImageDataUrl()` in both content.js and bookmarklet.js to letterbox images preserving natural aspect ratio.
 - **HandbookGroup Filter:** Children in handbook group "All" (case-insensitive) now print no group text — the field is treated as blank.
