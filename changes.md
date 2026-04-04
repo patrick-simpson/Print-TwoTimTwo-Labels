@@ -1,3 +1,9 @@
+## [1.10.6] - 2026-04-04
+- **Embedded Widget:** Widget now injects inline beside the `#lastCheckin` element instead of floating as a fixed overlay, using the page's existing whitespace.
+- **Green Color Scheme:** Replaced purple with the site's green (`#4caf50`) on the pill, panel header, and Walk-in Print button.
+- **Softer Panel Style:** Lighter border (`#c8e6c9`), reduced shadow, and `8px` border radius to blend with the site's flat design.
+- **Fallback:** If `#lastCheckin` is not found, widget still appears as a fixed top-right overlay.
+
 ## [1.10.5] - 2026-04-04
 - **Label Border Removed:** Removed the black rounded-rect outline surrounding the label.
 - **Larger Club Logo:** Increased club logo max size from 56pt to 76pt (aspect ratio preserved via letterboxing).

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.5';
+  const EXTENSION_VERSION = '1.10.6';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -42,14 +42,10 @@
   function injectWidget() {
     var isMinimized = localStorage.getItem(MINIMIZE_KEY) === 'true';
 
-    // ── Outer container (always visible, anchored top-right) ──
+    // ── Outer container ──
     const widget = document.createElement('div');
     widget.id = 'awana-widget';
     Object.assign(widget.style, {
-      position: 'fixed',
-      top: '10px',
-      right: '10px',
-      zIndex: '99999',
       fontFamily: 'system-ui, -apple-system, sans-serif',
       fontSize: '13px',
       transition: 'all 0.2s ease'
@@ -63,11 +59,11 @@
       alignItems: 'center',
       gap: '6px',
       padding: '6px 12px',
-      background: '#7c3aed',
+      background: '#4caf50',
       color: '#ffffff',
       borderRadius: '20px',
       cursor: 'pointer',
-      boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
+      boxShadow: '0 2px 8px rgba(76,175,80,0.3)',
       fontSize: '12px',
       fontWeight: '600',
       userSelect: 'none',
@@ -76,19 +72,19 @@
     });
     pill.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span> Awana Print';
     pill.title = 'Expand print controls';
-    pill.addEventListener('mouseenter', function() { pill.style.background = '#6d28d9'; });
-    pill.addEventListener('mouseleave', function() { pill.style.background = '#7c3aed'; });
+    pill.addEventListener('mouseenter', function() { pill.style.background = '#43a047'; });
+    pill.addEventListener('mouseleave', function() { pill.style.background = '#4caf50'; });
 
     // ── Expanded state: full panel ──
     const panel = document.createElement('div');
     panel.id = 'awana-panel';
     Object.assign(panel.style, {
       background: '#ffffff',
-      border: '1px solid #e2e8f0',
-      borderRadius: '12px',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+      border: '1px solid #c8e6c9',
+      borderRadius: '8px',
+      boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
       overflow: 'hidden',
-      width: '260px'
+      minWidth: '240px'
     });
 
     // Panel header (purple bar with title + close X)
@@ -98,7 +94,7 @@
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: '8px 12px',
-      background: '#7c3aed',
+      background: '#4caf50',
       color: '#ffffff'
     });
 
@@ -125,7 +121,7 @@
     });
     closeBtn.innerHTML = '&#x2715;';
     closeBtn.title = 'Minimize';
-    closeBtn.addEventListener('mouseenter', function() { closeBtn.style.background = 'rgba(255,255,255,0.35)'; });
+    closeBtn.addEventListener('mouseenter', function() { closeBtn.style.background = 'rgba(0,0,0,0.15)'; });
     closeBtn.addEventListener('mouseleave', function() { closeBtn.style.background = 'rgba(255,255,255,0.2)'; });
 
     panelHeader.append(headerLeft, closeBtn);
@@ -278,13 +274,13 @@
     walkInPrintBtn.textContent = 'Print';
     Object.assign(walkInPrintBtn.style, {
       fontSize: '11px', padding: '5px 10px',
-      background: '#7c3aed', color: '#ffffff',
+      background: '#4caf50', color: '#ffffff',
       border: 'none', borderRadius: '6px',
       cursor: 'pointer', fontWeight: '600',
       transition: 'background 0.15s ease'
     });
-    walkInPrintBtn.addEventListener('mouseenter', function() { walkInPrintBtn.style.background = '#6d28d9'; });
-    walkInPrintBtn.addEventListener('mouseleave', function() { walkInPrintBtn.style.background = '#7c3aed'; });
+    walkInPrintBtn.addEventListener('mouseenter', function() { walkInPrintBtn.style.background = '#43a047'; });
+    walkInPrintBtn.addEventListener('mouseleave', function() { walkInPrintBtn.style.background = '#4caf50'; });
 
     function triggerWalkIn() {
       var name = guestInput.value.trim();
@@ -300,7 +296,27 @@
     panelBody.append(controls, printerRow, walkInDivider, walkInLabel, walkInRow, csvStatus, updateRow);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
-    document.body.appendChild(widget);
+
+    // ── Mount: try inline next to #lastCheckin, fall back to fixed overlay ──
+    function mountWidget() {
+      var anchor = document.querySelector('#lastCheckin');
+      if (anchor && anchor.parentElement) {
+        var parent = anchor.parentElement;
+        var cs = getComputedStyle(parent);
+        if (cs.display !== 'flex' && cs.display !== 'inline-flex') {
+          parent.style.display = 'flex';
+          parent.style.alignItems = 'flex-start';
+          parent.style.gap = '12px';
+          parent.style.flexWrap = 'wrap';
+        }
+        parent.insertBefore(widget, anchor);
+      } else {
+        // Fallback: float in top-right corner
+        Object.assign(widget.style, { position: 'fixed', top: '10px', right: '10px', zIndex: '99999' });
+        document.body.appendChild(widget);
+      }
+    }
+    mountWidget();
 
     // ── Toggle logic ──
     function applyMinimized(min) {
