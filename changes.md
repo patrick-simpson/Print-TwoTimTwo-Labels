@@ -1,3 +1,7 @@
+## [1.10.5] - 2026-04-04
+- **Label Border Removed:** Removed the black rounded-rect outline surrounding the label.
+- **Larger Club Logo:** Increased club logo max size from 56pt to 76pt (aspect ratio preserved via letterboxing).
+
 ## [1.10.4] - 2026-04-04
 - **Allergy Icons Redesign:** Removed red bottom bar. Allergy icons now appear in the lower-right corner of the label. Icons are larger (16pt vs 13pt).
 - **Removed Shellfish:** Dropped SHELLFISH (🦐) from allergy detection and icon map.

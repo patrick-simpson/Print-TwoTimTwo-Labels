@@ -406,11 +406,8 @@ async function generateLabel(
   const textX   = hasIcon ? TEXT_X : BX + 8;
   const textW   = hasIcon ? TEXT_W : BW - 16;
 
-  // ── Badge border ──────────────────────────────────────────────────────────
+  // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = '#000000';
-  ctx.stroke();
 
   // ── Left icon panel ───────────────────────────────────────────────────────
   if (hasIcon) {
@@ -429,8 +426,8 @@ async function generateLabel(
     ctx.strokeStyle = '#d0d0d0';
     ctx.stroke();
 
-    // Club icon image (56×56 pt, centred in the icon zone)
-    const iconSize = 56;
+    // Club icon image (76×76 pt max, centred in the icon zone)
+    const iconSize = 76;
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
     try {
