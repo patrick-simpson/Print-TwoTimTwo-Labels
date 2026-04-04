@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.6';
+  const EXTENSION_VERSION = '1.10.7';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -309,7 +309,7 @@
           parent.style.gap = '12px';
           parent.style.flexWrap = 'wrap';
         }
-        parent.insertBefore(widget, anchor);
+        anchor.insertAdjacentElement('afterend', widget);
       } else {
         // Fallback: float in top-right corner
         Object.assign(widget.style, { position: 'fixed', top: '10px', right: '10px', zIndex: '99999' });
