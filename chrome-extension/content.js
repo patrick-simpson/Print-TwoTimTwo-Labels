@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.7';
+  const EXTENSION_VERSION = '1.10.8';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -297,26 +297,9 @@
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
-    // ── Mount: try inline next to #lastCheckin, fall back to fixed overlay ──
-    function mountWidget() {
-      var anchor = document.querySelector('#lastCheckin');
-      if (anchor && anchor.parentElement) {
-        var parent = anchor.parentElement;
-        var cs = getComputedStyle(parent);
-        if (cs.display !== 'flex' && cs.display !== 'inline-flex') {
-          parent.style.display = 'flex';
-          parent.style.alignItems = 'flex-start';
-          parent.style.gap = '12px';
-          parent.style.flexWrap = 'wrap';
-        }
-        anchor.insertAdjacentElement('afterend', widget);
-      } else {
-        // Fallback: float in top-right corner
-        Object.assign(widget.style, { position: 'fixed', top: '10px', right: '10px', zIndex: '99999' });
-        document.body.appendChild(widget);
-      }
-    }
-    mountWidget();
+    // ── Mount: fixed overlay on the right, below the site nav bars ──
+    Object.assign(widget.style, { position: 'fixed', top: '55px', right: '12px', zIndex: '99999' });
+    document.body.appendChild(widget);
 
     // ── Toggle logic ──
     function applyMinimized(min) {

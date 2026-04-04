@@ -1,3 +1,6 @@
+## [1.10.8] - 2026-04-04
+- **Widget Position Fix:** Reverted inline DOM injection (placed widget in wrong sidebar). Widget now uses `position: fixed` at `top: 55px, right: 12px` — floating over the right column below the site nav bars.
+
 ## [1.10.7] - 2026-04-04
 - **Widget Position Fix:** Widget now inserts to the RIGHT of `#lastCheckin` (was incorrectly inserting to the left).
 
