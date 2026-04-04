@@ -727,7 +727,8 @@ app.post('/print', async (req, res) => {
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    handbookGroup = record.HandbookGroup || '';
+    const _rawGroup = record.HandbookGroup || '';
+    handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
     console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}`);
   } else {

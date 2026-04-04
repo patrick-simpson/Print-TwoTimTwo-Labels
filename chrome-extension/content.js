@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.2';
+  const EXTENSION_VERSION = '1.10.3';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -27,7 +27,12 @@
       }
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 64;
-      canvas.getContext('2d').drawImage(img, 0, 0, 64, 64);
+      const _ctx = canvas.getContext('2d');
+      const _aspect = img.naturalWidth / img.naturalHeight;
+      let _dw, _dh, _ox = 0, _oy = 0;
+      if (_aspect > 1) { _dw = 64; _dh = 64 / _aspect; _oy = (64 - _dh) / 2; }
+      else             { _dh = 64; _dw = 64 * _aspect;  _ox = (64 - _dw) / 2; }
+      _ctx.drawImage(img, _ox, _oy, _dw, _dh);
       return canvas.toDataURL('image/png');
     } catch (e) {
       return img.src || null;
@@ -246,7 +251,53 @@
       border: '1px solid #fde68a'
     });
 
-    panelBody.append(controls, printerRow, csvStatus, updateRow);
+    // Walk-in guest section
+    var walkInDivider = document.createElement('div');
+    Object.assign(walkInDivider.style, { height: '1px', background: '#e2e8f0', margin: '2px 0' });
+
+    var walkInLabel = document.createElement('div');
+    Object.assign(walkInLabel.style, {
+      fontSize: '10px', color: '#94a3b8', fontWeight: '600',
+      textTransform: 'uppercase', letterSpacing: '0.05em'
+    });
+    walkInLabel.textContent = 'Walk-in Guest';
+
+    var walkInRow = document.createElement('div');
+    Object.assign(walkInRow.style, { display: 'flex', gap: '4px' });
+
+    var guestInput = document.createElement('input');
+    guestInput.type = 'text';
+    guestInput.placeholder = 'First Last';
+    Object.assign(guestInput.style, {
+      flex: '1', padding: '5px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', fontSize: '12px',
+      background: '#f8fafc', color: '#1e293b', outline: 'none'
+    });
+
+    var walkInPrintBtn = document.createElement('button');
+    walkInPrintBtn.textContent = 'Print';
+    Object.assign(walkInPrintBtn.style, {
+      fontSize: '11px', padding: '5px 10px',
+      background: '#7c3aed', color: '#ffffff',
+      border: 'none', borderRadius: '6px',
+      cursor: 'pointer', fontWeight: '600',
+      transition: 'background 0.15s ease'
+    });
+    walkInPrintBtn.addEventListener('mouseenter', function() { walkInPrintBtn.style.background = '#6d28d9'; });
+    walkInPrintBtn.addEventListener('mouseleave', function() { walkInPrintBtn.style.background = '#7c3aed'; });
+
+    function triggerWalkIn() {
+      var name = guestInput.value.trim();
+      if (!name) return;
+      doPrint(name, '', null);
+      guestInput.value = '';
+    }
+    guestInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') triggerWalkIn(); });
+    walkInPrintBtn.addEventListener('click', triggerWalkIn);
+
+    walkInRow.append(guestInput, walkInPrintBtn);
+
+    panelBody.append(controls, printerRow, walkInDivider, walkInLabel, walkInRow, csvStatus, updateRow);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
     document.body.appendChild(widget);

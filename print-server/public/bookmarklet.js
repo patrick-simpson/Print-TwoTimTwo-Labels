@@ -23,7 +23,12 @@
       }
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 64;
-      canvas.getContext('2d').drawImage(img, 0, 0, 64, 64);
+      const _ctx = canvas.getContext('2d');
+      const _aspect = img.naturalWidth / img.naturalHeight;
+      let _dw, _dh, _ox = 0, _oy = 0;
+      if (_aspect > 1) { _dw = 64; _dh = 64 / _aspect; _oy = (64 - _dh) / 2; }
+      else             { _dh = 64; _dw = 64 * _aspect;  _ox = (64 - _dw) / 2; }
+      _ctx.drawImage(img, _ox, _oy, _dw, _dh);
       return canvas.toDataURL('image/png');
     } catch (e) {
       return img.src || null;

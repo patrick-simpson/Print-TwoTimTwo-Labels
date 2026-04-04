@@ -1,3 +1,8 @@
+## [1.10.3] - 2026-04-04
+- **Aspect Ratio Fix:** Club logo images were squished to 64×64 square before being sent to the print server. Fixed `getClubImageDataUrl()` in both content.js and bookmarklet.js to letterbox images preserving natural aspect ratio.
+- **HandbookGroup Filter:** Children in handbook group "All" (case-insensitive) now print no group text — the field is treated as blank.
+- **Walk-in Guest Print:** Added free-text input to extension widget. Type any name and press Print/Enter to print a basic label for walk-in guests not in the TwoTimTwo roster.
+
 ## [1.10.2] - 2026-03-30
 - **Orientation Fix:** Replaced landscape flag with explicit `PaperSize("Label", 400, 200)` (4"×2" in hundredths of inches). D450 label stock was being rotated 90° extra, producing portrait output.
 - **Emoji Allergy Icons:** Replaced text strip ("NUTS • DAIRY") with emojis (🥜🥛🌾🥚🦐⚠) using Segoe UI Emoji font, increased from 14pt to 20pt.
