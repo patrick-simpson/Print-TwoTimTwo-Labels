@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.8';
+  const EXTENSION_VERSION = '1.10.9';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -40,7 +40,9 @@
   }
 
   function injectWidget() {
-    var isMinimized = localStorage.getItem(MINIMIZE_KEY) === 'true';
+    // Default to minimized so the widget never obstructs the page on first load.
+    // Only stay expanded if the user explicitly expanded it (stored 'false').
+    var isMinimized = localStorage.getItem(MINIMIZE_KEY) !== 'false';
 
     // ── Outer container ──
     const widget = document.createElement('div');
