@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.0.0';
+  const EXTENSION_VERSION = '2.0.1';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -94,7 +94,38 @@
   }
 
   // ── Sibling detection ─────────────────────────────────────────────────────
-  function findSiblings(fullName) {
+  // Tries the print server's CSV-based family index first (handles blended
+  // families / different last names).  Falls back to DOM last-name matching
+  // if the server is unreachable or returns no results.
+  async function findSiblings(fullName) {
+    // 1. Try server CSV family-index lookup
+    try {
+      var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName),
+        { signal: AbortSignal.timeout(2000) });
+      if (resp.ok) {
+        var data = await resp.json();
+        if (data.siblings && data.siblings.length > 0) {
+          var serverSiblings = [];
+          var clubberEls = document.querySelectorAll('.clubber');
+          data.siblings.forEach(function(sibName) {
+            for (var i = 0; i < clubberEls.length; i++) {
+              var nameEl = clubberEls[i].querySelector('.name');
+              if (!nameEl) continue;
+              var domName = nameEl.innerText.trim();
+              if (domName.toLowerCase() === sibName.toLowerCase()) {
+                var imgEl = clubberEls[i].querySelector('.club img');
+                var clubName = imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
+                serverSiblings.push({ name: domName, clubName: clubName, element: clubberEls[i] });
+                break;
+              }
+            }
+          });
+          if (serverSiblings.length > 0) return serverSiblings;
+        }
+      }
+    } catch (_e) { /* server unavailable or timed out — fall through */ }
+
+    // 2. Fallback: match by shared last name in the DOM
     var parts = fullName.trim().split(/\s+/);
     if (parts.length < 2) return [];
     var lastName = parts.slice(1).join(' ').toLowerCase();
@@ -178,6 +209,34 @@
       checkboxes.push({ checkbox: cb, sibling: sib });
     });
 
+    // ── Check-in Options ──────────────────────────────────────────────────────
+    var optDivider = document.createElement('div');
+    Object.assign(optDivider.style, {
+      fontSize: '11px', fontWeight: '600', color: '#64748b',
+      textTransform: 'uppercase', letterSpacing: '0.5px',
+      borderTop: '1px solid #e2e8f0', marginTop: '4px', paddingTop: '8px'
+    });
+    optDivider.textContent = 'Check-in Options';
+    body.appendChild(optDivider);
+
+    var optionCheckboxes = {};
+    ['Bible', 'Book', 'Uniform'].forEach(function(label) {
+      var optRow = document.createElement('label');
+      Object.assign(optRow.style, {
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px',
+        background: '#f0fdf4', borderRadius: '6px', cursor: 'pointer'
+      });
+      var optCb = document.createElement('input');
+      optCb.type = 'checkbox';
+      optCb.checked = false;
+      var optSpan = document.createElement('span');
+      optSpan.style.fontWeight = '500';
+      optSpan.textContent = label;
+      optRow.append(optCb, optSpan);
+      body.appendChild(optRow);
+      optionCheckboxes[label] = optCb;
+    });
+
     var btnRow = document.createElement('div');
     Object.assign(btnRow.style, { display: 'flex', gap: '8px', marginTop: '6px' });
 
@@ -192,9 +251,11 @@
       var selected = checkboxes
         .filter(function(c) { return c.checkbox.checked; })
         .map(function(c) { return c.sibling; });
+      var options = {};
+      Object.keys(optionCheckboxes).forEach(function(k) { options[k] = optionCheckboxes[k].checked; });
       overlay.remove();
       if (selected.length > 0) {
-        batchCheckInSiblings(selected);
+        batchCheckInSiblings(selected, options);
       }
     });
 
@@ -213,7 +274,73 @@
     document.body.appendChild(overlay);
   }
 
-  function batchCheckInSiblings(siblings) {
+  function applyCheckinOptions(modalContainer, options) {
+    if (!options || !modalContainer) return;
+    // Map panel option keys to regex patterns that match modal checkbox labels
+    var optionPatterns = {
+      'Bible':   /bible/i,
+      'Book':    /book|handbook/i,
+      'Uniform': /uniform/i
+    };
+    var allCheckboxes = modalContainer.querySelectorAll('input[type="checkbox"]');
+    allCheckboxes.forEach(function(cb) {
+      // Resolve label text: prefer wrapping <label>, then label[for=id], then adjacent text
+      var labelText = '';
+      var lbl = cb.closest('label');
+      if (!lbl && cb.id) lbl = document.querySelector('label[for="' + cb.id + '"]');
+      if (lbl) {
+        labelText = lbl.textContent || '';
+      } else if (cb.nextSibling) {
+        labelText = (cb.nextSibling.textContent || cb.nextSibling.nodeValue || '');
+      }
+      Object.keys(options).forEach(function(key) {
+        if (!options[key]) return;
+        var pattern = optionPatterns[key];
+        if (pattern && pattern.test(labelText) && !cb.checked) {
+          cb.checked = true;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+          cb.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        }
+      });
+    });
+  }
+
+  function pollForCheckinButton(sib, remaining, options, attempts) {
+    if (attempts <= 0) {
+      console.log('[Awana] Timed out waiting for check-in button for ' + sib.name + ', printing directly');
+      var club = lookupClub(sib.name);
+      doPrint(sib.name, club.clubName, club.clubImageData);
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+      }
+      return;
+    }
+    var checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"], .modal .btn-primary, .modal button:first-of-type');
+    if (!checkinBtn) {
+      var buttons = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button');
+      for (var i = 0; i < buttons.length; i++) {
+        var txt = buttons[i].textContent.toLowerCase().trim();
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
+          checkinBtn = buttons[i];
+          break;
+        }
+      }
+    }
+    if (checkinBtn && checkinBtn.offsetParent !== null) {
+      console.log('[Awana] Found check-in button, applying options and clicking for ' + sib.name);
+      var modalContainer = checkinBtn.closest('.modal, .dialog, [class*="modal"]') || checkinBtn.parentElement;
+      applyCheckinOptions(modalContainer, options);
+      checkinBtn.click();
+      checkinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+      }
+    } else {
+      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
+    }
+  }
+
+  function batchCheckInSiblings(siblings, options) {
     if (siblings.length === 0) return;
 
     var sib = siblings[0];
@@ -222,43 +349,11 @@
     console.log('[Awana] Batch check-in: clicking ' + sib.name);
     setStatus('\u23F3');
 
-    // Click the sibling's clubber element to trigger check-in
+    // Click the sibling's clubber element to open the check-in modal
     sib.element.click();
 
-    // Wait for the check-in modal to appear, then confirm it
-    setTimeout(function() {
-      // Look for the check-in confirmation button
-      // TwoTimTwo uses a modal with a checkin button
-      var checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"], .modal .btn-primary, .modal button:first-of-type');
-      if (!checkinBtn) {
-        // Try broader selectors
-        var buttons = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button');
-        for (var i = 0; i < buttons.length; i++) {
-          var txt = buttons[i].textContent.toLowerCase().trim();
-          if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
-            checkinBtn = buttons[i];
-            break;
-          }
-        }
-      }
-
-      if (checkinBtn) {
-        console.log('[Awana] Found check-in button, clicking for ' + sib.name);
-        checkinBtn.click();
-      } else {
-        console.log('[Awana] Could not find check-in button for ' + sib.name + ', printing directly');
-        // Fall back to direct print
-        var club = lookupClub(sib.name);
-        doPrint(sib.name, club.clubName, club.clubImageData);
-      }
-
-      // Continue with next sibling after cooldown
-      if (remaining.length > 0) {
-        setTimeout(function() {
-          batchCheckInSiblings(remaining);
-        }, PRINT_COOLDOWN + 500);
-      }
-    }, 600);
+    // Poll for the modal's check-in button (up to 3s) instead of a fixed delay
+    pollForCheckinButton(sib, remaining, options || {}, 30);
   }
 
   function getClubImageDataUrl(img) {
@@ -772,10 +867,11 @@
 
     // Check for siblings after printing the current child
     setTimeout(function() {
-      var siblings = findSiblings(name);
-      if (siblings.length > 0) {
-        showSiblingPanel(siblings, name);
-      }
+      findSiblings(name).then(function(siblings) {
+        if (siblings.length > 0) {
+          showSiblingPanel(siblings, name);
+        }
+      });
     }, 500);
   }
 

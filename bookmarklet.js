@@ -49,8 +49,34 @@
     }).catch(function() { var q2 = getQueue(); q2.unshift(item); saveQueue(q2); });
   }
 
-  // Sibling detection
-  function findSiblings(fullName) {
+  // Sibling detection — tries server CSV family index first, falls back to DOM last-name match
+  async function findSiblings(fullName) {
+    try {
+      var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName),
+        { signal: AbortSignal.timeout(2000) });
+      if (resp.ok) {
+        var data = await resp.json();
+        if (data.siblings && data.siblings.length > 0) {
+          var serverSiblings = [];
+          var clubberEls = document.querySelectorAll('.clubber');
+          data.siblings.forEach(function(sibName) {
+            for (var i = 0; i < clubberEls.length; i++) {
+              var nameEl = clubberEls[i].querySelector('.name'); if (!nameEl) continue;
+              var domName = nameEl.innerText.trim();
+              if (domName.toLowerCase() === sibName.toLowerCase()) {
+                var imgEl = clubberEls[i].querySelector('.club img');
+                var cn = imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
+                serverSiblings.push({ name: domName, clubName: cn, element: clubberEls[i] });
+                break;
+              }
+            }
+          });
+          if (serverSiblings.length > 0) return serverSiblings;
+        }
+      }
+    } catch (_e) { /* fall through to DOM fallback */ }
+
+    // Fallback: match by shared last name in the DOM
     var parts = fullName.trim().split(/\s+/); if (parts.length < 2) return [];
     var lastName = parts.slice(1).join(' ').toLowerCase(); var siblings = [];
     var clubbers = document.querySelectorAll('.clubber');
@@ -95,8 +121,29 @@
         background: '#f8fafc', borderRadius: '6px', cursor: 'pointer' });
       var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
       var ns = document.createElement('span'); ns.style.fontWeight = '600'; ns.textContent = sib.name;
-      row.append(cb, ns); body.appendChild(row); checkboxes.push({ checkbox: cb, sibling: sib });
+      var cs = document.createElement('span');
+      Object.assign(cs.style, { fontSize: '11px', color: '#64748b', marginLeft: 'auto' });
+      cs.textContent = sib.clubName || '';
+      row.append(cb, ns, cs); body.appendChild(row); checkboxes.push({ checkbox: cb, sibling: sib });
     });
+
+    // Check-in Options section
+    var optDivider = document.createElement('div');
+    Object.assign(optDivider.style, { fontSize: '11px', fontWeight: '600', color: '#64748b',
+      textTransform: 'uppercase', letterSpacing: '0.5px',
+      borderTop: '1px solid #e2e8f0', marginTop: '4px', paddingTop: '8px' });
+    optDivider.textContent = 'Check-in Options';
+    body.appendChild(optDivider);
+    var optionCheckboxes = {};
+    ['Bible', 'Book', 'Uniform'].forEach(function(label) {
+      var optRow = document.createElement('label');
+      Object.assign(optRow.style, { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px',
+        background: '#f0fdf4', borderRadius: '6px', cursor: 'pointer' });
+      var optCb = document.createElement('input'); optCb.type = 'checkbox'; optCb.checked = false;
+      var optSpan = document.createElement('span'); optSpan.style.fontWeight = '500'; optSpan.textContent = label;
+      optRow.append(optCb, optSpan); body.appendChild(optRow); optionCheckboxes[label] = optCb;
+    });
+
     var btnRow = document.createElement('div');
     Object.assign(btnRow.style, { display: 'flex', gap: '8px', marginTop: '6px' });
     var goBtn = document.createElement('button'); goBtn.textContent = 'Check In Selected';
@@ -104,7 +151,8 @@
       border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px' });
     goBtn.addEventListener('click', function() {
       var sel = checkboxes.filter(function(c) { return c.checkbox.checked; }).map(function(c) { return c.sibling; });
-      overlay.remove(); if (sel.length) batchCheckInSiblings(sel);
+      var opts = {}; Object.keys(optionCheckboxes).forEach(function(k) { opts[k] = optionCheckboxes[k].checked; });
+      overlay.remove(); if (sel.length) batchCheckInSiblings(sel, opts);
     });
     var skipBtn = document.createElement('button'); skipBtn.textContent = 'Skip';
     Object.assign(skipBtn.style, { padding: '8px 14px', background: '#f1f5f9', color: '#475569',
@@ -114,21 +162,58 @@
     overlay.append(header, body); document.body.appendChild(overlay);
   }
 
-  function batchCheckInSiblings(siblings) {
-    if (!siblings.length) return; var sib = siblings[0]; var remaining = siblings.slice(1);
-    console.log('[Awana] Batch: clicking ' + sib.name); setStatus('\u23F3');
-    sib.element.click();
-    setTimeout(function() {
-      var checkinBtn = null;
+  function applyCheckinOptions(modalContainer, options) {
+    if (!options || !modalContainer) return;
+    var optionPatterns = { 'Bible': /bible/i, 'Book': /book|handbook/i, 'Uniform': /uniform/i };
+    var allCheckboxes = modalContainer.querySelectorAll('input[type="checkbox"]');
+    allCheckboxes.forEach(function(cb) {
+      var labelText = '';
+      var lbl = cb.closest('label');
+      if (!lbl && cb.id) lbl = document.querySelector('label[for="' + cb.id + '"]');
+      if (lbl) { labelText = lbl.textContent || ''; }
+      else if (cb.nextSibling) { labelText = cb.nextSibling.textContent || cb.nextSibling.nodeValue || ''; }
+      Object.keys(options).forEach(function(key) {
+        if (!options[key]) return;
+        var pattern = optionPatterns[key];
+        if (pattern && pattern.test(labelText) && !cb.checked) {
+          cb.checked = true;
+          cb.dispatchEvent(new Event('change', { bubbles: true }));
+          cb.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        }
+      });
+    });
+  }
+
+  function pollForCheckinButton(sib, remaining, options, attempts) {
+    if (attempts <= 0) {
+      var club = lookupClub(sib.name); doPrint(sib.name, club.clubName, club.clubImageData);
+      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+      return;
+    }
+    var checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"], .modal .btn-primary, .modal button:first-of-type');
+    if (!checkinBtn) {
       var buttons = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button');
       for (var i = 0; i < buttons.length; i++) {
         var txt = buttons[i].textContent.toLowerCase().trim();
-        if (txt === 'checkin' || txt === 'check in') { checkinBtn = buttons[i]; break; }
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = buttons[i]; break; }
       }
-      if (checkinBtn) { checkinBtn.click(); }
-      else { var club = lookupClub(sib.name); doPrint(sib.name, club.clubName, club.clubImageData); }
-      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining); }, PRINT_COOLDOWN + 500);
-    }, 600);
+    }
+    if (checkinBtn && checkinBtn.offsetParent !== null) {
+      var modalContainer = checkinBtn.closest('.modal, .dialog, [class*="modal"]') || checkinBtn.parentElement;
+      applyCheckinOptions(modalContainer, options);
+      checkinBtn.click();
+      checkinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+    } else {
+      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
+    }
+  }
+
+  function batchCheckInSiblings(siblings, options) {
+    if (!siblings.length) return; var sib = siblings[0]; var remaining = siblings.slice(1);
+    console.log('[Awana] Batch: clicking ' + sib.name); setStatus('\u23F3');
+    sib.element.click();
+    pollForCheckinButton(sib, remaining, options || {}, 30);
   }
 
   function getClubImageDataUrl(img) {
@@ -323,8 +408,9 @@
     doPrint(name, club.clubName, club.clubImageData);
 
     setTimeout(function() {
-      var siblings = findSiblings(name);
-      if (siblings.length > 0) showSiblingPanel(siblings, name);
+      findSiblings(name).then(function(siblings) {
+        if (siblings.length > 0) showSiblingPanel(siblings, name);
+      });
     }, 500);
   }
 
