@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Awana Print Server</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; }
+  .header { background: #4caf50; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 20px; font-weight: 700; }
+  .header .ver { font-size: 12px; opacity: 0.8; }
+  .container { max-width: 960px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+  .card-header { padding: 12px 16px; font-weight: 700; font-size: 14px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; display: flex; align-items: center; justify-content: space-between; }
+  .card-body { padding: 16px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > .card { flex: 1; min-width: 280px; }
+  .stat { text-align: center; }
+  .stat .value { font-size: 28px; font-weight: 800; color: #4caf50; }
+  .stat .label { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .status-dot.ok { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+  .status-dot.warn { background: #f59e0b; }
+  .status-dot.err { background: #ef4444; }
+  .warnings { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .warning-item { font-size: 12px; padding: 6px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; color: #92400e; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; font-size: 11px; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+  td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+  tr:hover td { background: #f8fafc; }
+  .btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: background 0.15s; }
+  .btn-primary { background: #4caf50; color: #fff; }
+  .btn-primary:hover { background: #43a047; }
+  .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .btn-secondary:hover { background: #e2e8f0; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  .preview-section { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .preview-form { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
+  .preview-form input { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; }
+  .preview-img { border: 1px solid #e2e8f0; border-radius: 6px; max-width: 400px; background: #f8fafc; }
+  .settings-form { display: flex; flex-direction: column; gap: 10px; }
+  .settings-form label { font-size: 12px; font-weight: 600; color: #64748b; }
+  .settings-form select, .settings-form input[type="text"] { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; width: 100%; }
+  .diag-list { display: flex; flex-direction: column; gap: 6px; }
+  .diag-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+  .diag-icon { font-size: 16px; width: 24px; text-align: center; }
+  .diag-detail { font-size: 11px; color: #94a3b8; margin-left: auto; }
+  .tabs { display: flex; gap: 2px; }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; border: 1px solid #e2e8f0; border-bottom: none; border-radius: 8px 8px 0 0; background: #f8fafc; color: #64748b; }
+  .tab.active { background: #fff; color: #1e293b; border-bottom: 1px solid #fff; margin-bottom: -1px; z-index: 1; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .update-banner { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 8px 16px; font-size: 13px; font-weight: 600; text-align: center; }
+  .empty { text-align: center; padding: 24px; color: #94a3b8; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Awana Print Server</h1>
+    <span class="ver" id="version-text">Loading...</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span id="status-badge"></span>
+  </div>
+</div>
+
+<div id="update-banner" class="update-banner" style="display:none"></div>
+
+<div class="container">
+  <!-- Status cards row -->
+  <div class="row">
+    <div class="card">
+      <div class="card-body stat">
+        <div class="value" id="print-count">--</div>
+        <div class="label">Prints Today</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body stat">
+        <div class="value" id="roster-count">--</div>
+        <div class="label">Clubbers in Roster</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body stat">
+        <div class="value" id="printer-name">--</div>
+        <div class="label">Active Printer</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body stat">
+        <div class="value" id="uptime-value">--</div>
+        <div class="label">Uptime</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Warnings -->
+  <div id="warnings-card" class="card" style="display:none">
+    <div class="card-header" style="background:#fffbeb;color:#92400e">Warnings</div>
+    <div class="card-body">
+      <div id="warnings-list" class="warnings"></div>
+    </div>
+  </div>
+
+  <!-- Tabbed section -->
+  <div>
+    <div class="tabs">
+      <div class="tab active" data-tab="history">Print History</div>
+      <div class="tab" data-tab="preview">Label Preview</div>
+      <div class="tab" data-tab="settings">Settings</div>
+      <div class="tab" data-tab="diagnostics">Diagnostics</div>
+    </div>
+    <div class="card" style="border-top-left-radius:0">
+      <!-- History tab -->
+      <div id="tab-history" class="tab-content active">
+        <div class="card-header">
+          <span>Recent Prints</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadHistory()">Refresh</button>
+        </div>
+        <div class="card-body" style="padding:0">
+          <table>
+            <thead><tr><th>Name</th><th>Club</th><th>Printer</th><th>Time</th><th></th></tr></thead>
+            <tbody id="history-body"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Preview tab -->
+      <div id="tab-preview" class="tab-content">
+        <div class="card-header">Label Preview</div>
+        <div class="card-body">
+          <div class="preview-section">
+            <div class="preview-form">
+              <input type="text" id="preview-first" placeholder="First name" value="Test">
+              <input type="text" id="preview-last" placeholder="Last name" value="Child">
+              <input type="text" id="preview-club" placeholder="Club name (optional)">
+              <button class="btn btn-primary" onclick="loadPreview()">Generate Preview</button>
+            </div>
+            <img id="preview-image" class="preview-img" alt="Label preview will appear here" style="display:none">
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings tab -->
+      <div id="tab-settings" class="tab-content">
+        <div class="card-header">Server Configuration</div>
+        <div class="card-body">
+          <div class="settings-form">
+            <div>
+              <label>Printer</label>
+              <select id="settings-printer"><option value="">Loading...</option></select>
+            </div>
+            <div>
+              <label>Check-in URL</label>
+              <input type="text" id="settings-url" placeholder="https://yourchurch.twotimtwo.com/clubber/checkin">
+            </div>
+            <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+            <div id="settings-status" style="font-size:12px;color:#22c55e;display:none">Settings saved</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Diagnostics tab -->
+      <div id="tab-diagnostics" class="tab-content">
+        <div class="card-header">
+          <span>System Diagnostics</span>
+          <button class="btn btn-primary btn-sm" onclick="runDiagnostics()">Run Diagnostics</button>
+        </div>
+        <div class="card-body">
+          <div id="diag-list" class="diag-list">
+            <div class="empty">Click "Run Diagnostics" to check system health</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '';
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+function formatTime(iso) {
+  if (!iso) return '--';
+  var d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatUptime(seconds) {
+  if (seconds < 60) return seconds + 's';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+  var h = Math.floor(seconds / 3600);
+  var m = Math.floor((seconds % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+
+// Load health status
+function loadHealth() {
+  fetch(BASE + '/health').then(function(r) { return r.json(); }).then(function(data) {
+    document.getElementById('version-text').textContent = 'v' + data.version + ' | ' + data.printer;
+    document.getElementById('printer-name').textContent = data.printer || '(default)';
+    document.getElementById('printer-name').style.fontSize = '16px';
+    document.getElementById('uptime-value').textContent = formatUptime(data.uptime || 0);
+    document.getElementById('status-badge').innerHTML = '<span class="status-dot ok"></span> Online';
+    document.getElementById('status-badge').style.cssText = 'font-size:13px;color:#fff;display:flex;align-items:center';
+
+    // Update notice
+    if (data.latestVersion && data.latestVersion !== data.version) {
+      var banner = document.getElementById('update-banner');
+      banner.style.display = 'block';
+      banner.textContent = 'Update available: v' + data.latestVersion + ' (current: v' + data.version + ')';
+    }
+
+    // Warnings
+    var warnCard = document.getElementById('warnings-card');
+    var warnList = document.getElementById('warnings-list');
+    if (data.warnings && data.warnings.length > 0) {
+      warnCard.style.display = 'block';
+      warnList.innerHTML = data.warnings.map(function(w) {
+        return '<div class="warning-item">' + w.message + '</div>';
+      }).join('');
+    } else {
+      warnCard.style.display = 'none';
+    }
+  }).catch(function() {
+    document.getElementById('status-badge').innerHTML = '<span class="status-dot err"></span> Offline';
+  });
+}
+
+// Load roster count
+function loadRoster() {
+  fetch(BASE + '/roster-status').then(function(r) { return r.json(); }).then(function(data) {
+    document.getElementById('roster-count').textContent = data.count || 0;
+  });
+}
+
+// Load print history
+function loadHistory() {
+  fetch(BASE + '/history/today').then(function(r) { return r.json(); }).then(function(entries) {
+    document.getElementById('print-count').textContent = entries.length;
+    var tbody = document.getElementById('history-body');
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No prints today</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries.slice(0, 30).map(function(e, i) {
+      return '<tr>' +
+        '<td><strong>' + (e.firstName || '') + ' ' + (e.lastName || '') + '</strong></td>' +
+        '<td>' + (e.clubName || '--') + '</td>' +
+        '<td style="font-size:11px;color:#64748b">' + (e.printer || 'default') + '</td>' +
+        '<td style="font-size:11px;color:#64748b">' + formatTime(e.timestamp) + '</td>' +
+        '<td><button class="btn btn-secondary btn-sm" onclick="reprint(' + i + ')">Reprint</button></td>' +
+        '</tr>';
+    }).join('');
+  }).catch(function() {
+    document.getElementById('history-body').innerHTML = '<tr><td colspan="5" class="empty">Failed to load history</td></tr>';
+  });
+}
+
+function reprint(index) {
+  if (!confirm('Reprint this label?')) return;
+  fetch(BASE + '/history/today').then(function(r) { return r.json(); }).then(function(entries) {
+    var entry = entries[index];
+    if (!entry) return alert('Entry not found');
+    return fetch(BASE + '/reprint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: entry.firstName + ' ' + entry.lastName })
+    });
+  }).then(function(r) {
+    if (r && r.ok) { alert('Reprint sent!'); loadHistory(); }
+    else alert('Reprint failed');
+  }).catch(function() { alert('Reprint failed'); });
+}
+
+// Preview
+function loadPreview() {
+  var first = document.getElementById('preview-first').value.trim() || 'Preview';
+  var last = document.getElementById('preview-last').value.trim();
+  var club = document.getElementById('preview-club').value.trim();
+  var url = BASE + '/preview?firstName=' + encodeURIComponent(first) + '&lastName=' + encodeURIComponent(last);
+  if (club) url += '&clubName=' + encodeURIComponent(club);
+  var img = document.getElementById('preview-image');
+  img.src = url;
+  img.style.display = 'block';
+}
+
+// Settings
+function loadSettings() {
+  // Load config
+  fetch(BASE + '/config').then(function(r) { return r.json(); }).then(function(config) {
+    document.getElementById('settings-url').value = config.checkinUrl || '';
+    // Load printers for dropdown
+    return fetch(BASE + '/printers');
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    var select = document.getElementById('settings-printer');
+    select.innerHTML = '';
+    var defOpt = document.createElement('option');
+    defOpt.value = '';
+    defOpt.textContent = data.serverDefault ? 'Current: ' + data.serverDefault : '(system default)';
+    select.appendChild(defOpt);
+    (data.printers || []).forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = p.name + (p.isWindowsDefault ? ' (Windows default)' : '');
+      select.appendChild(opt);
+    });
+  }).catch(function() {
+    document.getElementById('settings-printer').innerHTML = '<option value="">Could not load printers</option>';
+  });
+}
+
+function saveSettings() {
+  var printerName = document.getElementById('settings-printer').value;
+  var checkinUrl = document.getElementById('settings-url').value.trim();
+  fetch(BASE + '/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printerName: printerName, checkinUrl: checkinUrl })
+  }).then(function(r) {
+    if (r.ok) {
+      var el = document.getElementById('settings-status');
+      el.style.display = 'block';
+      setTimeout(function() { el.style.display = 'none'; }, 3000);
+    }
+  });
+}
+
+// Diagnostics
+function runDiagnostics() {
+  var list = document.getElementById('diag-list');
+  list.innerHTML = '<div class="empty">Running diagnostics...</div>';
+  fetch(BASE + '/diagnostics').then(function(r) { return r.json(); }).then(function(results) {
+    list.innerHTML = results.map(function(r) {
+      return '<div class="diag-item">' +
+        '<span class="diag-icon">' + (r.passed ? '\u2705' : '\u274C') + '</span>' +
+        '<span>' + r.test + '</span>' +
+        '<span class="diag-detail">' + (r.detail || '') + '</span>' +
+        '</div>';
+    }).join('');
+  }).catch(function() {
+    list.innerHTML = '<div class="empty">Failed to run diagnostics -- is the server running?</div>';
+  });
+}
+
+// Init
+loadHealth();
+loadRoster();
+loadHistory();
+loadSettings();
+
+// Refresh periodically
+setInterval(loadHealth, 30000);
+setInterval(loadHistory, 15000);
+</script>
+</body>
+</html>

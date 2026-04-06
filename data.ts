@@ -17,4 +17,7 @@ export const mockClubbers: Clubber[] = [
   { id: 408, name: 'Nathan Nelson', club: 'Sparks', gender: 'boy', group: 'Group I', color: 'Blue' },
   { id: 198, name: 'Oliver Owens', club: 'T&T', gender: 'boy', group: 'Group J', color: '(Unassigned)' },
   { id: 507, name: 'Paula Parker', club: 'Cubbies', gender: 'girl', group: 'Group A', color: '(Unassigned)' },
+  { id: 510, name: 'Sophia Simpson', club: 'Sparks', gender: 'girl', group: 'Group B', color: 'Yellow' },
+  { id: 511, name: 'Micah Simpson', club: 'T&T', gender: 'boy', group: 'Group C', color: 'Blue' },
+  { id: 512, name: 'Emma Johnson', club: 'Cubbies', gender: 'girl', group: 'Group A', color: '(Unassigned)' },
 ];

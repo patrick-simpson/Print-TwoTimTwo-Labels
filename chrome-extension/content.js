@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '1.10.9';
+  const EXTENSION_VERSION = '2.0.0';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -11,13 +11,254 @@
   const MINIMIZE_KEY = 'awana_widgetMinimized';
   const PRINTER_KEY  = 'awana_selectedPrinterName';
 
+  const QUEUE_KEY   = 'awana_printQueue';
+  const MUTE_KEY    = 'awana_soundMuted';
+
   let selectedMode        = localStorage.getItem(STORAGE_KEY) || 'auto';
   let selectedPrinterName = localStorage.getItem(PRINTER_KEY) || '';
+  let soundMuted          = localStorage.getItem(MUTE_KEY) === 'true';
   let lastPrintedName = null;
   let lastPrintTime = 0;
 
   function isUndo(text) {
     return text && text.toLowerCase().includes('undo');
+  }
+
+  // ── Audio feedback ──────────────────────────────────────────────────────────
+  var audioCtx = null;
+  function playTone(freq, duration, type) {
+    if (soundMuted) return;
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = freq;
+      gain.gain.value = 0.15;
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + (duration || 0.2));
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + (duration || 0.2));
+    } catch (e) { /* audio not available */ }
+  }
+  function playSuccess() { playTone(880, 0.12); setTimeout(function() { playTone(1108, 0.15); }, 120); }
+  function playError() { playTone(330, 0.3, 'square'); }
+
+  // ── Offline print queue ────────────────────────────────────────────────────
+  function getQueue() {
+    try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); } catch(e) { return []; }
+  }
+  function saveQueue(q) {
+    if (q.length > 50) q.length = 50;
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+    updateQueueBadge();
+  }
+  function queuePrint(payload) {
+    var q = getQueue();
+    q.push(payload);
+    saveQueue(q);
+    console.log('[Awana] Queued print for later (' + q.length + ' in queue)');
+  }
+  function flushQueue() {
+    var q = getQueue();
+    if (q.length === 0) return;
+    console.log('[Awana] Flushing ' + q.length + ' queued print(s)');
+    var item = q.shift();
+    saveQueue(q);
+    fetch(PRINT_SERVER + '/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+      signal: AbortSignal.timeout(5000)
+    }).then(function(r) {
+      if (r.ok) {
+        playSuccess();
+        console.log('[Awana] Flushed queued print: ' + item.name);
+        if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
+      } else {
+        // Put it back
+        var q2 = getQueue(); q2.unshift(item); saveQueue(q2);
+      }
+    }).catch(function() {
+      var q2 = getQueue(); q2.unshift(item); saveQueue(q2);
+    });
+  }
+  function updateQueueBadge() {
+    var badge = document.getElementById('awana-queue-badge');
+    var q = getQueue();
+    if (badge) {
+      badge.textContent = q.length > 0 ? q.length + ' queued' : '';
+      badge.style.display = q.length > 0 ? 'block' : 'none';
+    }
+  }
+
+  // ── Sibling detection ─────────────────────────────────────────────────────
+  function findSiblings(fullName) {
+    var parts = fullName.trim().split(/\s+/);
+    if (parts.length < 2) return [];
+    var lastName = parts.slice(1).join(' ').toLowerCase();
+    var siblings = [];
+    var clubbers = document.querySelectorAll('.clubber');
+    for (var i = 0; i < clubbers.length; i++) {
+      var nameEl = clubbers[i].querySelector('.name');
+      if (!nameEl) continue;
+      var name = nameEl.innerText.trim();
+      if (name === fullName) continue; // skip self
+      var nameParts = name.split(/\s+/);
+      if (nameParts.length < 2) continue;
+      var sibLast = nameParts.slice(1).join(' ').toLowerCase();
+      if (sibLast === lastName) {
+        var imgEl = clubbers[i].querySelector('.club img');
+        var clubName = imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
+        siblings.push({ name: name, clubName: clubName, element: clubbers[i] });
+      }
+    }
+    return siblings;
+  }
+
+  function showSiblingPanel(siblings, checkedInName) {
+    // Remove existing panel
+    var existing = document.getElementById('awana-sibling-panel');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.id = 'awana-sibling-panel';
+    Object.assign(overlay.style, {
+      position: 'fixed', top: '55px', right: '12px', zIndex: '100000',
+      background: '#fff', border: '1px solid #c8e6c9', borderRadius: '10px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: '260px',
+      fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: '13px'
+    });
+
+    var header = document.createElement('div');
+    Object.assign(header.style, {
+      padding: '10px 14px', background: '#4caf50', color: '#fff',
+      borderRadius: '10px 10px 0 0', display: 'flex', alignItems: 'center',
+      justifyContent: 'space-between', fontWeight: '700', fontSize: '13px'
+    });
+    header.textContent = 'Check in siblings?';
+
+    var closeX = document.createElement('button');
+    Object.assign(closeX.style, {
+      background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff',
+      width: '22px', height: '22px', borderRadius: '50%', cursor: 'pointer',
+      fontSize: '14px', lineHeight: '22px', textAlign: 'center', padding: '0'
+    });
+    closeX.innerHTML = '&#x2715;';
+    closeX.addEventListener('click', function() { overlay.remove(); });
+    header.appendChild(closeX);
+
+    var body = document.createElement('div');
+    Object.assign(body.style, { padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' });
+
+    var subtitle = document.createElement('div');
+    Object.assign(subtitle.style, { fontSize: '11px', color: '#64748b', marginBottom: '4px' });
+    subtitle.textContent = 'Siblings of ' + checkedInName + ':';
+    body.appendChild(subtitle);
+
+    var checkboxes = [];
+    siblings.forEach(function(sib) {
+      var row = document.createElement('label');
+      Object.assign(row.style, {
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px',
+        background: '#f8fafc', borderRadius: '6px', cursor: 'pointer'
+      });
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      var nameSpan = document.createElement('span');
+      nameSpan.style.fontWeight = '600';
+      nameSpan.textContent = sib.name;
+      var clubSpan = document.createElement('span');
+      Object.assign(clubSpan.style, { fontSize: '11px', color: '#64748b', marginLeft: 'auto' });
+      clubSpan.textContent = sib.clubName || '';
+      row.append(cb, nameSpan, clubSpan);
+      body.appendChild(row);
+      checkboxes.push({ checkbox: cb, sibling: sib });
+    });
+
+    var btnRow = document.createElement('div');
+    Object.assign(btnRow.style, { display: 'flex', gap: '8px', marginTop: '6px' });
+
+    var checkInBtn = document.createElement('button');
+    checkInBtn.textContent = 'Check In Selected';
+    Object.assign(checkInBtn.style, {
+      flex: '1', padding: '8px', background: '#4caf50', color: '#fff',
+      border: 'none', borderRadius: '6px', cursor: 'pointer',
+      fontWeight: '700', fontSize: '12px'
+    });
+    checkInBtn.addEventListener('click', function() {
+      var selected = checkboxes
+        .filter(function(c) { return c.checkbox.checked; })
+        .map(function(c) { return c.sibling; });
+      overlay.remove();
+      if (selected.length > 0) {
+        batchCheckInSiblings(selected);
+      }
+    });
+
+    var skipBtn = document.createElement('button');
+    skipBtn.textContent = 'Skip';
+    Object.assign(skipBtn.style, {
+      padding: '8px 14px', background: '#f1f5f9', color: '#475569',
+      border: '1px solid #e2e8f0', borderRadius: '6px', cursor: 'pointer',
+      fontWeight: '600', fontSize: '12px'
+    });
+    skipBtn.addEventListener('click', function() { overlay.remove(); });
+
+    btnRow.append(checkInBtn, skipBtn);
+    body.appendChild(btnRow);
+    overlay.append(header, body);
+    document.body.appendChild(overlay);
+  }
+
+  function batchCheckInSiblings(siblings) {
+    if (siblings.length === 0) return;
+
+    var sib = siblings[0];
+    var remaining = siblings.slice(1);
+
+    console.log('[Awana] Batch check-in: clicking ' + sib.name);
+    setStatus('\u23F3');
+
+    // Click the sibling's clubber element to trigger check-in
+    sib.element.click();
+
+    // Wait for the check-in modal to appear, then confirm it
+    setTimeout(function() {
+      // Look for the check-in confirmation button
+      // TwoTimTwo uses a modal with a checkin button
+      var checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"], .modal .btn-primary, .modal button:first-of-type');
+      if (!checkinBtn) {
+        // Try broader selectors
+        var buttons = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button');
+        for (var i = 0; i < buttons.length; i++) {
+          var txt = buttons[i].textContent.toLowerCase().trim();
+          if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
+            checkinBtn = buttons[i];
+            break;
+          }
+        }
+      }
+
+      if (checkinBtn) {
+        console.log('[Awana] Found check-in button, clicking for ' + sib.name);
+        checkinBtn.click();
+      } else {
+        console.log('[Awana] Could not find check-in button for ' + sib.name + ', printing directly');
+        // Fall back to direct print
+        var club = lookupClub(sib.name);
+        doPrint(sib.name, club.clubName, club.clubImageData);
+      }
+
+      // Continue with next sibling after cooldown
+      if (remaining.length > 0) {
+        setTimeout(function() {
+          batchCheckInSiblings(remaining);
+        }, PRINT_COOLDOWN + 500);
+      }
+    }, 600);
   }
 
   function getClubImageDataUrl(img) {
@@ -284,10 +525,59 @@
     walkInPrintBtn.addEventListener('mouseenter', function() { walkInPrintBtn.style.background = '#43a047'; });
     walkInPrintBtn.addEventListener('mouseleave', function() { walkInPrintBtn.style.background = '#4caf50'; });
 
+    // Club selector for walk-ins
+    var walkInClubRow = document.createElement('div');
+    Object.assign(walkInClubRow.style, { display: 'flex', gap: '4px', alignItems: 'center' });
+
+    var clubSelect = document.createElement('select');
+    Object.assign(clubSelect.style, {
+      flex: '1', padding: '5px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', fontSize: '11px',
+      background: '#f8fafc', color: '#475569'
+    });
+    var clubOptions = ['(no club)', 'Puggles', 'Cubbies', 'Sparks', 'T&T', 'Trek'];
+    clubOptions.forEach(function(c) {
+      var opt = document.createElement('option');
+      opt.value = c === '(no club)' ? '' : c;
+      opt.textContent = c;
+      clubSelect.appendChild(opt);
+    });
+
+    var visitorCheck = document.createElement('label');
+    Object.assign(visitorCheck.style, {
+      display: 'flex', alignItems: 'center', gap: '3px',
+      fontSize: '11px', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap'
+    });
+    var visitorCb = document.createElement('input');
+    visitorCb.type = 'checkbox';
+    visitorCheck.append(visitorCb);
+    visitorCheck.append(document.createTextNode('Visitor'));
+
+    walkInClubRow.append(clubSelect, visitorCheck);
+
     function triggerWalkIn() {
       var name = guestInput.value.trim();
       if (!name) return;
-      doPrint(name, '', null);
+      var club = clubSelect.value;
+      var isVisitor = visitorCb.checked;
+      // Send with visitor flag if checked
+      var payload = { name: name, clubName: club, clubImageData: null, printerName: selectedPrinterName || '' };
+      if (isVisitor) payload.visitor = true;
+      setStatus('\u23F3');
+      fetch(PRINT_SERVER + '/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(5000)
+      }).then(function(r) {
+        if (r.ok) { setStatus('\u2705'); playSuccess(); }
+        else { setStatus('\u274C'); playError(); }
+        clearStatus();
+      }).catch(function() {
+        queuePrint(payload);
+        setStatus('\uD83D\uDCE6');
+        clearStatus();
+      });
       guestInput.value = '';
     }
     guestInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') triggerWalkIn(); });
@@ -295,7 +585,34 @@
 
     walkInRow.append(guestInput, walkInPrintBtn);
 
-    panelBody.append(controls, printerRow, walkInDivider, walkInLabel, walkInRow, csvStatus, updateRow);
+    // Queue badge
+    var queueBadge = document.createElement('div');
+    queueBadge.id = 'awana-queue-badge';
+    Object.assign(queueBadge.style, {
+      display: 'none', fontSize: '11px', color: '#f59e0b',
+      fontWeight: '600', padding: '2px 0'
+    });
+
+    // Sound mute toggle
+    var soundRow = document.createElement('div');
+    Object.assign(soundRow.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+    var muteLabel = document.createElement('label');
+    Object.assign(muteLabel.style, {
+      display: 'flex', alignItems: 'center', gap: '3px',
+      fontSize: '11px', color: '#94a3b8', cursor: 'pointer'
+    });
+    var muteCb = document.createElement('input');
+    muteCb.type = 'checkbox';
+    muteCb.checked = soundMuted;
+    muteCb.addEventListener('change', function() {
+      soundMuted = muteCb.checked;
+      localStorage.setItem(MUTE_KEY, soundMuted ? 'true' : 'false');
+    });
+    muteLabel.append(muteCb);
+    muteLabel.append(document.createTextNode('Mute sounds'));
+    soundRow.appendChild(muteLabel);
+
+    panelBody.append(controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, updateRow, soundRow);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
@@ -452,6 +769,14 @@
     lastPrintTime = Date.now();
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
+
+    // Check for siblings after printing the current child
+    setTimeout(function() {
+      var siblings = findSiblings(name);
+      if (siblings.length > 0) {
+        showSiblingPanel(siblings, name);
+      }
+    }, 500);
   }
 
   function doPrint(fullName, clubName, imageData) {
@@ -467,23 +792,30 @@
       return;
     }
 
+    var payload = { name: fullName, clubName: clubName, clubImageData: imageData, printerName: selectedPrinterName || '' };
+
     var printPromise;
     if (selectedMode !== 'dialog') {
       printPromise = fetch(PRINT_SERVER + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData, printerName: selectedPrinterName || '' }),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(5000)
       }).then(function(response) {
         if (response.ok) {
           setStatus('\u2705');
+          playSuccess();
           clearStatus();
+          flushQueue(); // try flushing any queued items
           console.log('[Awana] Silent print sent to server');
           return true;
         }
         return false;
       }).catch(function(err) {
-        console.log('[Awana] Server unavailable:', err.message);
+        console.log('[Awana] Server unavailable, queuing:', err.message);
+        queuePrint(payload);
+        setStatus('\uD83D\uDCE6'); // 📦 queued icon
+        clearStatus();
         return false;
       });
     } else {
@@ -492,7 +824,7 @@
 
     printPromise.then(function(sentToServer) {
       if (sentToServer || selectedMode === 'off') return;
-      fallbackPrint(firstName, lastName, clubName, imageData);
+      if (selectedMode === 'dialog') fallbackPrint(firstName, lastName, clubName, imageData);
     });
   }
 
@@ -627,5 +959,14 @@
   watchCheckins();
   syncCsv();
   checkForExtensionUpdate();
+  updateQueueBadge();
+
+  // Flush any queued prints on startup
+  setTimeout(flushQueue, 3000);
+  // Periodically try to flush queue
+  setInterval(function() {
+    if (getQueue().length > 0) flushQueue();
+  }, 30000);
+
   console.log('[Awana] Extension loaded (v' + EXTENSION_VERSION + ')');
 })();

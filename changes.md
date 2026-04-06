@@ -1,3 +1,27 @@
+## [2.0.0] - 2026-04-06
+Major release adding dashboard, sibling batch check-in, offline queue, and operational tooling.
+
+### Server Features
+- **Dashboard Web UI:** Open `localhost:3456` for real-time server status, print history, label preview, settings, and diagnostics — all in one page.
+- **Label Preview Endpoint:** `GET /preview?name=Alice+Smith` returns a rendered PNG without printing. Used by dashboard and useful for testing.
+- **Print History:** Every print is logged to `print-history.json`. View today's prints on the dashboard with one-click reprint buttons.
+- **Reprint Endpoint:** `POST /reprint` reprints any label from history without re-checking-in the child.
+- **Enhanced Health Checks:** `/health` now returns warnings (printer not found, CSV missing/empty/stale) surfaced on the dashboard and in the extension widget.
+- **Auto-Update Check:** Server checks GitHub for newer versions on startup and every 6 hours. Update notice shown on dashboard and extension.
+- **Config via Web UI:** Change printer and check-in URL from the dashboard Settings tab (saves to config.json).
+- **Self-Diagnostics:** One-click diagnostic tool checks server, printer, CSV, and label rendering with pass/fail indicators.
+- **Visitor Badge:** Walk-in guests flagged as visitors get a "VISITOR" badge in the top-right corner of their label.
+
+### Extension & Bookmarklet Features
+- **Sibling Batch Check-in:** When a child checks in, the extension detects siblings (same last name) and shows a popup with checkboxes to check them all in with one click.
+- **Audio Feedback:** Success chime on print, error tone on failure. Mute toggle in the widget.
+- **Offline Print Queue:** When the server is unreachable, labels queue in localStorage (up to 50) and auto-flush when connectivity restores.
+- **Walk-in Guest Enhancement:** Club selector dropdown and "Visitor" checkbox added to the walk-in guest section. Visitors get a badge on their label.
+
+### Simulator
+- **Sibling Test Data:** Added Simpson and Johnson sibling pairs to mock data for testing the batch check-in feature.
+- **v2.0 Feature Tiles:** PrintServerInfo component updated with new feature descriptions.
+
 ## [1.10.9] - 2026-04-04
 - **Widget Default Minimized:** Widget now starts collapsed as a small green pill instead of an expanded panel. Prevents the widget from obstructing page content on first load. Click the pill to expand; click × to collapse again. State persists across page loads.
 

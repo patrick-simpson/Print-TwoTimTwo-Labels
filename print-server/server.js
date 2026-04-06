@@ -384,7 +384,7 @@ const SCALE = DPI / 72;            // convert pt → px
 
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
-  allergyTokens = [], handbookGroup = '', isBirthday = false
+  allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
@@ -541,6 +541,27 @@ async function generateLabel(
     ctx.fillText('Happy Birthday!', textCenterX, y);
   }
 
+  // ── Visitor badge ─────────────────────────────────────────────────────────
+  if (isVisitor) {
+    const visitorFont = `bold ${fs5}px Helvetica, Arial, sans-serif`;
+    ctx.font = visitorFont;
+    const vText = 'VISITOR';
+    const vWidth = ctx.measureText(vText).width;
+    const vPad = 4;
+    const vX = BX + BW - vPad - vWidth - 8;
+    const vY = BY + vPad;
+    // Rounded pill background
+    ctx.fillStyle = '#000000';
+    roundedRect(ctx, vX - vPad, vY - 1, vWidth + vPad * 2, fs5 + 4, 4);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(vText, vX, vY + 1);
+    // Reset alignment
+    ctx.textAlign = 'center';
+  }
+
   // ── Allergy icons (bottom-right corner) ──────────────────────────────────
   if (hasAllergy) {
     const emojiSize = 16;
@@ -560,7 +581,7 @@ async function generateLabel(
   // Write PNG
   const buffer = canvas.toBuffer('image/png');
   fs.writeFileSync(pngPath, buffer);
-  return pngPath;
+  return { pngPath, buffer };
 }
 
 // ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
@@ -612,9 +633,7 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));  // allow base64 image payloads
 app.use(express.static(path.join(__dirname, 'public')));  // serve static files (bookmarklet.html, etc)
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', printer: PRINTER_NAME || '(default)', version: SERVER_VERSION });
-});
+// Health endpoint defined below with enhanced warnings
 
 app.get('/roster-status', (req, res) => {
   res.json({ count: clubbers.length });
@@ -683,7 +702,8 @@ app.post('/print', async (req, res) => {
     lastName:  reqLast,
     clubName      = '',
     clubImageData = null,
-    printerName   = ''
+    printerName   = '',
+    visitor       = false
   } = req.body || {};
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
@@ -734,12 +754,19 @@ app.post('/print', async (req, res) => {
   let pngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
-    pngPath = await generateLabel(
+    const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday
+      allergyTokens, handbookGroup, birthday, !!visitor
     );
+    pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
+
+    // Log to print history
+    addHistoryEntry({
+      firstName, lastName, clubName, clubImageData,
+      printer: effectivePrinter, success: true
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -752,12 +779,328 @@ app.post('/print', async (req, res) => {
   }
 });
 
+// ── Print history ────────────────────────────────────────────────────────────
+const HISTORY_FILE = path.join(__dirname, 'print-history.json');
+const MAX_HISTORY = 200;
+
+function loadHistory() {
+  try {
+    if (fs.existsSync(HISTORY_FILE)) {
+      return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    }
+  } catch (e) {
+    console.warn('[history] Failed to load print history:', e.message);
+  }
+  return [];
+}
+
+function saveHistory(entries) {
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(entries, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[history] Failed to save print history:', e.message);
+  }
+}
+
+function addHistoryEntry(entry) {
+  const history = loadHistory();
+  history.unshift({
+    firstName: entry.firstName,
+    lastName: entry.lastName,
+    clubName: entry.clubName || '',
+    clubImageData: entry.clubImageData || null,
+    printer: entry.printer || '',
+    success: entry.success,
+    timestamp: new Date().toISOString()
+  });
+  if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+  saveHistory(history);
+}
+
+let printHistory = loadHistory();
+
+app.get('/history', (req, res) => {
+  const history = loadHistory();
+  res.json(history);
+});
+
+app.get('/history/today', (req, res) => {
+  const history = loadHistory();
+  const today = new Date().toISOString().slice(0, 10);
+  const todayEntries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
+  res.json(todayEntries);
+});
+
+// ── Label preview ────────────────────────────────────────────────────────────
+app.get('/preview', async (req, res) => {
+  const { name, firstName: qFirst, lastName: qLast, clubName = '' } = req.query;
+  let firstName, lastName;
+  if (qFirst) {
+    firstName = String(qFirst).trim();
+    lastName = String(qLast || '').trim();
+  } else if (name) {
+    const parts = String(name).trim().split(/\s+/);
+    firstName = parts[0] || 'Preview';
+    lastName = parts.slice(1).join(' ') || '';
+  } else {
+    firstName = 'Preview';
+    lastName = 'Label';
+  }
+
+  // Enrich from CSV if available
+  clubbers = loadClubbers();
+  const record = findClubber(firstName, lastName);
+  let allergyTokens = [], handbookGroup = '', birthday = false;
+  if (record) {
+    const allergySource = record.Allergies || record.Notes || '';
+    allergyTokens = parseAllergies(allergySource);
+    const rawGroup = record.HandbookGroup || '';
+    handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+    birthday = isBirthdayWeek(record.Birthdate);
+  }
+
+  try {
+    const result = await generateLabel(firstName, lastName, clubName, null, allergyTokens, handbookGroup, birthday);
+    res.set('Content-Type', 'image/png');
+    res.send(result.buffer);
+    // Clean up temp file
+    fs.unlink(result.pngPath, () => {});
+  } catch (err) {
+    console.error('[preview] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Reprint ──────────────────────────────────────────────────────────────────
+app.post('/reprint', async (req, res) => {
+  const { name, index } = req.body || {};
+  const history = loadHistory();
+
+  let entry;
+  if (typeof index === 'number' && index >= 0 && index < history.length) {
+    entry = history[index];
+  } else if (name) {
+    const search = String(name).toLowerCase().trim();
+    entry = history.find(e =>
+      `${e.firstName} ${e.lastName}`.toLowerCase().trim() === search
+    );
+  }
+
+  if (!entry) {
+    return res.status(404).json({ error: 'No matching print history entry found' });
+  }
+
+  const effectivePrinter = (req.body.printerName && req.body.printerName.trim()) || entry.printer || PRINTER_NAME;
+
+  let pngPath = null;
+  try {
+    clubbers = loadClubbers();
+    const record = findClubber(entry.firstName, entry.lastName);
+    let allergyTokens = [], handbookGroup = '', birthday = false;
+    if (record) {
+      const allergySource = record.Allergies || record.Notes || '';
+      allergyTokens = parseAllergies(allergySource);
+      const rawGroup = record.HandbookGroup || '';
+      handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+      birthday = isBirthdayWeek(record.Birthdate);
+    }
+
+    const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
+    const result = await generateLabel(
+      entry.firstName, entry.lastName, entry.clubName, clubImageBuffer,
+      allergyTokens, handbookGroup, birthday
+    );
+    pngPath = result.pngPath;
+
+    printImage(pngPath, effectivePrinter);
+
+    addHistoryEntry({
+      firstName: entry.firstName, lastName: entry.lastName,
+      clubName: entry.clubName, clubImageData: entry.clubImageData,
+      printer: effectivePrinter, success: true
+    });
+
+    console.log(`[reprint] ${entry.firstName} ${entry.lastName}`);
+    res.json({ success: true, name: `${entry.firstName} ${entry.lastName}` });
+  } catch (err) {
+    console.error('[reprint] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
+// ── Enhanced health check ────────────────────────────────────────────────────
+let cachedPrinterCheck = { warnings: [], checkedAt: 0 };
+const PRINTER_CHECK_INTERVAL = 60000; // 60 seconds
+
+async function checkPrinterWarnings() {
+  const now = Date.now();
+  if (now - cachedPrinterCheck.checkedAt < PRINTER_CHECK_INTERVAL) {
+    return cachedPrinterCheck.warnings;
+  }
+  const warnings = [];
+  const csvPath = path.join(__dirname, 'clubbers.csv');
+
+  // Check CSV
+  try {
+    if (!fs.existsSync(csvPath)) {
+      warnings.push({ type: 'csvMissing', message: 'clubbers.csv not found' });
+    } else {
+      const stat = fs.statSync(csvPath);
+      const rows = parseCSV(fs.readFileSync(csvPath, 'utf8'));
+      if (rows.length === 0) {
+        warnings.push({ type: 'csvEmpty', message: 'clubbers.csv has no data rows' });
+      }
+      const ageHours = (now - stat.mtimeMs) / 3600000;
+      if (ageHours > 24) {
+        warnings.push({ type: 'csvStale', message: `clubbers.csv is ${Math.round(ageHours)}h old` });
+      }
+    }
+  } catch (e) { /* ignore */ }
+
+  // Check printer (Windows only)
+  if (PRINTER_NAME && process.platform === 'win32') {
+    try {
+      const raw = execSync(
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name | ConvertTo-Json -Compress"',
+        { timeout: 8000, windowsHide: true }
+      ).toString().trim();
+      let parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) parsed = [parsed];
+      const names = parsed.map(p => p.Name);
+      if (!names.includes(PRINTER_NAME)) {
+        warnings.push({ type: 'printerNotFound', message: `Printer "${PRINTER_NAME}" not found` });
+      }
+    } catch (e) {
+      warnings.push({ type: 'printerCheckFailed', message: 'Could not query printers' });
+    }
+  }
+
+  cachedPrinterCheck = { warnings, checkedAt: now };
+  return warnings;
+}
+
+// ── Auto-update check ────────────────────────────────────────────────────────
+let latestVersion = null;
+const UPDATE_CHECK_INTERVAL = 6 * 3600000; // 6 hours
+
+function checkForUpdates() {
+  const url = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/VERSION';
+  https.get(url, { timeout: 5000 }, (res) => {
+    if (res.statusCode !== 200) return;
+    let data = '';
+    res.on('data', c => data += c);
+    res.on('end', () => {
+      const ver = data.trim();
+      if (ver && /^\d+\.\d+\.\d+$/.test(ver)) {
+        latestVersion = ver;
+        if (ver !== SERVER_VERSION) {
+          console.log(`[update] New version available: ${ver} (current: ${SERVER_VERSION})`);
+        }
+      }
+    });
+  }).on('error', () => { /* ignore */ });
+}
+
+// Override health endpoint with enhanced version
+app.get('/health', async (req, res) => {
+  const warnings = await checkPrinterWarnings();
+  res.json({
+    status: 'ok',
+    printer: PRINTER_NAME || '(default)',
+    version: SERVER_VERSION,
+    latestVersion: latestVersion,
+    uptime: Math.round(process.uptime()),
+    warnings
+  });
+});
+
+// ── Config endpoints ─────────────────────────────────────────────────────────
+const CONFIG_FILE = path.join(__dirname, 'config.json');
+
+app.get('/config', (req, res) => {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      res.json(config);
+    } else {
+      res.json({ printerName: PRINTER_NAME, checkinUrl: '' });
+    }
+  } catch (e) {
+    res.json({ printerName: PRINTER_NAME, checkinUrl: '' });
+  }
+});
+
+app.post('/config', (req, res) => {
+  const { printerName, checkinUrl } = req.body || {};
+  try {
+    const config = {};
+    if (printerName !== undefined) config.printerName = printerName;
+    if (checkinUrl !== undefined) config.checkinUrl = checkinUrl;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+    console.log('[config] Saved:', JSON.stringify(config));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────
+app.get('/diagnostics', async (req, res) => {
+  const results = [];
+
+  // 1. Server running
+  results.push({ test: 'Server running', passed: true, detail: `v${SERVER_VERSION}, uptime ${Math.round(process.uptime())}s` });
+
+  // 2. Printer detected
+  if (process.platform === 'win32') {
+    try {
+      const raw = execSync(
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name, Default | ConvertTo-Json -Compress"',
+        { timeout: 8000, windowsHide: true }
+      ).toString().trim();
+      let parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) parsed = [parsed];
+      const target = PRINTER_NAME || parsed.find(p => p.Default)?.Name || '(none)';
+      const found = parsed.some(p => p.Name === (PRINTER_NAME || '') || (!PRINTER_NAME && p.Default));
+      results.push({ test: 'Printer detected', passed: found, detail: target });
+    } catch (e) {
+      results.push({ test: 'Printer detected', passed: false, detail: e.message });
+    }
+  } else {
+    results.push({ test: 'Printer detected', passed: false, detail: 'Not on Windows' });
+  }
+
+  // 3. CSV loaded
+  const csvPath = path.join(__dirname, 'clubbers.csv');
+  const csvExists = fs.existsSync(csvPath);
+  const csvCount = csvExists ? parseCSV(fs.readFileSync(csvPath, 'utf8')).length : 0;
+  results.push({ test: 'CSV loaded', passed: csvExists && csvCount > 0, detail: csvExists ? `${csvCount} clubbers` : 'File not found' });
+
+  // 4. Can render test label
+  try {
+    const testResult = await generateLabel('Test', 'Child', '', null, [], '', false);
+    fs.unlink(testResult.pngPath, () => {});
+    results.push({ test: 'Label rendering', passed: true, detail: `${testResult.buffer.length} bytes` });
+  } catch (e) {
+    results.push({ test: 'Label rendering', passed: false, detail: e.message });
+  }
+
+  res.json(results);
+});
+
 // ── Start up ──────────────────────────────────────────────────────────────────
 // Load clubbers before accepting requests so the first print has data ready
 clubbers = loadClubbers();
 
 app.listen(PORT, () => {
-  console.log(`\n  Awana Print Server  •  http://localhost:${PORT}`);
-  console.log(`  Printer : ${PRINTER_NAME || '(system default)'}`);
+  console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
+  console.log(`  Dashboard : http://localhost:${PORT}/`);
+  console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
   console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
 });
+
+// Check for updates on startup and periodically
+checkForUpdates();
+setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);

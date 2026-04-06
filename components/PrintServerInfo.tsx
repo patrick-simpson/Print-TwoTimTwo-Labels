@@ -267,6 +267,58 @@ export const PrintServerInfo: React.FC = () => {
         </div>
       </div>
 
+      {/* ── New in v2 ─────────────────────────────────────────────────────── */}
+      <div className="mt-8 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+          <i className="fa fa-star text-yellow-500"></i>
+          New in v2.0
+        </h3>
+        <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-users text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Sibling batch check-in</strong>
+              <span className="text-gray-600">When a child checks in, siblings (same last name) are automatically detected with checkboxes to check them in too</span>
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-tachometer-alt text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Dashboard</strong>
+              <span className="text-gray-600">Open <code className="bg-purple-100 px-1 rounded">localhost:3456</code> for status, print history, label preview, diagnostics, and settings</span>
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-volume-up text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Audio feedback</strong>
+              <span className="text-gray-600">Success/error chimes confirm prints without checking the printer (can be muted)</span>
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-cloud-download-alt text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Offline queue</strong>
+              <span className="text-gray-600">Labels queue in the browser if the server is down and auto-print when it reconnects</span>
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-redo text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Reprint from history</strong>
+              <span className="text-gray-600">Reprint any label from the dashboard with one click -- no re-check-in needed</span>
+            </div>
+          </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-user-plus text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Enhanced walk-ins</strong>
+              <span className="text-gray-600">Club selector and visitor badge for walk-in guests</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* ── Summary ───────────────────────────────────────────────────────── */}
       <div className="mt-6 bg-purple-50 border border-purple-200 rounded p-3 text-sm text-purple-800">
         <strong>That's it!</strong> Once configured, silent printing is automatic. Each time a child checks in,
