@@ -80,6 +80,23 @@ const HEADER_MAP = {
   'clubberid':      'ClubberID',
   'inactive':       'Inactive',
   'book':           'Book',
+  // Family / household identifiers used by TwoTimTwo and similar systems
+  'primarycontact':  'PrimaryContact',
+  'primary contact': 'PrimaryContact',
+  'guardian':        'Guardian',
+  'guardians':       'Guardian',
+  'parent':          'Guardian',
+  'parents':         'Guardian',
+  'householdid':     'HouseholdID',
+  'household id':    'HouseholdID',
+  'familyid':        'HouseholdID',
+  'family id':       'HouseholdID',
+  'family':          'HouseholdID',
+  'address':         'Address',
+  'streetaddress':   'Address',
+  'street address':  'Address',
+  'homeaddress':     'Address',
+  'home address':    'Address',
 };
 
 const ALLERGY_EMOJI = {
@@ -243,6 +260,35 @@ function findClubber(firstName, lastName) {
     (r.FirstName || '').toLowerCase().trim() === fn &&
     (r.LastName  || '').toLowerCase().trim() === ln
   ) || null;
+}
+
+// ── Family index for sibling lookup ──────────────────────────────────────────
+// Groups clubbers by the best available family identifier (HouseholdID →
+// PrimaryContact → Guardian → Address → LastName fallback) and builds a
+// reverse map: lowercased full-name → array of sibling full-names.
+// Called on-demand by GET /siblings so it always reflects the current roster.
+function buildFamilyIndex(rows) {
+  const groups = new Map(); // groupKey → [fullName, ...]
+
+  rows.forEach(r => {
+    const full = ((r.FirstName || '') + ' ' + (r.LastName || '')).trim();
+    if (!full) return;
+    // Pick the most specific available key (order = priority)
+    const groupKey = (r.HouseholdID || r.PrimaryContact || r.Guardian || r.Address || r.LastName || '').trim();
+    if (!groupKey) return;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(full);
+  });
+
+  // Reverse map: fullName.toLowerCase() → [sibling full-names]
+  const index = new Map();
+  groups.forEach(members => {
+    if (members.length < 2) return; // no siblings in this group
+    members.forEach(name => {
+      index.set(name.toLowerCase(), members.filter(m => m !== name));
+    });
+  });
+  return index;
 }
 
 // ── Birthday-week check ───────────────────────────────────────────────────────
@@ -637,6 +683,22 @@ app.use(express.static(path.join(__dirname, 'public')));  // serve static files 
 
 app.get('/roster-status', (req, res) => {
   res.json({ count: clubbers.length });
+});
+
+// Returns siblings (family members) of a given child from the synced CSV.
+// Uses buildFamilyIndex() which groups by HouseholdID / PrimaryContact /
+// Guardian / Address before falling back to LastName so blended families
+// with different last names are handled correctly.
+// Response: { siblings: ["Jane Smith", "John Smith"] }
+// The extension matches returned names against DOM elements on the check-in
+// page; an empty array causes it to fall back to DOM last-name detection.
+app.get('/siblings', (req, res) => {
+  const rawName = (req.query.name || '').trim();
+  if (!rawName) return res.status(400).json({ error: 'name query param required' });
+
+  const familyIndex = buildFamilyIndex(clubbers);
+  const siblings = familyIndex.get(rawName.toLowerCase()) || [];
+  res.json({ siblings });
 });
 
 app.get('/printers', (req, res) => {
