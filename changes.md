@@ -1,3 +1,14 @@
+## [2.0.2] - 2026-04-06
+Critical fixes for batch check-in and print dialog consistency.
+
+### Batch Check-in Button Detection
+- **Multi-strategy search:** `pollForCheckinButton()` now uses three fallback strategies: explicit TwoTimTwo selectors (`.checkin-btn`, `[data-action="checkin"]`), pre-click button snapshot to find newly-appeared modal buttons (eliminates reliance on specific CSS classes), and modal-scoped selector fallback. Resolves batch check-in failures on different TwoTimTwo UI versions.
+- **Pre-click snapshot:** `batchCheckInSiblings()` now snapshots all visible buttons before clicking a clubber card. The subsequent poll can identify the new check-in button even if TwoTimTwo wraps it in dynamically-generated containers.
+
+### Print Dialog Consistency
+- **Unified label rendering:** New `/label` POST endpoint generates the same PNG label that `/print` would send silently, without printing it. This ensures Print Dialog mode uses the identical canvas output (with allergies, birthday banner, handbook group, visitor badge, enrichment) instead of hand-coded HTML that was missing club name and enrichment data.
+- **Fallback behavior:** If `/label` is unavailable (offline/error), fallback HTML now correctly includes club name and respects the offline label structure.
+
 ## [2.0.1] - 2026-04-06
 Fixes race condition in batch sibling check-in, adds check-in attribute options to the sibling panel, and improves sibling detection using the synced CSV roster.
 

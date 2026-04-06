@@ -757,6 +757,62 @@ app.post('/update-csv', (req, res) => {
   }
 });
 
+// ── Label generation (returns PNG, no printing) ──────────────────────────────
+// Same enrichment pipeline as /print but streams the PNG back to the caller.
+// Used by the "Print Dialog" mode so both paths render the same label.
+app.post('/label', async (req, res) => {
+  const {
+    name,
+    firstName: reqFirst,
+    lastName:  reqLast,
+    clubName      = '',
+    clubImageData = null,
+    visitor       = false
+  } = req.body || {};
+
+  let firstName, lastName;
+  if (reqFirst !== undefined) {
+    firstName = String(reqFirst || '').trim();
+    lastName  = String(reqLast  || '').trim();
+  } else if (name) {
+    const parts = String(name).trim().split(/\s+/);
+    firstName = parts[0] || '';
+    lastName  = parts.slice(1).join(' ') || '';
+  } else {
+    return res.status(400).json({ error: 'name or firstName is required' });
+  }
+
+  clubbers = loadClubbers();
+  const record = findClubber(firstName, lastName);
+
+  let allergyTokens, handbookGroup, birthday;
+  if (record) {
+    const allergySource = record.Allergies || record.Notes || '';
+    allergyTokens = parseAllergies(allergySource);
+    const rawGroup = record.HandbookGroup || '';
+    handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+    birthday = isBirthdayWeek(record.Birthdate);
+  } else {
+    allergyTokens = [];
+    handbookGroup = '';
+    birthday = false;
+  }
+
+  try {
+    const clubImageBuffer = await resolveImageBuffer(clubImageData);
+    const result = await generateLabel(
+      firstName, lastName, clubName, clubImageBuffer,
+      allergyTokens, handbookGroup, birthday, !!visitor
+    );
+    fs.unlink(result.pngPath, () => {});
+    res.set('Content-Type', 'image/png');
+    res.send(result.buffer);
+  } catch (err) {
+    console.error('[label] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/print', async (req, res) => {
   const {
     name,

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.0.1';
+  const EXTENSION_VERSION = '2.0.2';
   const PRINT_COOLDOWN = 2000;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -305,7 +305,7 @@
     });
   }
 
-  function pollForCheckinButton(sib, remaining, options, attempts) {
+  function pollForCheckinButton(sib, remaining, options, attempts, preClickButtons) {
     if (attempts <= 0) {
       console.log('[Awana] Timed out waiting for check-in button for ' + sib.name + ', printing directly');
       var club = lookupClub(sib.name);
@@ -315,20 +315,39 @@
       }
       return;
     }
-    var checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"], .modal .btn-primary, .modal button:first-of-type');
+    var checkinBtn = null;
+
+    // Strategy 1: explicit TwoTimTwo-specific selectors
+    checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"]');
+
+    // Strategy 2: look for buttons that appeared after the click (not in preClickButtons)
+    // This handles any modal structure TwoTimTwo uses without relying on class names
     if (!checkinBtn) {
-      var buttons = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button');
-      for (var i = 0; i < buttons.length; i++) {
-        var txt = buttons[i].textContent.toLowerCase().trim();
-        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
-          checkinBtn = buttons[i];
-          break;
+      var allBtns = document.querySelectorAll('button, [role="button"]');
+      for (var i = 0; i < allBtns.length; i++) {
+        var btn = allBtns[i];
+        if (!btn.offsetParent) continue; // skip hidden
+        if (preClickButtons && preClickButtons.has(btn)) continue; // skip pre-existing
+        var txt = btn.textContent.toLowerCase().trim();
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = btn; break; }
+      }
+    }
+
+    // Strategy 3: modal-scoped fallback (original approach)
+    if (!checkinBtn) {
+      checkinBtn = document.querySelector('.modal .btn-primary, .modal button:first-of-type');
+      if (!checkinBtn) {
+        var modalBtns = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button, [role="dialog"] button');
+        for (var i = 0; i < modalBtns.length; i++) {
+          var txt = modalBtns[i].textContent.toLowerCase().trim();
+          if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = modalBtns[i]; break; }
         }
       }
     }
+
     if (checkinBtn && checkinBtn.offsetParent !== null) {
       console.log('[Awana] Found check-in button, applying options and clicking for ' + sib.name);
-      var modalContainer = checkinBtn.closest('.modal, .dialog, [class*="modal"]') || checkinBtn.parentElement;
+      var modalContainer = checkinBtn.closest('.modal, .dialog, [class*="modal"], [role="dialog"]') || checkinBtn.parentElement;
       applyCheckinOptions(modalContainer, options);
       checkinBtn.click();
       checkinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -336,7 +355,7 @@
         setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
       }
     } else {
-      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
+      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1, preClickButtons); }, 100);
     }
   }
 
@@ -349,11 +368,14 @@
     console.log('[Awana] Batch check-in: clicking ' + sib.name);
     setStatus('\u23F3');
 
+    // Snapshot pre-existing buttons so Strategy 2 can identify the newly-opened modal button
+    var preClickButtons = new Set(document.querySelectorAll('button, [role="button"]'));
+
     // Click the sibling's clubber element to open the check-in modal
     sib.element.click();
 
     // Poll for the modal's check-in button (up to 3s) instead of a fixed delay
-    pollForCheckinButton(sib, remaining, options || {}, 30);
+    pollForCheckinButton(sib, remaining, options || {}, 30, preClickButtons);
   }
 
   function getClubImageDataUrl(img) {
@@ -925,51 +947,75 @@
   }
 
   function fallbackPrint(firstName, lastName, clubName, imageData) {
+    // Ask the server to generate the same label PNG it would silently print,
+    // then show it in the browser's print dialog — so both modes look identical.
+    var fullName = firstName + (lastName ? ' ' + lastName : '');
+    fetch(PRINT_SERVER + '/label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: fullName, clubName: clubName, clubImageData: imageData }),
+      signal: AbortSignal.timeout(5000)
+    }).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).then(function(blob) {
+      var reader = new FileReader();
+      reader.onload = function() { printLabelDataUrl(reader.result); };
+      reader.readAsDataURL(blob);
+    }).catch(function(err) {
+      console.warn('[Awana] /label unavailable (' + err.message + '), using local HTML');
+      printLabelDataUrl(null, firstName, lastName, clubName, imageData);
+    });
+  }
+
+  function printLabelDataUrl(dataUrl, firstName, lastName, clubName, imageData) {
     var frame = document.getElementById('awana-print-frame');
     if (!frame) {
       frame = document.createElement('iframe');
       frame.id = 'awana-print-frame';
-      Object.assign(frame.style, {
-        position: 'fixed',
-        right: '0',
-        bottom: '0',
-        width: '0',
-        height: '0',
-        border: '0',
-        visibility: 'hidden'
-      });
+      Object.assign(frame.style, { position: 'fixed', right: '0', bottom: '0',
+        width: '0', height: '0', border: '0', visibility: 'hidden' });
       document.body.appendChild(frame);
     }
 
-    var fontSize = firstName.length > 12 ? '32pt' : firstName.length > 8 ? '40pt' : '48pt';
-    var iconHtml = imageData
-      ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
-      : '';
-    var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
-    // Removed club name from fallback
-    var clubHtml = ''
-      ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
-      : '';
-
-    var html = '<!DOCTYPE html><html><head><style>' +
-      '@page { size: 4in 2in; margin: 0; }' +
-      '* { box-sizing: border-box; margin: 0; padding: 0; }' +
-      'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
-      '.badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }' +
-      '.icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }' +
-      '.icon-col img { width: 52pt; height: 52pt; object-fit: contain; }' +
-      '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
-      '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }' +
-      '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
-      '.ln { font-size: 20pt; margin-top: 2pt; }' +
-      '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
-      '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
-      '</style></head><body><div class="badge">' +
-      iconHtml +
-      '<div class="text"><div class="fn">' + firstName + '</div>' +
-      lastNameHtml +
-      clubHtml +
-      '</div></div></body></html>';
+    var html;
+    if (dataUrl) {
+      // Server-generated PNG — same output as auto-print
+      html = '<!DOCTYPE html><html><head><style>' +
+        '@page { size: 4in 2in; margin: 0; }' +
+        '* { margin: 0; padding: 0; }' +
+        'body { width: 4in; height: 2in; overflow: hidden; }' +
+        'img { width: 4in; height: 2in; display: block; }' +
+        '</style></head><body><img src="' + dataUrl + '"/></body></html>';
+    } else {
+      // Offline fallback HTML label
+      var fontSize = (firstName || '').length > 12 ? '32pt' : (firstName || '').length > 8 ? '40pt' : '48pt';
+      var iconHtml = imageData
+        ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
+        : '';
+      var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
+      var clubHtml = clubName
+        ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
+        : '';
+      html = '<!DOCTYPE html><html><head><style>' +
+        '@page { size: 4in 2in; margin: 0; }' +
+        '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+        'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
+        '.badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }' +
+        '.icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }' +
+        '.icon-col img { width: 52pt; height: 52pt; object-fit: contain; }' +
+        '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
+        '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }' +
+        '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
+        '.ln { font-size: 20pt; margin-top: 2pt; }' +
+        '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
+        '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
+        '</style></head><body><div class="badge">' +
+        iconHtml +
+        '<div class="text"><div class="fn">' + (firstName || '') + '</div>' +
+        lastNameHtml + clubHtml +
+        '</div></div></body></html>';
+    }
 
     frame.contentWindow.document.open();
     frame.contentWindow.document.write(html);
@@ -986,7 +1032,7 @@
         console.error('[Awana] Print failed:', err);
       }
       clearStatus();
-    }, 500);
+    }, 600);
   }
 
   // Sync clubbers.csv from the authenticated browser session to the print server.
