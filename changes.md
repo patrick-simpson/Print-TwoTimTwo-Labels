@@ -1,3 +1,13 @@
+## [1.11.0] - 2026-04-06
+- **Removed bookmarklet** — bookmarklet.js and all related files deleted; superseded by the Chrome extension
+- **Unit tests added** — `print-server/utils.test.js` covers `parseCSV`, `isBirthdayWeek`, and `parseAllergies` using Node's built-in test runner (32 tests, no new dependencies); run with `npm test` in `print-server/`
+- **Extracted pure functions** — `parseCSV`, `isBirthdayWeek`, `parseAllergies`, `HEADER_MAP` moved to `print-server/utils.js` for testability; server.js unchanged in behaviour
+- **Fixed allergy regex word boundaries** — NUTS, DAIRY, GLUTEN, and DYE patterns now use `\b` word boundaries; "donut" no longer triggers NUTS, "colored" no longer triggers DYE, "eggnog" was already guarded (no behaviour change there)
+- **Input validation on /print** — name fields capped at 100 chars, `clubImageData` rejected if over 5 MB; returns HTTP 400 with a clear error message
+- **Temp file cleanup errors now logged** — both PowerShell script and PNG `fs.unlink()` callbacks now log a `[cleanup]` warning on failure instead of silently swallowing errors
+- **ISO timestamps on all server logs** — every `console.log/warn/error` line now prefixed with an ISO 8601 timestamp for easier debugging
+- **Pinned canvas to `~3.1.0`** — patch-only updates for this native module to avoid unexpected breakage on minor version bumps
+
 ## [1.10.9] - 2026-04-04
 - **Widget Default Minimized:** Widget now starts collapsed as a small green pill instead of an expanded panel. Prevents the widget from obstructing page content on first load. Click the pill to expand; click × to collapse again. State persists across page loads.
 

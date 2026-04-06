@@ -4,7 +4,7 @@
  */
 
 // Print server version — bump this whenever server.js changes are deployed
-export const SERVER_VERSION = '1.10.9';
+export const SERVER_VERSION = '1.11.0';
 
 // Server & Network Configuration
 export const SERVER_PORT = 3456;
@@ -33,7 +33,7 @@ export const LABEL_DPI = 300;
 export const DEFAULT_CHECKIN_URL = 'https://kvbchurch.twotimtwo.com/clubber/checkin?#';
 
 // DOM Selectors (if used in React, keep documented here)
-// Note: These are used by the bookmarklet, not the React app itself
+// Note: These are used by the Chrome extension, not the React app itself
 export const DOM_SELECTORS = {
   LAST_CHECKIN: '#lastCheckin div', // The "Last Checked In" element
   CLUBBER: '.clubber', // Child/clubber container

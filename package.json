@@ -1,15 +1,12 @@
 {
   "name": "check-in-label-generator",
   "private": true,
-  "version": "1.10.9",
+  "version": "1.11.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/validate-bookmarklet.cjs && node scripts/build-bookmarklet-url.cjs",
     "build": "vite build",
-    "preview": "vite preview",
-    "validate-bookmarklet": "node scripts/validate-bookmarklet.cjs",
-    "build:bookmarklet": "node scripts/validate-bookmarklet.cjs && node scripts/build-bookmarklet-url.cjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

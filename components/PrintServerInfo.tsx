@@ -102,7 +102,7 @@ export const PrintServerInfo: React.FC = () => {
           <div>
             <p className="font-semibold text-gray-800 mb-3">Install the browser extension</p>
             <p className="mb-3 text-gray-600">
-              The extension provides zero-click auto-printing — it detects check-ins and sends labels to the print server automatically. No bookmarklet needed.
+              The extension provides zero-click auto-printing — it detects check-ins and sends labels to the print server automatically.
             </p>
 
             <p className="font-semibold text-gray-700 text-xs mb-2">First, get the extension files:</p>

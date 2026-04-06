@@ -84,7 +84,7 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* The DOM element expected by the bookmarklet */}
+        {/* Loading indicator observed by the extension's MutationObserver */}
         {isLoading && (
             <div className="bg-yellow-100 text-yellow-800 p-2 mb-4 font-bold animate-pulse rounded">
                 Checking in...

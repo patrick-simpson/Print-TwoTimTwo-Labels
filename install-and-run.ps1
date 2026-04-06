@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 1.10.9
+# Version    : 1.11.0
 # Updated    : 2026-03-27
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "1.10.9"
+$ScriptVersion = "1.11.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -498,14 +498,14 @@ Write-Host ""
 Write-Host "[6/8] Setting up clubbers.csv..." -ForegroundColor White
 
 # If a real CSV was restored from backup, keep it -- don't overwrite with a template.
-# The bookmarklet will sync fresh data from the authenticated browser session anyway.
+# The extension will sync fresh data from the authenticated browser session anyway.
 $hasRealCsv = $false
 if (Test-Path $clubbersCsvPath) {
     $csvLines = @(Get-Content $clubbersCsvPath -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
     if ($csvLines.Count -gt 4) {
         $hasRealCsv = $true
         Write-Host "  [OK] Using existing clubbers.csv ($($csvLines.Count - 1) clubber(s))" -ForegroundColor Green
-        Write-Host "  The bookmarklet will sync fresh data when you open the check-in page." -ForegroundColor Gray
+        Write-Host "  The extension will sync fresh data when you open the check-in page." -ForegroundColor Gray
     }
 }
 
@@ -574,7 +574,7 @@ if (-not $hasRealCsv) {
     }
 
     if (-not $downloaded) {
-        Write-Host "  No roster data yet -- the bookmarklet will sync it from your browser." -ForegroundColor Yellow
+        Write-Host "  No roster data yet -- the extension will sync it from your browser." -ForegroundColor Yellow
         Write-Host "  (Labels will print without enrichment until then.)" -ForegroundColor Gray
     }
 }
@@ -670,17 +670,12 @@ Write-Host "  Setup Complete!" -ForegroundColor Green
 Write-Host "=================================================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "How it works:" -ForegroundColor White
-Write-Host "  1. Drag the bookmarklet to your bookmark bar (first time only)" -ForegroundColor Gray
-Write-Host "  2. Go to the check-in page and click the bookmarklet" -ForegroundColor Gray
-Write-Host "  3. Labels print automatically when a child is checked in" -ForegroundColor Gray
+Write-Host "  1. Make sure the Chrome extension is installed (see setup guide)" -ForegroundColor Gray
+Write-Host "  2. Go to the check-in page — labels print automatically when a child is checked in" -ForegroundColor Gray
 Write-Host ""
-# Open the check-in page in Edge, plus the bookmarklet setup page so the
-# user can drag it to their bookmark bar on first run.
 Write-Host "Opening check-in page in default browser..." -ForegroundColor Cyan
 Start-Process $cfg.checkinUrl
 Write-Host ""
-Write-Host "  If this is your first time, drag the bookmarklet button to your bookmark bar." -ForegroundColor Yellow
-Write-Host "  After that, just click it on the check-in page to arm auto-printing." -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "Print server running" -ForegroundColor Green

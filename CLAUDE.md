@@ -5,14 +5,14 @@ Senior Software Engineer focused on **Technical Integrity, Quality, and Operatio
 ## Project
 Windows app for printing child check-in labels at Awana events from TwoTimTwo.com.
 
-**Components:** React Simulator (root) | Bookmarklet (bookmarklet.js) | Electron App (electron-app/) | Print Server (print-server/) | Installer (install-and-run.ps1)
+**Components:** React Simulator (root) | Chrome Extension (chrome-extension/) | Electron App (electron-app/) | Print Server (print-server/) | Installer (install-and-run.ps1)
 
 ## MANDATORY Checklist
 Every functional change requires:
 1. **Version bump** — `node scripts/bump-version.cjs <X.Y.Z>` (server.js or install-and-run.ps1 changes). Auto-updates all files + extension.
 2. **changes.md** — Add entry at top with version, date, and what changed + why.
 3. **Website/UI** — Update React components if affecting user install/usage.
-4. **Build** — `npm run build` to sync bookmarklet and dist.
+4. **Build** — `npm run build` to sync dist.
 5. **Commit & push** — Never leave uncommitted. Changes only done when deployed.
 
 ## Commands
@@ -30,7 +30,7 @@ Every functional change requires:
 - Electron: HTML/CSS in hidden BrowserWindow → PNG
 
 **Data Flow:**
-- Bookmarklet fetches CSV → POST /update-csv
+- Extension fetches CSV → POST /update-csv
 - Server reloads clubbers.csv on every print request
 - Enrichment: Match firstName+lastName to allergies (Notes field)
 
