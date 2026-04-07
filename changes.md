@@ -1,3 +1,26 @@
+## [1.11.0] - 2026-04-07
+Fixes sibling batch check-in, speeds up batch processing, and updates checkbox UI.
+
+### Sibling Check-in Fix
+- **Root cause fixed:** `pollForCheckinButton` Strategy 1 now directly targets `button#checkin` inside `#checkin-modal` when that modal is visible. TwoTimTwo's Bootstrap modal is pre-rendered in the DOM (always present but hidden), so the previous "new button" detection (Strategy 2) always skipped it since it was in the pre-click snapshot. Now we check modal visibility (`offsetParent !== null`) before querying the button.
+- **Strategy 2 simplified:** No longer relies on pre-click button snapshot — now simply scans all visible buttons for check-in text, which correctly handles both React (dynamic) and Bootstrap (static) modal patterns.
+- **Strategy 3 hardened:** Added visibility check (`offsetParent !== null`) before matching by text, preventing false positives from hidden modals.
+
+### Faster Batch Check-ins
+- **Print queued in background:** `batchCheckInSiblings` now fires `doPrint` for each sibling immediately before clicking their card, so label printing happens in the background while check-ins proceed.
+- **Reduced inter-sibling delay:** `PRINT_COOLDOWN + 500` (2500ms) → `BATCH_DELAY` (700ms) between siblings. Entire batch of 3 siblings now takes ~2s instead of ~7.5s.
+- **Deduplication guard:** Added `batchPrintedNames` Set. When `#lastCheckin div` updates after a batch check-in, `onCheckin` checks this set and skips printing to prevent double-prints. Names are cleared from the set after 8 seconds.
+
+### Sibling Panel UI
+- **Per-child checkboxes:** Each sibling row now shows Bible (default checked) and Friend (default unchecked) checkboxes on the right, instead of a global "Check-in Options" section at the bottom.
+- **Removed global options:** Bible, Book, and Uniform global checkboxes replaced by per-sibling Bible and Friend options.
+- **`applyCheckinOptions` updated:** Now maps Bible → `/bible/i` and Friend → `/friend|brought/i` (removed Book and Uniform patterns).
+
+### Simulator CheckinModal
+- **Checkboxes repositioned:** Bible and Friend checkboxes now appear to the right of the child's name/info in the modal header, not in a separate body section below.
+- **Simplified to two options:** Removed "Kids Club meeting" checkbox. Only Bible (default checked) and Friend (default unchecked) remain.
+- **Bookmarklet-compatible IDs:** Modal container now has `id="checkin-modal"` and Checkin button has `id="checkin"` so bookmarklet Strategy 1 works in the simulator.
+
 ## [2.0.2] - 2026-04-06
 Critical fixes for batch check-in and print dialog consistency.
 

@@ -3,6 +3,7 @@
   window.__awanaPrinterLoaded = true;
 
   const PRINT_COOLDOWN = 2000;
+  const BATCH_DELAY = 700;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
   const PRINT_SERVER = 'http://localhost:3456';
@@ -15,6 +16,7 @@
   let soundMuted   = localStorage.getItem(MUTE_KEY) === 'true';
   let lastPrintedName = null;
   let lastPrintTime = 0;
+  var batchPrintedNames = new Set();
 
   function isUndo(text) {
     return text && text.toLowerCase().includes('undo');
@@ -116,32 +118,34 @@
     Object.assign(body.style, { padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' });
     var checkboxes = [];
     siblings.forEach(function(sib) {
-      var row = document.createElement('label');
+      var row = document.createElement('div');
       Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px',
-        background: '#f8fafc', borderRadius: '6px', cursor: 'pointer' });
-      var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
-      var ns = document.createElement('span'); ns.style.fontWeight = '600'; ns.textContent = sib.name;
+        background: '#f8fafc', borderRadius: '6px' });
+      var includeCb = document.createElement('input'); includeCb.type = 'checkbox'; includeCb.checked = true;
+      includeCb.style.flexShrink = '0';
+      var ns = document.createElement('span'); ns.style.fontWeight = '600'; ns.style.flex = '1'; ns.textContent = sib.name;
       var cs = document.createElement('span');
-      Object.assign(cs.style, { fontSize: '11px', color: '#64748b', marginLeft: 'auto' });
+      Object.assign(cs.style, { fontSize: '11px', color: '#64748b' });
       cs.textContent = sib.clubName || '';
-      row.append(cb, ns, cs); body.appendChild(row); checkboxes.push({ checkbox: cb, sibling: sib });
-    });
 
-    // Check-in Options section
-    var optDivider = document.createElement('div');
-    Object.assign(optDivider.style, { fontSize: '11px', fontWeight: '600', color: '#64748b',
-      textTransform: 'uppercase', letterSpacing: '0.5px',
-      borderTop: '1px solid #e2e8f0', marginTop: '4px', paddingTop: '8px' });
-    optDivider.textContent = 'Check-in Options';
-    body.appendChild(optDivider);
-    var optionCheckboxes = {};
-    ['Bible', 'Book', 'Uniform'].forEach(function(label) {
-      var optRow = document.createElement('label');
-      Object.assign(optRow.style, { display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px',
-        background: '#f0fdf4', borderRadius: '6px', cursor: 'pointer' });
-      var optCb = document.createElement('input'); optCb.type = 'checkbox'; optCb.checked = false;
-      var optSpan = document.createElement('span'); optSpan.style.fontWeight = '500'; optSpan.textContent = label;
-      optRow.append(optCb, optSpan); body.appendChild(optRow); optionCheckboxes[label] = optCb;
+      // Per-sibling checkboxes on the right
+      var bibleLbl = document.createElement('label');
+      Object.assign(bibleLbl.style, { display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
+        cursor: 'pointer', flexShrink: '0' });
+      var bibleCb = document.createElement('input'); bibleCb.type = 'checkbox'; bibleCb.checked = true;
+      var bibleSpan = document.createElement('span'); bibleSpan.textContent = 'Bible';
+      bibleLbl.append(bibleCb, bibleSpan);
+
+      var friendLbl = document.createElement('label');
+      Object.assign(friendLbl.style, { display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
+        cursor: 'pointer', flexShrink: '0' });
+      var friendCb = document.createElement('input'); friendCb.type = 'checkbox'; friendCb.checked = false;
+      var friendSpan = document.createElement('span'); friendSpan.textContent = 'Friend';
+      friendLbl.append(friendCb, friendSpan);
+
+      row.append(includeCb, ns, cs, bibleLbl, friendLbl);
+      body.appendChild(row);
+      checkboxes.push({ checkbox: includeCb, sibling: sib, bibleCb: bibleCb, friendCb: friendCb });
     });
 
     var btnRow = document.createElement('div');
@@ -150,9 +154,12 @@
     Object.assign(goBtn.style, { flex: '1', padding: '8px', background: '#4caf50', color: '#fff',
       border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px' });
     goBtn.addEventListener('click', function() {
-      var sel = checkboxes.filter(function(c) { return c.checkbox.checked; }).map(function(c) { return c.sibling; });
-      var opts = {}; Object.keys(optionCheckboxes).forEach(function(k) { opts[k] = optionCheckboxes[k].checked; });
-      overlay.remove(); if (sel.length) batchCheckInSiblings(sel, opts);
+      var sel = checkboxes
+        .filter(function(c) { return c.checkbox.checked; })
+        .map(function(c) {
+          return Object.assign({}, c.sibling, { options: { Bible: c.bibleCb.checked, Friend: c.friendCb.checked } });
+        });
+      overlay.remove(); if (sel.length) batchCheckInSiblings(sel);
     });
     var skipBtn = document.createElement('button'); skipBtn.textContent = 'Skip';
     Object.assign(skipBtn.style, { padding: '8px 14px', background: '#f1f5f9', color: '#475569',
@@ -164,7 +171,7 @@
 
   function applyCheckinOptions(modalContainer, options) {
     if (!options || !modalContainer) return;
-    var optionPatterns = { 'Bible': /bible/i, 'Book': /book|handbook/i, 'Uniform': /uniform/i };
+    var optionPatterns = { 'Bible': /bible/i, 'Friend': /friend|brought/i };
     var allCheckboxes = modalContainer.querySelectorAll('input[type="checkbox"]');
     allCheckboxes.forEach(function(cb) {
       var labelText = '';
@@ -184,39 +191,41 @@
     });
   }
 
-  function pollForCheckinButton(sib, remaining, options, attempts, preClickButtons) {
+  function pollForCheckinButton(sib, remaining, options, attempts) {
     if (attempts <= 0) {
-      var club = lookupClub(sib.name); doPrint(sib.name, club.clubName, club.clubImageData);
-      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       return;
     }
     var checkinBtn = null;
 
-    // Strategy 1: explicit TwoTimTwo-specific selectors
-    checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"]');
+    // Strategy 1: TwoTimTwo-specific — button#checkin inside a visible #checkin-modal (Bootstrap modal)
+    // Bootstrap modals are pre-rendered in the DOM (always present), so we check visibility explicitly.
+    var ttModal = document.getElementById('checkin-modal');
+    if (ttModal && ttModal.offsetParent !== null) {
+      checkinBtn = ttModal.querySelector('button#checkin');
+    }
+    if (!checkinBtn) {
+      checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"]');
+    }
 
-    // Strategy 2: look for buttons that appeared after the click (not in preClickButtons)
-    // This handles any modal structure TwoTimTwo uses without relying on class names
+    // Strategy 2: any visible button with check-in text in the document
     if (!checkinBtn) {
       var allBtns = document.querySelectorAll('button, [role="button"]');
       for (var i = 0; i < allBtns.length; i++) {
         var btn = allBtns[i];
         if (!btn.offsetParent) continue; // skip hidden
-        if (preClickButtons && preClickButtons.has(btn)) continue; // skip pre-existing
         var txt = btn.textContent.toLowerCase().trim();
         if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = btn; break; }
       }
     }
 
-    // Strategy 3: modal-scoped fallback (original approach)
+    // Strategy 3: modal-scoped fallback
     if (!checkinBtn) {
-      checkinBtn = document.querySelector('.modal .btn-primary, .modal button:first-of-type');
-      if (!checkinBtn) {
-        var modalBtns = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button, [role="dialog"] button');
-        for (var i = 0; i < modalBtns.length; i++) {
-          var txt = modalBtns[i].textContent.toLowerCase().trim();
-          if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = modalBtns[i]; break; }
-        }
+      var modalBtns = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button, [role="dialog"] button');
+      for (var i = 0; i < modalBtns.length; i++) {
+        if (!modalBtns[i].offsetParent) continue; // skip hidden
+        var txt = modalBtns[i].textContent.toLowerCase().trim();
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = modalBtns[i]; break; }
       }
     }
 
@@ -225,20 +234,25 @@
       applyCheckinOptions(modalContainer, options);
       checkinBtn.click();
       checkinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining, options); }, PRINT_COOLDOWN + 500);
+      if (remaining.length) setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
     } else {
-      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1, preClickButtons); }, 100);
+      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
     }
   }
 
-  function batchCheckInSiblings(siblings, options) {
+  function batchCheckInSiblings(siblings) {
     if (!siblings.length) return;
     var sib = siblings[0]; var remaining = siblings.slice(1);
+    var options = sib.options || {};
     console.log('[Awana] Batch: clicking ' + sib.name); setStatus('\u23F3');
-    // Snapshot pre-existing buttons so Strategy 2 can identify the newly-opened modal button
-    var preClickButtons = new Set(document.querySelectorAll('button, [role="button"]'));
+    // Fire print in background immediately — don't wait for check-in to complete.
+    // Mark as batch-printed so onCheckin doesn't double-print when #lastCheckin updates.
+    var club = lookupClub(sib.name);
+    batchPrintedNames.add(sib.name.toLowerCase());
+    setTimeout(function() { batchPrintedNames.delete(sib.name.toLowerCase()); }, 8000);
+    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
     sib.element.click();
-    pollForCheckinButton(sib, remaining, options || {}, 30, preClickButtons);
+    pollForCheckinButton(sib, remaining, options, 30);
   }
 
   function getClubImageDataUrl(img) {
@@ -427,6 +441,7 @@
   function onCheckin(name) {
     if (selectedMode === 'off') return;
     if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
+    if (batchPrintedNames.has(name.toLowerCase())) return; // already printed in batch
 
     lastPrintTime = Date.now();
     var club = lookupClub(name);
