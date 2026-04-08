@@ -1,3 +1,17 @@
+## [2.0.4] - 2026-04-08
+Removes bookmarklet, consolidates on Chrome extension only.
+
+### Bookmarklet Removed
+- **Decision:** Eliminated `bookmarklet.js` and related files (root + `print-server/public/`). All functionality now lives exclusively in the Chrome extension (`chrome-extension/content.js`).
+- **Why:** Bookmarklet requires manual paste into browser console on every visit; Chrome extension persists and auto-injects. Extension is the single source of truth going forward.
+- **Updated:** `vite.config.ts` no longer serves/emits bookmarklet files. Removed `package.json` bookmarklet scripts and deleted `scripts/validate-bookmarklet.cjs` and `scripts/build-bookmarklet-url.cjs`.
+
+### Chrome Extension Updated (v2.0.3 fixes)
+- Applied sibling check-in fixes to `chrome-extension/content.js`: Strategy 1 now targets `button#checkin` in visible `#checkin-modal`.
+- Per-sibling Bible/Friend checkboxes in the sibling panel (no global options).
+- Faster batch check-ins: `BATCH_DELAY` 700ms, prints fire in background before check-in.
+- `batchPrintedNames` deduplication to prevent double-prints from `#lastCheckin` observer.
+
 ## [2.0.3] - 2026-04-08
 Fixes sibling batch check-in, speeds up batch processing, and updates checkbox UI.
 

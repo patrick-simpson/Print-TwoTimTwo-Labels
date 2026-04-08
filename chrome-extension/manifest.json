@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "KVBC Kids Check-in Extension",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Automatically detect check-ins and send them to the local KVBC Print Server.",
   "permissions": ["storage"],
   "host_permissions": [
