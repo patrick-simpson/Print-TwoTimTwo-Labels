@@ -308,49 +308,71 @@
 
   function pollForCheckinButton(sib, remaining, options, attempts) {
     if (attempts <= 0) {
-      if (remaining.length > 0) setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      console.log('[Awana] Timed out waiting for check-in button for ' + sib.name);
+      // Bug 4 fix: wrap in function so it's deferred, not called immediately
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
       return;
     }
     var checkinBtn = null;
 
-    // Strategy 1: TwoTimTwo-specific — button#checkin inside a visible #checkin-modal (Bootstrap modal)
-    // Bootstrap modals are pre-rendered in the DOM (always present but hidden), so we check visibility explicitly.
+    // Strategy 1: TwoTimTwo-specific — button#checkin inside a visible #checkin-modal
+    // Bug 1 fix: use getComputedStyle().display instead of offsetParent.
+    // The modal is position:fixed, so offsetParent is ALWAYS null even when fully visible.
     var ttModal = document.getElementById('checkin-modal');
-    if (ttModal && ttModal.offsetParent !== null) {
+    if (ttModal && window.getComputedStyle(ttModal).display !== 'none') {
       checkinBtn = ttModal.querySelector('button#checkin');
     }
+
+    // Strategy 2: explicit TwoTimTwo-style selectors
     if (!checkinBtn) {
       checkinBtn = document.querySelector('.checkin-btn, button[data-action="checkin"]');
     }
 
-    // Strategy 2: any visible button with check-in text in the document
+    // Strategy 3: any visible button with check-in text in document
     if (!checkinBtn) {
       var allBtns = document.querySelectorAll('button, [role="button"]');
       for (var i = 0; i < allBtns.length; i++) {
         var btn = allBtns[i];
-        if (!btn.offsetParent) continue; // skip hidden
+        if (!btn.offsetParent) continue;
         var txt = btn.textContent.toLowerCase().trim();
-        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = btn; break; }
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
+          checkinBtn = btn;
+          break;
+        }
       }
     }
 
-    // Strategy 3: modal-scoped fallback
+    // Strategy 4: modal-scoped fallback — use #checkin-modal directly to avoid
+    // accidentally matching buttons in other Bootstrap modals (like #page-info-window)
     if (!checkinBtn) {
-      var modalBtns = document.querySelectorAll('.modal button, .dialog button, [class*="modal"] button, [role="dialog"] button');
+      var modalBtns = document.querySelectorAll('#checkin-modal button, .dialog button, [role="dialog"] button');
       for (var i = 0; i < modalBtns.length; i++) {
-        if (!modalBtns[i].offsetParent) continue; // skip hidden
+        if (!modalBtns[i].offsetParent) continue;
         var txt = modalBtns[i].textContent.toLowerCase().trim();
-        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') { checkinBtn = modalBtns[i]; break; }
+        if (txt === 'checkin' || txt === 'check in' || txt === 'check-in') {
+          checkinBtn = modalBtns[i];
+          break;
+        }
       }
     }
 
     if (checkinBtn && checkinBtn.offsetParent !== null) {
       console.log('[Awana] Found check-in button, applying options and clicking for ' + sib.name);
-      var modalContainer = checkinBtn.closest('.modal, .dialog, [class*="modal"], [role="dialog"]') || checkinBtn.parentElement;
+
+      // Bug 2 fix: use #checkin-modal directly instead of .closest('[class*="modal"]'),
+      // which incorrectly matches .modal-footer (an ancestor with "modal" in its class name),
+      // resulting in 0 checkboxes found and options never being applied.
+      var modalContainer = document.getElementById('checkin-modal') || checkinBtn.parentElement;
       applyCheckinOptions(modalContainer, options);
+
+      // Bug 3 fix: only call .click() once — the dispatchEvent was causing a double-submission
       checkinBtn.click();
-      checkinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      if (remaining.length > 0) setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
     } else {
       setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
     }
