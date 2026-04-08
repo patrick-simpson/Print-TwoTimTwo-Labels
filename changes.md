@@ -1,4 +1,4 @@
-## [1.11.0] - 2026-04-07
+## [2.0.3] - 2026-04-08
 Fixes sibling batch check-in, speeds up batch processing, and updates checkbox UI.
 
 ### Sibling Check-in Fix
