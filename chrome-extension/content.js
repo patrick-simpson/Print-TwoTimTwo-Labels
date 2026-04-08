@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.0.4';
+  const EXTENSION_VERSION = '2.0.5';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 700;
   const DEBOUNCE_MS = 100;

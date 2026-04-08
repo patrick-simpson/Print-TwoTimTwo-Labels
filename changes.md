@@ -1,3 +1,29 @@
+## [2.0.5] - 2026-04-08
+Critical fixes for sibling check-in — all siblings were timing out due to four bugs in button detection and options application.
+
+### Bug Fixes (pollForCheckinButton)
+
+**Bug 1 — offsetParent always null for position:fixed elements:**
+- `#checkin-modal` uses CSS `position: fixed`, which means `offsetParent` is **always `null`** regardless of visibility. Strategy 1 was never finding the button because the visibility check failed immediately.
+- **Fix:** Replace `ttModal.offsetParent !== null` with `window.getComputedStyle(ttModal).display !== 'none'`.
+
+**Bug 2 — Wrong modalContainer from `.closest('[class*="modal"]')`:**
+- `.closest()` walks up the DOM and stops at the first ancestor matching the selector. For `button#checkin`, it matched `.modal-footer` (an ancestor whose class name contains "modal"), not `#checkin-modal`. Result: 0 checkboxes found, Bible/Friend options never applied.
+- **Fix:** Use `document.getElementById('checkin-modal')` directly instead of `.closest()`.
+
+**Bug 3 — Double-submission from dual click handlers:**
+- Code called both `checkinBtn.click()` and `checkinBtn.dispatchEvent(new MouseEvent('click'))`, firing the form submission handler twice and creating duplicate check-in records.
+- **Fix:** Remove the `dispatchEvent` line. `.click()` alone is sufficient.
+
+**Bug 4 — Broken timeout fallback calls immediately:**
+- `setTimeout(batchCheckInSiblings(remaining), BATCH_DELAY)` executed `batchCheckInSiblings(remaining)` right away (passing `undefined` to `setTimeout`). The deferred batch never ran.
+- **Fix:** Wrap in a function: `setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY)`.
+
+**Bonus — Strategy 4 selector specificity:**
+- Changed from `.modal button` to `#checkin-modal button` to avoid accidentally matching buttons in other Bootstrap modals on the page (like `#page-info-window`).
+
+**Result:** Siblings now check in correctly with Bible/Friend options applied and no duplicate submissions.
+
 ## [2.0.4] - 2026-04-08
 Removes bookmarklet, consolidates on Chrome extension only.
 
