@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.1.0';
+  const EXTENSION_VERSION = '2.2.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -21,6 +21,69 @@
   let lastPrintedName = null;
   let lastPrintTime = 0;
   var batchPrintedNames = new Set();
+
+  // ── Remote check-in detection state ────────────────────────────────────────
+  // The .clubber list on TwoTimTwo.com shrinks when a kid is checked in on
+  // ANY device.  By diffing the visible set between scans we can detect
+  // check-ins that happened on a phone/other laptop and print their label
+  // here.  A session-scoped "printed" set dedupes against the existing
+  // #lastCheckin detection path so locally-checked-in kids aren't reprinted.
+  var ROSTER_CACHE    = {};          // { nameLower: { displayName, clubName, clubImageData } }
+  var knownClubbers   = new Set();   // last-seen lowercased names
+  var printedNames    = new Set();   // session dedup
+  var baselineScanned = false;
+  var REMOTE_PRINTED_KEY  = 'awana_printedNames';
+  var REMOTE_PRINTED_TS   = 'awana_printedTs';
+  var REMOTE_BASELINE_KEY = 'awana_baselineDone';
+  var REMOTE_KNOWN_KEY    = 'awana_knownClubbers';
+  var REMOTE_ROSTER_KEY   = 'awana_rosterCache';
+  var REMOTE_STALE_MS     = 4 * 60 * 60 * 1000; // 4h idle resets dedup (new event night)
+  var SCAN_INTERVAL_MS    = 5000;
+  var AUTO_REFRESH_INTERVAL_MS = 30000;
+
+  function loadPrintedState() {
+    try {
+      var ts = parseInt(sessionStorage.getItem(REMOTE_PRINTED_TS) || '0', 10);
+      if (ts && Date.now() - ts < REMOTE_STALE_MS) {
+        var arr = JSON.parse(sessionStorage.getItem(REMOTE_PRINTED_KEY) || '[]');
+        if (Array.isArray(arr)) printedNames = new Set(arr);
+        baselineScanned = sessionStorage.getItem(REMOTE_BASELINE_KEY) === '1';
+        // Restore knownClubbers + ROSTER_CACHE so diff survives a reload.
+        var knownArr = JSON.parse(sessionStorage.getItem(REMOTE_KNOWN_KEY) || '[]');
+        if (Array.isArray(knownArr)) knownClubbers = new Set(knownArr);
+        var rosterObj = JSON.parse(sessionStorage.getItem(REMOTE_ROSTER_KEY) || '{}');
+        if (rosterObj && typeof rosterObj === 'object') ROSTER_CACHE = rosterObj;
+      } else {
+        sessionStorage.removeItem(REMOTE_PRINTED_KEY);
+        sessionStorage.removeItem(REMOTE_PRINTED_TS);
+        sessionStorage.removeItem(REMOTE_BASELINE_KEY);
+        sessionStorage.removeItem(REMOTE_KNOWN_KEY);
+        sessionStorage.removeItem(REMOTE_ROSTER_KEY);
+      }
+    } catch (e) { /* ignore sessionStorage errors */ }
+  }
+
+  var rosterDirty = false;
+  function saveScanState() {
+    try {
+      sessionStorage.setItem(REMOTE_KNOWN_KEY, JSON.stringify(Array.from(knownClubbers)));
+      if (rosterDirty) {
+        sessionStorage.setItem(REMOTE_ROSTER_KEY, JSON.stringify(ROSTER_CACHE));
+        rosterDirty = false;
+      }
+    } catch (e) { /* ignore quota errors */ }
+  }
+
+  function markPrinted(name) {
+    if (!name) return;
+    var key = name.toLowerCase().trim();
+    if (!key) return;
+    printedNames.add(key);
+    try {
+      sessionStorage.setItem(REMOTE_PRINTED_KEY, JSON.stringify(Array.from(printedNames)));
+      sessionStorage.setItem(REMOTE_PRINTED_TS, String(Date.now()));
+    } catch (e) { /* ignore quota errors */ }
+  }
 
   function isUndo(text) {
     return text && text.toLowerCase().includes('undo');
@@ -427,6 +490,7 @@
     batchPrintedNames.add(sibKey);
     setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
     lastPrintTime = Date.now(); // also arm the cooldown guard
+    markPrinted(sib.name); // record in session dedup so remote scan won't reprint
     doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
 
     // Click the sibling's clubber element to open the check-in modal
@@ -905,7 +969,11 @@
 
     const observer = new MutationObserver(function() {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(checkForChange, DEBOUNCE_MS);
+      debounceTimer = setTimeout(function() {
+        checkForChange();
+        // Also scan the clubber list for remote check-ins on every mutation
+        try { scanClubberList(); } catch (e) { console.log('[Awana] scan error:', e); }
+      }, DEBOUNCE_MS);
     });
 
     const watchTarget = document.querySelector('#lastCheckin') || document.body;
@@ -916,6 +984,71 @@
     });
 
     console.log('[Awana] Watching for check-ins');
+  }
+
+  // ── Remote check-in detection ──────────────────────────────────────────────
+  // Scan the visible .clubber list and compare against the previous scan.
+  // Any name that was present last scan but is now missing just got checked
+  // in (locally OR remotely).  On the very first scan we only populate the
+  // baseline — we must NOT print the entire roster.
+  function scanClubberList() {
+    var current = new Set();
+    var clubberEls = document.querySelectorAll('.clubber');
+    for (var i = 0; i < clubberEls.length; i++) {
+      var nameEl = clubberEls[i].querySelector('.name');
+      if (!nameEl) continue;
+      var displayName = nameEl.innerText.trim();
+      if (!displayName) continue;
+      var key = displayName.toLowerCase();
+      current.add(key);
+
+      // Cache club info while the kid is still visible — once they disappear,
+      // lookupClub() can't find them.
+      if (!ROSTER_CACHE[key]) {
+        var imgEl = clubberEls[i].querySelector('.club img');
+        ROSTER_CACHE[key] = {
+          displayName: displayName,
+          clubName: imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '',
+          clubImageData: imgEl ? getClubImageDataUrl(imgEl) : null
+        };
+        rosterDirty = true;
+      }
+    }
+
+    if (!baselineScanned) {
+      knownClubbers = current;
+      baselineScanned = true;
+      try { sessionStorage.setItem(REMOTE_BASELINE_KEY, '1'); } catch (e) {}
+      console.log('[Awana] Baseline established: ' + current.size + ' kids');
+      saveScanState();
+      return;
+    }
+
+    // Diff: previously present, now missing → just got checked in
+    knownClubbers.forEach(function(key) {
+      if (current.has(key)) return;
+      if (printedNames.has(key)) return;
+      var meta = ROSTER_CACHE[key];
+      if (!meta) return;
+      console.log('[Awana] Remote check-in detected:', meta.displayName);
+      triggerRemotePrint(meta.displayName, meta.clubName, meta.clubImageData);
+    });
+
+    knownClubbers = current;
+    saveScanState();
+  }
+
+  function triggerRemotePrint(fullName, clubName, clubImageData) {
+    if (selectedMode === 'off') return;
+    var key = fullName.toLowerCase().trim();
+    if (printedNames.has(key)) return;
+    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) {
+      // Another print is in flight; retry on the next scan
+      return;
+    }
+    lastPrintTime = Date.now();
+    markPrinted(fullName);
+    doPrint(fullName, clubName || '', clubImageData || null);
   }
 
   function lookupClub(name) {
@@ -940,9 +1073,12 @@
   function onCheckin(name) {
     if (selectedMode === 'off') return;
     if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
-    if (batchPrintedNames.has(name.toLowerCase().trim())) return; // already printed in batch
+    var key = name.toLowerCase().trim();
+    if (batchPrintedNames.has(key)) return; // already printed in batch
+    if (printedNames.has(key)) return; // already printed this session (local or remote)
 
     lastPrintTime = Date.now();
+    markPrinted(name);
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
 
@@ -1155,9 +1291,42 @@
       });
   }
 
+  // ── Peak-window auto-refresh ───────────────────────────────────────────────
+  // TwoTimTwo.com doesn't push updates of remote check-ins, so during the
+  // busiest window (5:40 PM - 6:00 PM) we reload the page every 30 seconds
+  // so the .clubber-list diff sees the latest state.  Suppressed while the
+  // user is mid-action (modal open, sibling panel open, typing).
+  function autoRefresh() {
+    try {
+      if (document.hidden) return;
+      var now = new Date();
+      var mins = now.getHours() * 60 + now.getMinutes();
+      var WINDOW_START = 17 * 60 + 40; // 5:40 PM
+      var WINDOW_END   = 18 * 60;      // 6:00 PM
+      if (mins < WINDOW_START || mins >= WINDOW_END) return;
+
+      // Suppress reload if any modal / panel is open or user is typing
+      if (document.getElementById('awana-sibling-panel')) return;
+      if (document.getElementById('checkin-modal')) return;
+      var active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+
+      console.log('[Awana] Peak-window auto-refresh');
+      location.reload();
+    } catch (e) { console.log('[Awana] autoRefresh error:', e); }
+  }
+
   injectWidget();
+  loadPrintedState();
   fetchPrinters();
   watchCheckins();
+  // Establish the roster baseline on load (or re-populate ROSTER_CACHE after a
+  // reload that preserved baselineScanned via sessionStorage).
+  setTimeout(scanClubberList, 500);
+  // Safety-net scan every 5 s in case the MutationObserver misses a DOM change.
+  setInterval(scanClubberList, SCAN_INTERVAL_MS);
+  // Peak-window auto-refresh
+  setInterval(autoRefresh, AUTO_REFRESH_INTERVAL_MS);
   syncCsv();
   checkForExtensionUpdate();
   updateQueueBadge();

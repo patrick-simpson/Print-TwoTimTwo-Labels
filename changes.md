@@ -1,3 +1,24 @@
+## [2.2.0] - 2026-04-09
+Detect remote check-ins by diffing the `.clubber` roster across scans, so a kid checked in from another device (phone, second laptop) eventually gets their label printed here. Auto-refresh the page during peak time so the diff sees fresh data.
+
+### Why
+TwoTimTwo.com doesn't push real-time updates — the existing `#lastCheckin` observer only fires for check-ins made on *this* browser. If a volunteer uses a phone or a second laptop to check someone in, the label never prints because the laptop never sees the event. This was causing missed labels during the 5:40–6:00 PM rush when multiple volunteers are checking kids in simultaneously.
+
+### Remote check-in detection (chrome-extension/content.js)
+- New `scanClubberList()` captures the visible `.clubber` names on every scan; any name present on the previous scan but missing now is treated as a check-in (local *or* remote) and its label is printed via the normal `doPrint()` path.
+- Club name + icon image are cached in `ROSTER_CACHE` while the kid is still visible, so they can still be printed after the kid disappears (where `lookupClub()` would fail).
+- A session-scoped `printedNames` `Set` dedupes across the `#lastCheckin` path, the batch-sibling path, and the new diff path — a locally-checked-in kid is never reprinted. `onCheckin()` and `batchCheckInSiblings()` now call `markPrinted()` to feed this set.
+- State (`printedNames`, `knownClubbers`, `ROSTER_CACHE`, baseline flag) is persisted to `sessionStorage` so detection survives the peak-window auto-refresh reload. A 4-hour idle timeout auto-clears the dedup state between Awana nights.
+- First scan after load is a baseline-only populate — we never print the full roster on page load.
+- Scans fire once on init, on every debounced `MutationObserver` callback, and on a 5-second safety interval.
+
+### Peak-window auto-refresh (chrome-extension/content.js)
+- New `autoRefresh()` reloads the page every 30 seconds when the local clock is between 17:40 and 18:00.
+- Suppressed when the document is hidden, the sibling panel (`#awana-sibling-panel`) is open, the check-in modal (`#checkin-modal`) is open, or any `INPUT`/`TEXTAREA`/`SELECT` is focused — preserves in-progress user actions.
+
+### Scope
+- **Chrome extension only** — `electron-app/src/checkin-script.js` intentionally not updated in this release.
+
 ## [2.1.0] - 2026-04-09
 Batch check-in reliability and quality improvements: duplicate prevention, faster throughput, club-specific fonts, age-appropriate sibling options, and correct multi-family separation.
 
