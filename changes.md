@@ -1,3 +1,33 @@
+## [2.1.0] - 2026-04-09
+Batch check-in reliability and quality improvements: duplicate prevention, faster throughput, club-specific fonts, age-appropriate sibling options, and correct multi-family separation.
+
+### Improvements
+
+**Duplicate label prevention (batch check-in):**
+- `lastPrintTime` is now updated when batch fires a print, engaging the `PRINT_COOLDOWN` guard as a second layer alongside the existing `batchPrintedNames` Set.
+- Name keys stored in `batchPrintedNames` are now `.trim()`ed for both write and read, eliminating any edge-case mismatch from trailing whitespace in `#lastCheckin`.
+
+**Faster batch check-ins:**
+- `BATCH_DELAY` reduced from 700 ms to 400 ms between siblings. The print fires before the check-in modal is submitted so the modal round-trip is the real bottleneck — 400 ms is sufficient for the next sibling selection without sacrificing reliability.
+
+**Club-specific label fonts:**
+- Each Awana club now uses a distinct font personality on the printed label:
+  - Puggles / Cubbies → Comic Sans MS (fun, rounded, age-appropriate)
+  - Sparks → Trebuchet MS (modern, energetic)
+  - T&T → Arial Black (bold, strong)
+  - Trek → Georgia (classic, mature)
+  - Journey → Palatino Linotype (sophisticated)
+  - Unknown / default → Helvetica / Arial (unchanged)
+- `fitFontSize` updated to accept a `fontFamily` parameter so auto-sizing uses the same face as rendering.
+
+**No Bible / Friend options for Puggles and Cubbies:**
+- Sibling check-in panel now detects the sibling's club name. If the club is Puggles or Cubbies the Bible and Friend checkboxes are omitted — those programmes don't track those options.
+
+**Correct Miller-family (same-last-name) separation:**
+- `findSiblings` previously always fell back to DOM last-name matching when the server returned zero siblings, incorrectly grouping unrelated families who share a last name.
+- Fix: if the server responds successfully (HTTP 200) with an empty siblings list the DOM fallback is suppressed. The fallback now only activates when the server is unreachable or times out.
+- Families with the same last name are correctly separated as long as the synced CSV contains any distinguishing field: HouseholdID, PrimaryContact, Guardian, or Address.
+
 ## [2.0.5] - 2026-04-08
 Critical fixes for sibling check-in — all siblings were timing out due to four bugs in button detection and options application.
 

@@ -387,10 +387,27 @@ async function resolveImageBuffer(clubImageData) {
   return null;
 }
 
+// ── Club-specific font selection ──────────────────────────────────────────────
+// Each Awana club gets a distinct font personality on the label.
+// Fonts are standard Windows system fonts available on the target machine.
+// Falls back through safe generic stacks so labels always render even if
+// a specific face is missing.
+function getClubFontFamily(clubName) {
+  const n = (clubName || '').toLowerCase();
+  if (n.includes('puggle'))                          return "'Comic Sans MS', cursive, sans-serif";
+  if (n.includes('cubbie'))                          return "'Comic Sans MS', cursive, sans-serif";
+  if (n.includes('spark'))                           return "'Trebuchet MS', Arial, sans-serif";
+  if (n.includes('t&t') || n.includes('t & t') || n.includes('truth and training'))
+                                                     return "'Arial Black', 'Arial Bold', Arial, sans-serif";
+  if (n.includes('trek'))                            return "Georgia, 'Times New Roman', serif";
+  if (n.includes('journey'))                         return "'Palatino Linotype', Palatino, Georgia, serif";
+  return "Helvetica, Arial, sans-serif";
+}
+
 // ── Auto-size a font to fit within maxWidth (canvas version) ─────────────────
-function fitFontSize(ctx, text, fontStyle, maxWidth, maxSize = 32, minSize = 18) {
+function fitFontSize(ctx, text, fontStyle, maxWidth, maxSize = 32, minSize = 18, fontFamily = 'Helvetica, Arial, sans-serif') {
   for (let size = maxSize; size >= minSize; size -= 2) {
-    ctx.font = `${fontStyle} ${size}px Helvetica, Arial, sans-serif`;
+    ctx.font = `${fontStyle} ${size}px ${fontFamily}`;
     if (ctx.measureText(text).width <= maxWidth) return size;
   }
   return minSize;
@@ -504,8 +521,11 @@ async function generateLabel(
 
   const ALLERGY_STRIP_H = 0;  // No bottom strip — allergy icons go in bottom-right corner
 
+  // Pick a font personality based on the child's Awana club
+  const fontFamily = getClubFontFamily(clubName);
+
   // Font sizes (in pt)
-  const fs1 = fitFontSize(ctx, firstName, 'bold', textW);
+  const fs1 = fitFontSize(ctx, firstName, 'bold', textW, 48, 18, fontFamily);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
@@ -528,7 +548,7 @@ async function generateLabel(
   const textCenterX = textX + textW / 2;
 
   // ── First name ────────────────────────────────────────────────────────────
-  const firstFont = `bold ${fs1}px Helvetica, Arial, sans-serif`;
+  const firstFont = `bold ${fs1}px ${fontFamily}`;
   ctx.font = firstFont;
   const safeFirst = truncateTextCanvas(ctx, firstName, firstFont, textW);
   ctx.fillStyle = '#000000';
@@ -538,7 +558,7 @@ async function generateLabel(
   // ── Last name ─────────────────────────────────────────────────────────────
   if (hasLast) {
     y += GAP;
-    const lastFont = `${fs2}px Helvetica, Arial, sans-serif`;
+    const lastFont = `${fs2}px ${fontFamily}`;
     ctx.font = lastFont;
     const safeLast = truncateTextCanvas(ctx, lastName, lastFont, textW);
     ctx.fillStyle = '#222222';
@@ -557,7 +577,7 @@ async function generateLabel(
     ctx.strokeStyle = '#cccccc';
     ctx.stroke();
     y += 5;
-    const clubFont = `italic ${fs3}px Helvetica, Arial, sans-serif`;
+    const clubFont = `italic ${fs3}px ${fontFamily}`;
     ctx.font = clubFont;
     const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
     ctx.fillStyle = '#444444';
@@ -571,7 +591,7 @@ async function generateLabel(
     let groupStr = handbookGroup.length > 30
       ? handbookGroup.slice(0, 29) + '…'
       : handbookGroup;
-    const groupFont = `italic ${fs4}px Helvetica, Arial, sans-serif`;
+    const groupFont = `italic ${fs4}px ${fontFamily}`;
     ctx.font = groupFont;
     groupStr = truncateTextCanvas(ctx, groupStr, groupFont, textW);
     ctx.fillStyle = '#666666';
@@ -582,14 +602,14 @@ async function generateLabel(
   // ── Birthday banner ───────────────────────────────────────────────────────
   if (isBirthday) {
     y += GAP;
-    ctx.font = `bold ${fs5}px Helvetica, Arial, sans-serif`;
+    ctx.font = `bold ${fs5}px ${fontFamily}`;
     ctx.fillStyle = '#c0392b';
     ctx.fillText('Happy Birthday!', textCenterX, y);
   }
 
   // ── Visitor badge ─────────────────────────────────────────────────────────
   if (isVisitor) {
-    const visitorFont = `bold ${fs5}px Helvetica, Arial, sans-serif`;
+    const visitorFont = `bold ${fs5}px ${fontFamily}`;
     ctx.font = visitorFont;
     const vText = 'VISITOR';
     const vWidth = ctx.measureText(vText).width;

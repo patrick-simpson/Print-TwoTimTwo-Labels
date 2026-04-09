@@ -2,9 +2,9 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.0.5';
+  const EXTENSION_VERSION = '2.1.0';
   const PRINT_COOLDOWN = 2000;
-  const BATCH_DELAY = 700;
+  const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
   const PRINT_SERVER = 'http://localhost:3456';
@@ -100,11 +100,18 @@
   // families / different last names).  Falls back to DOM last-name matching
   // if the server is unreachable or returns no results.
   async function findSiblings(fullName) {
-    // 1. Try server CSV family-index lookup
+    // 1. Try server CSV family-index lookup.
+    // If the server responds (even with an empty list), trust it — the CSV family
+    // index uses HouseholdID / PrimaryContact / Guardian / Address before falling
+    // back to LastName, so it correctly separates families that share a last name
+    // (e.g. two unrelated Miller families).  Only fall back to DOM last-name
+    // matching when the server is unreachable or times out.
+    var serverReachable = false;
     try {
       var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName),
         { signal: AbortSignal.timeout(2000) });
       if (resp.ok) {
+        serverReachable = true;
         var data = await resp.json();
         if (data.siblings && data.siblings.length > 0) {
           var serverSiblings = [];
@@ -122,12 +129,17 @@
               }
             }
           });
-          if (serverSiblings.length > 0) return serverSiblings;
+          return serverSiblings; // may be empty if none found in DOM
         }
+        // Server responded with empty siblings — respect that; do NOT fall back
+        // to last-name DOM matching, which would incorrectly group separate families.
+        return [];
       }
     } catch (_e) { /* server unavailable or timed out — fall through */ }
 
-    // 2. Fallback: match by shared last name in the DOM
+    // 2. Fallback: match by shared last name in the DOM.
+    // Only used when the server could not be reached (offline / not running).
+    if (serverReachable) return [];
     var parts = fullName.trim().split(/\s+/);
     if (parts.length < 2) return [];
     var lastName = parts.slice(1).join(' ').toLowerCase();
@@ -190,6 +202,12 @@
     subtitle.textContent = 'Siblings of ' + checkedInName + ':';
     body.appendChild(subtitle);
 
+    // Puggles and Cubbies don't have Bible or Friend check-in options.
+    function isYoungClub(clubName) {
+      var n = (clubName || '').toLowerCase();
+      return n.includes('puggle') || n.includes('cubbie');
+    }
+
     var checkboxes = [];
     siblings.forEach(function(sib) {
       var row = document.createElement('div');
@@ -209,32 +227,44 @@
       Object.assign(clubSpan.style, { fontSize: '11px', color: '#64748b' });
       clubSpan.textContent = sib.clubName || '';
 
-      // Per-sibling checkboxes on the right
-      var bibleLbl = document.createElement('label');
-      Object.assign(bibleLbl.style, {
-        display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
-        cursor: 'pointer', flexShrink: '0'
-      });
-      var bibleCb = document.createElement('input');
-      bibleCb.type = 'checkbox';
-      bibleCb.checked = true;
-      var bibleSpan = document.createElement('span');
-      bibleSpan.textContent = 'Bible';
-      bibleLbl.append(bibleCb, bibleSpan);
+      // Puggles / Cubbies have no Bible or Friend check-in option
+      var young = isYoungClub(sib.clubName);
+      var bibleCb = { checked: false };
+      var friendCb = { checked: false };
 
-      var friendLbl = document.createElement('label');
-      Object.assign(friendLbl.style, {
-        display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
-        cursor: 'pointer', flexShrink: '0'
-      });
-      var friendCb = document.createElement('input');
-      friendCb.type = 'checkbox';
-      friendCb.checked = false;
-      var friendSpan = document.createElement('span');
-      friendSpan.textContent = 'Friend';
-      friendLbl.append(friendCb, friendSpan);
+      if (!young) {
+        // Per-sibling checkboxes on the right
+        var bibleLbl = document.createElement('label');
+        Object.assign(bibleLbl.style, {
+          display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
+          cursor: 'pointer', flexShrink: '0'
+        });
+        var realBibleCb = document.createElement('input');
+        realBibleCb.type = 'checkbox';
+        realBibleCb.checked = true;
+        bibleCb = realBibleCb;
+        var bibleSpan = document.createElement('span');
+        bibleSpan.textContent = 'Bible';
+        bibleLbl.append(realBibleCb, bibleSpan);
 
-      row.append(includeCb, nameSpan, clubSpan, bibleLbl, friendLbl);
+        var friendLbl = document.createElement('label');
+        Object.assign(friendLbl.style, {
+          display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
+          cursor: 'pointer', flexShrink: '0'
+        });
+        var realFriendCb = document.createElement('input');
+        realFriendCb.type = 'checkbox';
+        realFriendCb.checked = false;
+        friendCb = realFriendCb;
+        var friendSpan = document.createElement('span');
+        friendSpan.textContent = 'Friend';
+        friendLbl.append(realFriendCb, friendSpan);
+
+        row.append(includeCb, nameSpan, clubSpan, bibleLbl, friendLbl);
+      } else {
+        row.append(includeCb, nameSpan, clubSpan);
+      }
+
       body.appendChild(row);
       checkboxes.push({ checkbox: includeCb, sibling: sib, bibleCb: bibleCb, friendCb: friendCb });
     });
@@ -389,10 +419,14 @@
     setStatus('\u23F3');
 
     // Fire print in background immediately — don't wait for check-in to complete.
-    // Mark as batch-printed so onCheckin doesn't double-print when #lastCheckin updates.
+    // Guard against onCheckin double-printing via two layers:
+    //   1. batchPrintedNames Set (8 s window) — primary guard
+    //   2. lastPrintTime reset — secondary cooldown guard
     var club = lookupClub(sib.name);
-    batchPrintedNames.add(sib.name.toLowerCase());
-    setTimeout(function() { batchPrintedNames.delete(sib.name.toLowerCase()); }, 8000);
+    var sibKey = sib.name.toLowerCase().trim();
+    batchPrintedNames.add(sibKey);
+    setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
+    lastPrintTime = Date.now(); // also arm the cooldown guard
     doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
 
     // Click the sibling's clubber element to open the check-in modal
@@ -906,7 +940,7 @@
   function onCheckin(name) {
     if (selectedMode === 'off') return;
     if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
-    if (batchPrintedNames.has(name.toLowerCase())) return; // already printed in batch
+    if (batchPrintedNames.has(name.toLowerCase().trim())) return; // already printed in batch
 
     lastPrintTime = Date.now();
     var club = lookupClub(name);
