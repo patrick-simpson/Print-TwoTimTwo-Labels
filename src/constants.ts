@@ -4,7 +4,7 @@
  */
 
 // Print server version — bump this whenever server.js changes are deployed
-export const SERVER_VERSION = '2.1.0';
+export const SERVER_VERSION = '2.2.0';
 
 // Server & Network Configuration
 export const SERVER_PORT = 3456;
