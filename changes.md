@@ -1,3 +1,42 @@
+## [2.3.0] - 2026-04-10
+Production refactor. Collapse the project to two shipped artifacts — **print server** and **Chrome extension** — and rebuild the website as a setup guide. Drop Electron, PowerShell installers, and all legacy `.bat` entry points.
+
+### Why
+The repo had grown five parallel delivery paths (React simulator, bookmarklet, extension, Electron, PowerShell), with ~3,500 LOC split across four 1,000+ LOC files and silent-failure modes throughout. The goal of v2.3.0 is a production-ready tool anyone can pick up and use: one supported install path, modular/tested server code, a clear landing page, and CI that catches version drift before a release ships.
+
+### Repo restructure
+- `print-server/` → `server/`, `chrome-extension/` → `extension/`, root React app → `website/`.
+- Deleted `electron-app/` (entire directory), `install-and-run.ps1`, `install.bat`, `launch-awana.bat`, `chrome-extension.zip`, `read-config.js`, `gemini.md`, `CHANGELOG_ARCHIVE.md`, `components/PrintServerInfo.tsx`, and all three Electron/PowerShell GitHub workflows.
+- New two-zip release model: `awana-print-server-<v>.zip` and `awana-checkin-extension-<v>.zip`.
+
+### Server — modular + tested (`server/`)
+- Split the 1,244-LOC `server.js` monolith into focused modules under `server/src/`: `csv.js`, `enrich.js`, `label.js`, `printer.js`, `config.js`, `roster.js`, `history.js`, `routes.js`, `log.js`. The entry point is now a ~50-line wire-up.
+- Atomic writes for `config.json`, `clubbers.csv`, `print-history.json` (tmp + rename) so a crash mid-write can't corrupt runtime state.
+- Temp PNG cleanup now runs in `finally` blocks — no more leaks on printer exceptions.
+- Port 3456 collision fails loudly with an actionable message instead of killing whatever else is on the port (the old PowerShell-installer behavior).
+- `uncaughtException` / `unhandledRejection` handlers keep the process alive during a live event.
+- New `/health` endpoint reports `{ status, ready, version, printer, warnings[] }` for extension + triage use.
+- 26 unit tests added using Node's built-in `node:test` (zero new dev deps): CSV edge cases, enrichment, atomic config, label render smoke test (skipped when `canvas` isn't built).
+
+### Extension — hardened (`extension/`)
+- Centralized all TwoTimTwo DOM selectors in a top-of-file `SELECTORS` constant — a single edit point when the upstream site changes.
+- Added a 60-second selector heartbeat that logs a clear warning after three consecutive failed matches, surfacing silent DOM drift instead of letting check-ins quietly stop printing.
+
+### Website — rewritten (`website/`)
+- `App.tsx` rebuilt as a single-page setup guide: Hero, How it works, Setup guide accordion, interactive label preview (reuses `ClubberList` + `CheckinModal`), Troubleshooting accordion, Footer.
+- Brand palette matches the TwoTimTwo check-in UI (`#4672b3` primary + `#ffd65c` accent); drops the `picsum.photos` placeholder and the PowerShell-era instructions.
+- Vite config outputs to `dist/website/` with `base` set for GitHub Pages.
+
+### CI / releases (`.github/workflows/`)
+- New `ci.yml`: version-drift check, server tests, website build on every PR.
+- New `release.yml`: on `v*` tags, verifies the tag matches `VERSION`, builds both zips, creates a GitHub Release.
+- New `deploy-website.yml`: on `main` pushes touching `website/`, deploys to GitHub Pages.
+
+### Docs
+- `README.md`, `TROUBLESHOOTING.md`, `CLAUDE.md` rewritten for the two-artifact model.
+- `scripts/check-versions.cjs` added as the canonical version-drift guard (also invoked from CI).
+- `scripts/bump-version.cjs` updated to reflect the new file layout (no more `install-and-run.ps1` or Electron references).
+
 ## [2.2.0] - 2026-04-09
 Detect remote check-ins by diffing the `.clubber` roster across scans, so a kid checked in from another device (phone, second laptop) eventually gets their label printed here. Auto-refresh the page during peak time so the diff sees fresh data.
 

@@ -1,225 +1,97 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-Having issues with Awana Label Printer? This guide covers common problems and solutions.
-
-## Installation Issues
-
-### "PowerShell execution policy" error
-
-**Error:** `cannot be loaded because running scripts is disabled on this system`
-
-**Solution:**
-1. Right-click PowerShell → **Run as Administrator**
-2. Run: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
-3. Type `Y` and press Enter
-4. Now run `install-and-run.ps1` again
+If a check-in doesn't print, walk through this list. Most issues are resolved in under a minute.
 
 ---
 
-### "Node.js not found" even after installation
+## Nothing prints when a child checks in
 
-**Problem:** Node.js was installed but PATH wasn't refreshed.
+**1. Is the print server running?**
 
-**Solution:**
-1. Close PowerShell completely
-2. Open a **new** PowerShell window
-3. Run: `node --version`
-4. If still not found, reinstall Node.js from https://nodejs.org
+Double-click `start.bat`. You should see:
 
----
+```
+  Awana Print Server v2.2.0  •  http://localhost:3456
+  Dashboard : http://localhost:3456/
+  Printer   : DYMO LabelWriter 450
+  Waiting for check-ins.
+```
 
-### "npm install failed" or "Cannot find npm"
+If the window closes instantly, Node.js isn't installed or `npm install` failed on first run — reopen `start.bat` and read the error message.
 
-**Problem:** npm packages couldn't be installed.
+**2. Is the server reachable?**
 
-**Solution:**
-1. Check that Node.js is actually installed: `node --version`
-2. Try running again - it may be a temporary network issue
-3. If it fails twice, manually navigate to the print-server folder and run:
-   ```powershell
-   npm install
-   ```
+Open <http://localhost:3456/health> in your browser. You should see JSON like:
 
----
+```json
+{ "status": "ok", "ready": true, "version": "2.2.0", "printer": "DYMO LabelWriter 450", "warnings": [] }
+```
 
-### "No printers found"
+If that doesn't load, the server isn't running, or Windows Firewall is blocking localhost (rare but possible on locked-down machines).
 
-**Problem:** Script says no printers are detected.
+**3. Is the extension loaded and on the right page?**
 
-**Solution:**
-1. Go to **Settings → Bluetooth & devices → Printers & scanners**
-2. Make sure your label printer is listed there
-3. If not listed:
-   - Connect the printer via USB
-   - Wait 10 seconds for Windows to detect it
-   - Install drivers if needed (check printer manufacturer's website)
-4. Run `install-and-run.ps1` again
+- Open `chrome://extensions` and confirm the extension is enabled.
+- Navigate to your TwoTimTwo check-in URL (the extension only runs on `*.twotimtwo.com`).
+- Press F12 → Console. You should see `[Awana] Watching for check-ins` shortly after the page loads.
 
----
+**4. Any `warnings` in `/health`?**
 
-## Runtime Issues
+The health endpoint reports common setup issues:
 
-### Labels print but look wrong
-
-**Problem:** Labels appear cut off, text is wrong size, or formatting is broken.
-
-**Checklist:**
-1. **Verify label size:** Settings → Printers → Your Printer → Preferences → Paper size should be **4×2 inches**
-2. **Check printer driver:** Some printers need specific label-size drivers
-3. **Test with a manual print:** Use Windows print dialog to test one label manually
-4. **Check for paper jams:** Some printers fail silently
-
-**Solution:** Adjust label dimensions in the extension configuration (if available).
+- `csvMissing` — no `clubbers.csv` yet. Sync the roster via the dashboard or bookmarklet.
+- `csvStale` — your roster is >24h old. Re-sync.
+- `printerNotFound` — the name in `config.json` doesn't match any installed printer.
 
 ---
 
-### Print dialog appears instead of silent print
+## Printer not found
 
-**Problem:** Despite running the server, a print dialog still shows.
+Open the dashboard at <http://localhost:3456/> and pick your printer from the dropdown. The server saves it to `config.json`.
 
-**Causes:**
-1. The server might not be running
-2. Printer configuration might be wrong
-3. Browser might be blocking the action
-
-**Solution:**
-1. Check the PowerShell window where the server started - should say:
-   ```
-   Print server running at http://localhost:3456
-   ```
-2. If not running, look for error messages in the window
-3. Verify printer name is correct (check in PowerShell output)
-4. Try clicking the Test Connection button in the simulator (if you have it open)
+Still not listed? Open **Settings → Bluetooth & devices → Printers & scanners** and confirm Windows can see the printer. The server queries `Get-Printer` and will find whatever Windows finds.
 
 ---
 
-### "Connection refused" or "Server not reachable"
+## Port 3456 already in use
 
-**Problem:** Bookmarklet or test button says server can't be reached.
+Another copy of the server (or another app) is using the port. Two fixes:
 
-**Solution:**
-1. Make sure `install-and-run.ps1` is still running (check PowerShell window)
-2. If the window closed, run the script again
-3. Check that port 3456 isn't blocked:
-   ```powershell
-   netstat -ano | findstr 3456
-   ```
-   If something is using it, either:
-   - Close that application
-   - Edit `install-and-run.ps1` and change line 108 from 3456 to 3457 (or another unused port)
+1. Close the other copy. Check your system tray and Task Manager for `node.exe`.
+2. Edit `server/config.json` and set `"port": 3457` (or any free port). Then update the `PRINT_SERVER` constant in `extension/content.js` to match.
+
+The server now fails loudly with an actionable message when the port is taken, rather than silently killing whatever else is running (which the old PowerShell installer did).
 
 ---
 
-### No label prints at all
+## Extension isn't detecting check-ins
 
-**Problem:** Child checks in, but nothing happens - no print, no dialog.
+Open F12 → Console on the TwoTimTwo check-in page.
 
-**Debug steps:**
-1. Open your browser's **Developer Tools (F12)**
-2. Go to the **Console** tab
-3. Do a check-in and look for error messages
-4. Common messages:
-   - `"Fetch failed"` → Server not running
-   - `"Print error"` → Printer issue
-   - `"POST failed"` → Network issue
-
-**Solutions:**
-- **If server not running:** Start `install-and-run.ps1` again
-- **If printer error:** Check printer is online and default printer is set correctly
-- **If network issue:** Make sure you're accessing TwoTimTwo from localhost or same machine
+- **If you see** `[Awana] Heartbeat: expected check-in selectors are no longer matching` — TwoTimTwo changed their page structure. Open `extension/content.js`, find the `SELECTORS` constant near the top, and update the selectors to match the new DOM. Reload the extension (`chrome://extensions` → reload button).
+- **If you see nothing at all** — the content script didn't load. Check that the page URL matches `*://*.twotimtwo.com/*` in `extension/manifest.json`.
+- **If you see** `[Awana] Check-in detected` but nothing printed — the problem is downstream. Check the server window for the incoming POST.
 
 ---
 
-## Bookmarklet Issues
+## Labels have the wrong text or formatting
 
-### Bookmarklet button doesn't appear
+The server reloads `clubbers.csv` on every print request, so mid-event CSV updates are picked up automatically. If enrichment is off:
 
-**Problem:** The red "AUTO PRINT" button doesn't show up on the check-in page.
-
-**Causes:**
-1. Bookmarklet wasn't installed correctly
-2. You're on a different browser (bookmarklets only work in the browser where they were added)
-3. JavaScript is disabled
-
-**Solution:**
-1. Go back to the Awana Label Printer web simulator
-2. Find the BookmarkletInfo section (red box with instructions)
-3. Drag the button again to your bookmarks
-4. Try clicking it on the TwoTimTwo page
+- Check `/roster-status`: <http://localhost:3456/roster-status> — returns the row count.
+- Confirm `FirstName` + `LastName` in the CSV match what the extension is sending (case-insensitive, but typos break the match).
+- Allergies can come from either an `Allergies` column or the `Notes` column (the parser checks both).
 
 ---
 
-### Bookmarklet button appears but doesn't work
+## Getting more help
 
-**Problem:** Button shows up, but clicking it doesn't arm the auto-printer.
+1. Check the server window for errors after a failed check-in.
+2. Open F12 → Console in the browser for extension-side errors.
+3. Open a GitHub issue with:
+   - Server version (from `/health`)
+   - Extension version (from `chrome://extensions` or the popup)
+   - The error message you see
+   - A screenshot of the check-in page if the selectors are drifting
 
-**Solution:**
-1. Open **Developer Tools (F12)** → **Console**
-2. Click the bookmarklet button
-3. Look for error messages
-4. If you see `"Uncaught SyntaxError"` → The bookmarklet code may be corrupted
-   - Re-install by dragging the button from the web simulator again
-5. If you see `"Fetch failed"` → The print server isn't running
-   - Run `install-and-run.ps1` again
-
----
-
-## General Debugging
-
-### How to check server logs
-
-The PowerShell window where you ran `install-and-run.ps1` shows all server output. Look for:
-- `Printer: DYMO LabelWriter 450` → Printer is configured
-- `POST /print` → Someone just tried to print
-- `Error: ...` → Something went wrong
-
----
-
-### How to test locally without TwoTimTwo
-
-1. Open the React app: Run `npm run dev` in a terminal
-2. You'll see a simulator with fake check-in data
-3. Click "Check In" to test the bookmarklet logic
-4. The Test Connection button verifies the server is running
-
----
-
-### How to enable debug logging
-
-1. Open **Developer Tools (F12)** in your browser
-2. Go to **Console** tab
-3. Add this to your bookmarklet or the extension to see detailed logs:
-   ```javascript
-   window.DEBUG_PRINT = true;
-   ```
-4. Then do a check-in - you'll see detailed logs in the Console
-
----
-
-## Still Stuck?
-
-If none of these solutions work:
-
-1. **Collect information:**
-   - Screenshot of the error message
-   - Output from the PowerShell window
-   - Browser console errors (F12 → Console tab)
-   - Windows printer name (Settings → Printers & scanners)
-
-2. **Check the GitHub issues:** https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/issues
-   - Your issue might already be documented
-
-3. **Create a new issue** with the information above
-
----
-
-## Quick Checklist
-
-Before getting help, verify:
-- [ ] Windows 10+ is running
-- [ ] Node.js is installed (`node --version` works in PowerShell)
-- [ ] Printer is connected and appears in Windows Settings
-- [ ] Printer has paper
-- [ ] install-and-run.ps1 PowerShell window is still open
-- [ ] No other application is using port 3456
-- [ ] Running on the TwoTimTwo.com check-in page (not a different page)
+<https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/issues>

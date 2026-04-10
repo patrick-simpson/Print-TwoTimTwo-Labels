@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Awana Label Printer — Auto-print check-in labels from TwoTimTwo</title>
+    <meta name="description" content="Silently print 4×2 check-in labels to a DYMO or Brother label printer when children check in on TwoTimTwo.com. Free, open source, Windows 10/11." />
+    <link rel="icon" type="image/png" href="./icon128.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50:  '#eef4fc',
+                100: '#d6e4f6',
+                300: '#7ba1d5',
+                500: '#4672b3',
+                700: '#2d4f8a',
+                900: '#1a2a45',
+              },
+              accent: {
+                400: '#ffd65c',
+                500: '#ffc938',
+              },
+            },
+            fontFamily: {
+              sans: ['Helvetica Neue', 'Helvetica', 'Arial', 'Segoe UI', 'sans-serif'],
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="bg-white text-gray-800 antialiased">
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>

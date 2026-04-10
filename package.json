@@ -1,20 +1,25 @@
 {
-  "name": "check-in-label-generator",
+  "name": "awana-label-printer",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.3.0",
+  "description": "Silent auto-printing of Awana check-in labels from TwoTimTwo.com",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "vite --config website/vite.config.ts",
+    "build": "vite build --config website/vite.config.ts",
+    "preview": "vite preview --config website/vite.config.ts",
+    "test": "cd server && node --test test/*.test.js",
+    "lint:versions": "node scripts/check-versions.cjs",
+    "bump": "node scripts/bump-version.cjs"
   },
   "dependencies": {
-    "jspdf": "^4.2.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

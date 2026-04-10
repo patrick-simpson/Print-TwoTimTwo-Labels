@@ -31,7 +31,14 @@ migrated_prompt_history/
 
 # Real clubber data (personal info -- never commit)
 clubbers*.csv
-!print-server/clubbers-template.csv
+!server/clubbers-template.csv
+
+# Local runtime state (server)
+server/config.json
+server/print-history.json
+
+# Release artifacts
+dist/
 
 # Example/test files
 example.html
