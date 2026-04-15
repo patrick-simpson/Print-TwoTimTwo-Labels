@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.2.0';
+  const EXTENSION_VERSION = '2.3.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -32,6 +32,18 @@
   var knownClubbers   = new Set();   // last-seen lowercased names
   var printedNames    = new Set();   // session dedup
   var baselineScanned = false;
+  // A kid must be missing from at least this many consecutive scans before the
+  // roster-diff path is allowed to print their label. This defends against
+  // transient disappearances (search filter, scroll virtualization, page
+  // re-render) that are NOT real check-ins.
+  var PENDING_MISS_THRESHOLD = 2;
+  // Map<nameKey, consecutiveMissCount>
+  var pendingMissing  = new Map();
+  // If >= this fraction of the known roster disappears in a single scan, treat
+  // it as a UI reshuffle (filter / tab switch / reload with filter active) and
+  // re-baseline instead of printing anyone.
+  var MASS_DISAPPEAR_RATIO = 0.8;
+  var MASS_DISAPPEAR_ABS   = 3;
   var REMOTE_PRINTED_KEY  = 'awana_printedNames';
   var REMOTE_PRINTED_TS   = 'awana_printedTs';
   var REMOTE_BASELINE_KEY = 'awana_baselineDone';
@@ -1024,12 +1036,56 @@
       return;
     }
 
-    // Diff: previously present, now missing → just got checked in
-    knownClubbers.forEach(function(key) {
-      if (current.has(key)) return;
-      if (printedNames.has(key)) return;
+    // ── Guard A: mass-disappearance → re-baseline, no prints ────────────────
+    // A filter/tab switch/reload with a different filter state can drop a
+    // large chunk of .clubber rows at once. Those kids weren't checked in —
+    // they're just no longer rendered. If the current scan lost >3 kids AND
+    // shrunk to less than 80% of the previous known size, treat it as a UI
+    // reshuffle and re-baseline WITHOUT printing.
+    var missingCount = 0;
+    knownClubbers.forEach(function(key) { if (!current.has(key)) missingCount++; });
+    var shrunkRatio = knownClubbers.size > 0 ? (current.size / knownClubbers.size) : 1;
+    if (missingCount > MASS_DISAPPEAR_ABS && shrunkRatio < MASS_DISAPPEAR_RATIO) {
+      console.log('[Awana] Roster shrunk sharply (' + knownClubbers.size + ' → ' +
+                  current.size + ', ' + missingCount + ' missing) — re-baselining, no prints');
+      knownClubbers = current;
+      pendingMissing.clear();
+      saveScanState();
+      return;
+    }
+
+    // ── Guard B: consecutive-miss confirmation ──────────────────────────────
+    // A kid must be absent from PENDING_MISS_THRESHOLD consecutive scans before
+    // we print their label. A single-scan flap (virtualization, brief filter)
+    // never triggers a print. Reappearing in `current` clears the pending state.
+    //
+    // We evaluate the union of knownClubbers + pendingMissing so a kid who is
+    // missing for scan N stays tracked through scan N+1 even after
+    // knownClubbers gets reassigned to `current` below.
+    var candidates = new Set();
+    knownClubbers.forEach(function(k) { candidates.add(k); });
+    pendingMissing.forEach(function(_, k) { candidates.add(k); });
+
+    candidates.forEach(function(key) {
+      if (current.has(key)) {
+        // Reappeared — false alarm, forget any pending miss.
+        if (pendingMissing.has(key)) pendingMissing.delete(key);
+        return;
+      }
+      if (printedNames.has(key)) {
+        pendingMissing.delete(key);
+        return;
+      }
       var meta = ROSTER_CACHE[key];
       if (!meta) return;
+      var misses = (pendingMissing.get(key) || 0) + 1;
+      if (misses < PENDING_MISS_THRESHOLD) {
+        pendingMissing.set(key, misses);
+        console.log('[Awana] ' + meta.displayName + ' missing ' + misses + '/' +
+                    PENDING_MISS_THRESHOLD + ' — awaiting confirmation');
+        return;
+      }
+      pendingMissing.delete(key);
       console.log('[Awana] Remote check-in detected:', meta.displayName);
       triggerRemotePrint(meta.displayName, meta.clubName, meta.clubImageData);
     });

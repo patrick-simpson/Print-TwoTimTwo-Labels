@@ -537,7 +537,8 @@ async function generateLabel(
   if (hasLast)     blockH += GAP + fs2;
   if (hasClub)     blockH += SEP + fs3;
   if (hasGroup)    blockH += GAP + fs4;
-  if (isBirthday)  blockH += GAP + fs5;
+  // Birthday no longer consumes vertical space in the centered text block —
+  // it renders as a 🍰 emoji in the bottom-right corner alongside allergies.
 
   const usableH = BH - ALLERGY_STRIP_H;
   const centerY = BY + usableH / 2;
@@ -599,14 +600,6 @@ async function generateLabel(
     y += fs4;
   }
 
-  // ── Birthday banner ───────────────────────────────────────────────────────
-  if (isBirthday) {
-    y += GAP;
-    ctx.font = `bold ${fs5}px ${fontFamily}`;
-    ctx.fillStyle = '#c0392b';
-    ctx.fillText('Happy Birthday!', textCenterX, y);
-  }
-
   // ── Visitor badge ─────────────────────────────────────────────────────────
   if (isVisitor) {
     const visitorFont = `bold ${fs5}px ${fontFamily}`;
@@ -628,20 +621,45 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
-  // ── Allergy icons (bottom-right corner) ──────────────────────────────────
-  if (hasAllergy) {
-    const emojiSize = 16;
-    ctx.font = `${emojiSize}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
-    ctx.textBaseline = 'bottom';
+  // ── Bottom-right icon row: 🍰 birthday (larger) + allergy emojis ─────────
+  if (hasAllergy || isBirthday) {
+    const ALLERGY_EMOJI_SIZE = 16;
+    const BDAY_EMOJI_SIZE    = 26;
+    const EMOJI_FONT_STACK   = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    const PAD     = 6;
+    const SPACING = 2;
+
+    // Build ordered glyph list: cake first (leftmost), allergies to its right.
+    const glyphs = [];
+    if (isBirthday) {
+      glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+    }
+    allergyTokens.forEach(function(t) {
+      glyphs.push({ ch: ALLERGY_EMOJI[t] || t.charAt(0), size: ALLERGY_EMOJI_SIZE });
+    });
+
+    // Measure each glyph under its own font so we can right-anchor the row.
     ctx.textAlign = 'left';
-    const emojis = allergyTokens.map(t => ALLERGY_EMOJI[t] || t.charAt(0));
-    const spacing = emojiSize + 2;
-    const PAD = 6;
-    const totalW = emojis.length * spacing - 2;
+    ctx.textBaseline = 'alphabetic';
+    let totalW = 0;
+    glyphs.forEach(function(g, i) {
+      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      g.w = ctx.measureText(g.ch).width;
+      totalW += g.w;
+      if (i < glyphs.length - 1) totalW += SPACING;
+    });
+
     let ex = BX + BW - PAD - totalW;
-    const ey = BY + BH - PAD;
-    emojis.forEach(function(em) { ctx.fillText(em, ex, ey); ex += spacing; });
+    const ey = BY + BH - PAD;  // baseline anchored to bottom padding line
+    glyphs.forEach(function(g) {
+      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      ctx.fillText(g.ch, ex, ey);
+      ex += g.w + SPACING;
+    });
+
+    // Reset text state for any subsequent drawing
     ctx.textBaseline = 'top';
+    ctx.textAlign = 'center';
   }
 
   // Write PNG
