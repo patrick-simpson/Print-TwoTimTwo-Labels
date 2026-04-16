@@ -1,3 +1,28 @@
+## [2.3.0] - 2026-04-15
+Fix phantom prints caused by the roster-diff remote check-in detector, and replace the "Happy Birthday!" text banner with a 🍰 cake emoji in the bottom-right icon row.
+
+### Why
+Two live-event bugs:
+- **Genevieve Bean** printed a label even though she was never checked in.
+- **Eowyn Bambakakis** printed **twice** even though she was never checked in.
+
+Both are the same root cause. `scanClubberList()` treats any `.clubber` row that was present in the previous scan but missing in the current one as a remote check-in. But `.clubber` rows can disappear for reasons that are **not** check-ins: search/filter input, club-tab filtering, scroll virtualization, or a page reload that restores `knownClubbers` from `sessionStorage` while the filter state is now different. When that happens, the diff mass-prints the "missing" kids. If the filter flaps twice (or a reload lands in a different filter state), the same phantom can print twice because `printedNames` dedup never records a real print target between the flaps.
+
+### Phantom-print fix (chrome-extension/content.js)
+- **Mass-disappearance guard:** if > 3 kids go missing in a single scan **and** the roster shrinks below 80% of its previous size, treat it as a UI reshuffle (filter / tab switch / reload) and re-baseline `knownClubbers` without printing anyone. Clears `pendingMissing` to prevent stale state.
+- **Consecutive-miss confirmation:** a new `pendingMissing` `Map<nameKey, missCount>` requires a kid to be absent for **2 consecutive scans** (≥ 10 seconds at the 5-second `SCAN_INTERVAL_MS`) before the diff path fires. A single-scan flap (brief filter, virtualization glitch) clears pending state as soon as the kid reappears in `current`.
+- The scan iterates the union of `knownClubbers` + `pendingMissing.keys()` so in-flight pending entries continue to be re-evaluated after `knownClubbers` rolls forward to the latest scan.
+- The `#lastCheckin` observer path is unchanged — it remains the trusted primary detector for check-ins made on this browser.
+
+### Birthday cake emoji (print-server/server.js)
+- Removed the red 9pt bold "Happy Birthday!" text banner that used to sit under the handbook group (and its contribution to `blockH`, so the centered text block is now truly centered on non-birthday labels as well).
+- Added a 🍰 glyph at **26pt** (~1.6× the 16pt allergy emoji size) to the bottom-right icon row. Rendered with the same emoji font stack as the allergy emojis (`"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`) so visual style matches.
+- Ordering in the row: **cake leftmost, allergy emojis to its right**, with the rightmost allergy emoji anchored against the label's right padding. The icon row renders whenever `hasAllergy || isBirthday`.
+- Per-glyph measurement via `ctx.measureText` so the differently-sized cake and allergy emojis share the same baseline and pack cleanly without overlap.
+
+### Scope
+- **Chrome extension + print server only.** The Electron HTML label renderer (`electron-app/src/server.js`) already did not render allergies or birthdays, so it is unchanged.
+
 ## [2.2.0] - 2026-04-09
 Detect remote check-ins by diffing the `.clubber` roster across scans, so a kid checked in from another device (phone, second laptop) eventually gets their label printed here. Auto-refresh the page during peak time so the diff sees fresh data.
 
