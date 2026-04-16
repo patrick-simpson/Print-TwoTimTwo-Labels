@@ -147,17 +147,35 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3456 " ^| findstr "LISTENIN
     taskkill /PID %%p /F >nul 2>nul
 )
 
-start "Awana Print Server" /min cmd /c "cd /d "%SERVER_DIR%" && node server.js"
-
-echo   [#] Waiting for server...
-timeout /t 2 /nobreak >nul
-
 echo   [#] Opening check-in page in Edge...
 start "" "%CHECKIN_URL%"
 
 echo.
-echo   [ OK ] Awana Print is running.
+echo   [ OK ] Awana Print is starting.
 echo   ------------------------------------------------------------
 echo.
 echo   Keep this window open during check-in.
+echo.
+
+:: --- Self-healing server restart loop ---
+:: Per Zero-Loop Policy: max 5 restarts to prevent infinite loops.
+set "RESTART_COUNT=0"
+set "MAX_RESTARTS=5"
+
+:server_loop
+if %RESTART_COUNT% GEQ %MAX_RESTARTS% (
+    echo.
+    echo   [!] Server crashed %MAX_RESTARTS% times. Please check for errors.
+    echo   [!] Try restarting this script, or ask your tech person for help.
+    pause
+    exit /b 1
+)
+
+cd /d "%SERVER_DIR%"
+node server.js
+
+set /a RESTART_COUNT+=1
+echo.
+echo   [!] Server exited. Restarting in 3 seconds (%RESTART_COUNT%/%MAX_RESTARTS%)...
 timeout /t 3 /nobreak >nul
+goto :server_loop

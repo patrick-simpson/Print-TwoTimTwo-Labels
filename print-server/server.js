@@ -748,7 +748,8 @@ app.get('/printers', (req, res) => {
     let parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) parsed = [parsed];  // PowerShell returns bare object for single printer
     const printers = parsed.map(p => ({ name: p.Name, isWindowsDefault: !!p.Default }));
-    res.json({ printers, serverDefault: PRINTER_NAME || null });
+    const autoDetected = printers.length === 1 ? printers[0].name : null;
+    res.json({ printers, serverDefault: PRINTER_NAME || null, autoDetected });
   } catch (err) {
     console.error('[printers] Failed to list printers:', err.message);
     res.status(500).json({ error: 'Failed to list printers', printers: [] });
@@ -1260,3 +1261,24 @@ app.listen(PORT, () => {
 // Check for updates on startup and periodically
 checkForUpdates();
 setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);
+
+// Pre-warm: send a blank label to the printer to eliminate cold-start delay.
+// Off by default — enable via config.json { "prewarmPrinter": true }
+try {
+  const prewarmConfig = fs.existsSync(CONFIG_FILE)
+    ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+    : {};
+  if (prewarmConfig.prewarmPrinter) {
+    setTimeout(async () => {
+      try {
+        console.log('[prewarm] Sending blank label to printer...');
+        const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
+        printImage(result.pngPath, PRINTER_NAME);
+        fs.unlink(result.pngPath, () => {});
+        console.log('[prewarm] Done');
+      } catch (e) {
+        console.log('[prewarm] Failed (non-critical):', e.message);
+      }
+    }, 5000);
+  }
+} catch (e) { /* config parse error — ignore */ }

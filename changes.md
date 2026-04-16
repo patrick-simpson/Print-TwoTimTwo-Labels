@@ -1,3 +1,33 @@
+## [3.0.0] - 2026-04-16
+"Go Big" release: 14 improvements to reduce clicks, add automation, and simplify setup. The #1 volunteer complaint was "too many buttons to click" — Quick Mode addresses this directly.
+
+### Quick Mode (chrome-extension/content.js)
+- **One-click check-in:** New "Quick Mode" toggle in the widget. When ON, clicking a child's name immediately prints their label and auto-dismisses the check-in modal (skips Bible/Friend options). Visual cue: panel header turns blue.
+- **Auto-sibling check-in:** In Quick Mode, siblings are automatically checked in without showing the confirmation popup. Uses the existing `batchCheckInSiblings()` path.
+- **Keyboard-driven check-in:** Arrow keys navigate search results, Enter checks in the selected child, Escape clears.
+
+### Search-First UI (chrome-extension/content.js)
+- **Roster search bar** at the top of the widget with type-ahead filtering. Matches against the cached roster (refreshed every 5s by `scanClubberList()`).
+- Up to 8 results shown in a dropdown. Click or press Enter to check in. In Quick Mode, prints immediately; otherwise opens TwoTimTwo's native modal.
+- DOM element references now cached in `ROSTER_CACHE` alongside club info, enabling click-to-check-in from search results.
+
+### Automation (chrome-extension/content.js, print-server/server.js, scripts)
+- **Auto-start on boot:** Install script now offers to add a shortcut to the Windows Startup folder (opt-in, idempotent).
+- **Stale CSV warning:** Yellow banner appears in the widget when the server's `/health` endpoint reports `csvStale`, `csvMissing`, or `csvEmpty`. Click to refresh.
+- **Auto-retry failed prints:** `doPrint()` now retries once after 3 seconds before queuing. Handles transient server hiccups.
+- **Non-blocking update notice:** Widget now shows "Server update vX available — restart server to apply" when the server detects a newer version on GitHub.
+- **Self-healing server:** `launch-awana.bat` now runs a restart loop (max 5 restarts per Zero-Loop Policy) instead of a fire-and-forget `start /min`. Server runs in the foreground of the "Keep this window open" window.
+
+### Setup Simplification (chrome-extension/content.js, print-server/server.js, install-and-run.ps1)
+- **Auto-detect printer:** If only one printer is connected, it's auto-selected in both the install script and the Chrome extension (via new `autoDetected` field in `/printers` response).
+- **Chrome extension auto-config:** Printer selection is now persisted in `chrome.storage.local` (survives extension updates), with `localStorage` fallback.
+- **Pre-warm printer:** Optional `config.json` setting (`prewarmPrinter: true`) sends a blank label to the printer 5 seconds after server start, eliminating cold-start delay. Off by default.
+
+### Dashboard & UX (print-server/public/index.html, chrome-extension/content.js)
+- **Traffic-light health dashboard:** Large green/yellow/red indicator at the top of the server dashboard (localhost:3456). Plain-English warning descriptions instead of technical codes. Auto-refreshes every 10 seconds (was 30s).
+- **"Help — Not Working?" panic button:** Orange button at the bottom of the widget. Runs `/diagnostics`, parses the 4 test results, and shows plain-English guidance (printer off, server unreachable, roster missing, etc.).
+- **Periodic health checks:** Extension now re-checks `/health` every 60 seconds to surface warnings promptly.
+
 ## [2.3.0] - 2026-04-15
 Fix phantom prints caused by the roster-diff remote check-in detector, and replace the "Happy Birthday!" text banner with a 🍰 cake emoji in the bottom-right icon row.
 

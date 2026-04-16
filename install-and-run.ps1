@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 2.3.0
+# Version    : 3.0.0
 # Updated    : 2026-03-27
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "2.3.0"
+$ScriptVersion = "3.0.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -597,17 +597,23 @@ function Configure {
         exit 1
     }
 
-    Write-Host "Available printers:" -ForegroundColor White
-    for ($i = 0; $i -lt $printers.Count; $i++) {
-        $marker = if ($printers[$i] -eq $cfg.printerName) { "  <- current" } else { "" }
-        Write-Host "  [$i] $($printers[$i])$marker"
-    }
+    if ($printers.Count -eq 1) {
+        # Auto-select when only one printer is connected
+        Write-Host "  Only one printer found: $($printers[0]) -- auto-selecting." -ForegroundColor Cyan
+        $cfg.printerName = $printers[0]
+    } else {
+        Write-Host "Available printers:" -ForegroundColor White
+        for ($i = 0; $i -lt $printers.Count; $i++) {
+            $marker = if ($printers[$i] -eq $cfg.printerName) { "  <- current" } else { "" }
+            Write-Host "  [$i] $($printers[$i])$marker"
+        }
 
-    $choice = Read-Host "`nEnter printer number (or press Enter to keep: $($cfg.printerName))"
-    if ($choice -match '^\d+$') {
-        $idx = [int]$choice
-        if ($idx -ge 0 -and $idx -lt $printers.Count) {
-            $cfg.printerName = $printers[$idx]
+        $choice = Read-Host "`nEnter printer number (or press Enter to keep: $($cfg.printerName))"
+        if ($choice -match '^\d+$') {
+            $idx = [int]$choice
+            if ($idx -ge 0 -and $idx -lt $printers.Count) {
+                $cfg.printerName = $printers[$idx]
+            }
         }
     }
 
@@ -764,6 +770,29 @@ try {
     Write-Host "  [OK] Created desktop shortcut: Awana Check In" -ForegroundColor Green
 } catch {
     Write-Host "  [WARN] Could not create desktop shortcut (non-critical): $_" -ForegroundColor Yellow
+}
+
+# --- Optional: Add to Windows Startup folder for auto-start on boot ---
+try {
+    $startupFolder = [System.Environment]::GetFolderPath('Startup')
+    $startupLink = Join-Path $startupFolder "Awana Check In.lnk"
+    if (-not (Test-Path $startupLink)) {
+        $addStartup = Read-Host "Start Awana Print automatically when this PC boots? (y/N)"
+        if ($addStartup -match '^[Yy]') {
+            $ws2 = New-Object -ComObject WScript.Shell
+            $startShortcut = $ws2.CreateShortcut($startupLink)
+            $startShortcut.TargetPath = $launcherDest
+            $startShortcut.WorkingDirectory = $installDir
+            $startShortcut.Description = "Auto-start Awana label print server"
+            if (Test-Path $iconDest) {
+                $startShortcut.IconLocation = "$iconDest,0"
+            }
+            $startShortcut.Save()
+            Write-Host "  [OK] Added to Windows Startup folder." -ForegroundColor Green
+        }
+    }
+} catch {
+    Write-Host "  [WARN] Could not create startup shortcut (non-critical): $_" -ForegroundColor Yellow
 }
 
 $env:PRINTER_NAME = $cfg.printerName
