@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '2.3.0';
+  const EXTENSION_VERSION = '3.0.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -12,12 +12,14 @@
   const MINIMIZE_KEY = 'awana_widgetMinimized';
   const PRINTER_KEY  = 'awana_selectedPrinterName';
 
-  const QUEUE_KEY   = 'awana_printQueue';
-  const MUTE_KEY    = 'awana_soundMuted';
+  const QUEUE_KEY      = 'awana_printQueue';
+  const MUTE_KEY       = 'awana_soundMuted';
+  const QUICK_MODE_KEY = 'awana_quickMode';
 
   let selectedMode        = localStorage.getItem(STORAGE_KEY) || 'auto';
   let selectedPrinterName = localStorage.getItem(PRINTER_KEY) || '';
   let soundMuted          = localStorage.getItem(MUTE_KEY) === 'true';
+  let quickModeEnabled    = localStorage.getItem(QUICK_MODE_KEY) === 'true';
   let lastPrintedName = null;
   let lastPrintTime = 0;
   var batchPrintedNames = new Set();
@@ -712,6 +714,9 @@
     printerSelect.addEventListener('change', function() {
       selectedPrinterName = printerSelect.value;
       localStorage.setItem(PRINTER_KEY, selectedPrinterName);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ awana_selectedPrinterName: selectedPrinterName });
+      }
       console.log('[Awana] Printer changed to:', selectedPrinterName || '(server default)');
     });
 
@@ -844,6 +849,226 @@
       fontWeight: '600', padding: '2px 0'
     });
 
+    // ── Quick Mode toggle ──
+    var quickModeRow = document.createElement('div');
+    Object.assign(quickModeRow.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      padding: '6px 8px', background: quickModeEnabled ? '#e3f2fd' : '#f8fafc',
+      borderRadius: '6px', border: '1px solid ' + (quickModeEnabled ? '#90caf9' : '#e2e8f0'),
+      transition: 'all 0.15s ease'
+    });
+    var quickModeLbl = document.createElement('label');
+    Object.assign(quickModeLbl.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      fontSize: '12px', fontWeight: '600', cursor: 'pointer', flex: '1', color: '#1e293b'
+    });
+    var quickModeCb = document.createElement('input');
+    quickModeCb.type = 'checkbox';
+    quickModeCb.checked = quickModeEnabled;
+    var quickModeText = document.createElement('span');
+    quickModeText.textContent = 'Quick Mode';
+    var quickModeHint = document.createElement('span');
+    Object.assign(quickModeHint.style, { fontSize: '10px', color: '#64748b', fontWeight: '400' });
+    quickModeHint.textContent = 'One-click, auto-siblings, keyboard';
+    quickModeLbl.append(quickModeCb, quickModeText);
+    quickModeRow.append(quickModeLbl, quickModeHint);
+
+    function applyQuickModeVisuals() {
+      panelHeader.style.background = quickModeEnabled ? '#2196f3' : '#4caf50';
+      pill.style.background = quickModeEnabled ? '#2196f3' : '#4caf50';
+      pill.style.boxShadow = quickModeEnabled ? '0 2px 8px rgba(33,150,243,0.3)' : '0 2px 8px rgba(76,175,80,0.3)';
+      quickModeRow.style.background = quickModeEnabled ? '#e3f2fd' : '#f8fafc';
+      quickModeRow.style.borderColor = quickModeEnabled ? '#90caf9' : '#e2e8f0';
+    }
+    quickModeCb.addEventListener('change', function() {
+      quickModeEnabled = quickModeCb.checked;
+      localStorage.setItem(QUICK_MODE_KEY, quickModeEnabled ? 'true' : 'false');
+      applyQuickModeVisuals();
+      console.log('[Awana] Quick Mode:', quickModeEnabled ? 'ON' : 'OFF');
+    });
+    // Apply initial visual state
+    applyQuickModeVisuals();
+
+    // ── Search bar ──
+    var searchContainer = document.createElement('div');
+    Object.assign(searchContainer.style, { position: 'relative' });
+
+    var searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search roster...';
+    searchInput.id = 'awana-search-input';
+    Object.assign(searchInput.style, {
+      width: '100%', padding: '6px 8px 6px 26px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', fontSize: '12px',
+      background: '#f8fafc', color: '#1e293b', outline: 'none',
+      boxSizing: 'border-box'
+    });
+    searchInput.addEventListener('focus', function() { searchInput.style.borderColor = '#90caf9'; });
+    searchInput.addEventListener('blur', function() {
+      searchInput.style.borderColor = '#e2e8f0';
+      // Delay hiding results so click events on results can fire
+      setTimeout(function() {
+        var dd = document.getElementById('awana-search-results');
+        if (dd) dd.style.display = 'none';
+      }, 200);
+    });
+
+    var searchIcon = document.createElement('span');
+    Object.assign(searchIcon.style, {
+      position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)',
+      fontSize: '12px', color: '#94a3b8', pointerEvents: 'none'
+    });
+    searchIcon.textContent = '\uD83D\uDD0D'; // 🔍
+
+    var searchResults = document.createElement('div');
+    searchResults.id = 'awana-search-results';
+    Object.assign(searchResults.style, {
+      display: 'none', position: 'absolute', top: '100%', left: '0', right: '0',
+      background: '#fff', border: '1px solid #e2e8f0', borderRadius: '0 0 6px 6px',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: '240px', overflowY: 'auto',
+      zIndex: '100001'
+    });
+
+    var searchSelectedIdx = -1;
+
+    function renderSearchResults(query) {
+      while (searchResults.firstChild) searchResults.removeChild(searchResults.firstChild);
+      searchSelectedIdx = -1;
+      if (!query || query.length < 2) {
+        searchResults.style.display = 'none';
+        return;
+      }
+      var q = query.toLowerCase();
+      var matches = [];
+      Object.keys(ROSTER_CACHE).forEach(function(key) {
+        if (matches.length >= 8) return;
+        var meta = ROSTER_CACHE[key];
+        if (!meta || !meta.displayName) return;
+        if (meta.displayName.toLowerCase().indexOf(q) !== -1) {
+          matches.push(meta);
+        }
+      });
+      if (matches.length === 0) {
+        searchResults.style.display = 'none';
+        return;
+      }
+      matches.forEach(function(meta, idx) {
+        var row = document.createElement('div');
+        row.setAttribute('data-idx', idx);
+        Object.assign(row.style, {
+          padding: '6px 10px', cursor: 'pointer', display: 'flex',
+          alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '1px solid #f1f5f9', fontSize: '12px',
+          transition: 'background 0.1s'
+        });
+        row.addEventListener('mouseenter', function() {
+          searchSelectedIdx = idx;
+          highlightSearchResult();
+        });
+        row.addEventListener('click', function() {
+          searchInput.value = '';
+          searchResults.style.display = 'none';
+          triggerSearchCheckin(meta);
+        });
+        var nameSpan = document.createElement('span');
+        nameSpan.style.fontWeight = '600';
+        nameSpan.textContent = meta.displayName;
+        var clubSpan = document.createElement('span');
+        Object.assign(clubSpan.style, { fontSize: '10px', color: '#64748b' });
+        clubSpan.textContent = meta.clubName || '';
+        row.append(nameSpan, clubSpan);
+        searchResults.appendChild(row);
+      });
+      searchResults.style.display = 'block';
+    }
+
+    function highlightSearchResult() {
+      var rows = searchResults.children;
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].style.background = (i === searchSelectedIdx) ? '#e3f2fd' : '';
+      }
+    }
+
+    function triggerSearchCheckin(meta) {
+      var name = meta.displayName;
+      var key = name.toLowerCase().trim();
+      if (printedNames.has(key)) {
+        console.log('[Awana] Already checked in this session:', name);
+        return;
+      }
+      if (quickModeEnabled) {
+        // Quick Mode: print immediately + auto-click the clubber element to check in on TwoTimTwo
+        markPrinted(name);
+        lastPrintTime = Date.now();
+        doPrint(name, meta.clubName || '', meta.clubImageData || null);
+        var el = meta.element;
+        if (el && el.isConnected) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.click();
+          setTimeout(function() {
+            pollForCheckinButton({ name: name, element: el }, [], {}, 30);
+          }, 150);
+        }
+      } else {
+        // Normal mode: scroll to and click the clubber element (opens TwoTimTwo modal)
+        var el = meta.element;
+        if (el && el.isConnected) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.click();
+        }
+      }
+    }
+
+    searchInput.addEventListener('input', function() {
+      renderSearchResults(searchInput.value.trim());
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+      var rows = searchResults.children;
+      if (rows.length === 0) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        searchSelectedIdx = Math.min(searchSelectedIdx + 1, rows.length - 1);
+        highlightSearchResult();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        searchSelectedIdx = Math.max(searchSelectedIdx - 1, 0);
+        highlightSearchResult();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        var idx = searchSelectedIdx >= 0 ? searchSelectedIdx : 0;
+        if (rows[idx]) {
+          var matchKey = Object.keys(ROSTER_CACHE).filter(function(k) {
+            return ROSTER_CACHE[k].displayName === rows[idx].querySelector('span').textContent;
+          })[0];
+          if (matchKey) {
+            searchInput.value = '';
+            searchResults.style.display = 'none';
+            triggerSearchCheckin(ROSTER_CACHE[matchKey]);
+          }
+        }
+      } else if (e.key === 'Escape') {
+        searchInput.value = '';
+        searchResults.style.display = 'none';
+      }
+    });
+
+    searchContainer.append(searchIcon, searchInput, searchResults);
+
+    // ── CSV warning banner ──
+    var csvWarningBanner = document.createElement('div');
+    csvWarningBanner.id = 'awana-csv-warning';
+    Object.assign(csvWarningBanner.style, {
+      display: 'none', fontSize: '11px', color: '#92400e', fontWeight: '600',
+      padding: '6px 8px', background: '#fffbeb', borderRadius: '6px',
+      border: '1px solid #fde68a', cursor: 'pointer', textAlign: 'center'
+    });
+    csvWarningBanner.textContent = 'Roster may be outdated \u2014 click to refresh';
+    csvWarningBanner.addEventListener('click', function() {
+      csvWarningBanner.style.display = 'none';
+      syncCsv();
+    });
+
     // Sound mute toggle
     var soundRow = document.createElement('div');
     Object.assign(soundRow.style, { display: 'flex', alignItems: 'center', gap: '4px' });
@@ -863,7 +1088,47 @@
     muteLabel.append(document.createTextNode('Mute sounds'));
     soundRow.appendChild(muteLabel);
 
-    panelBody.append(controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, updateRow, soundRow);
+    // ── Help / panic button ──
+    var helpBtn = document.createElement('button');
+    helpBtn.textContent = 'Help \u2014 Not Working?';
+    Object.assign(helpBtn.style, {
+      width: '100%', padding: '6px', background: '#fff7ed', color: '#c2410c',
+      border: '1px solid #fed7aa', borderRadius: '6px', cursor: 'pointer',
+      fontWeight: '600', fontSize: '11px', transition: 'background 0.15s ease'
+    });
+    helpBtn.addEventListener('mouseenter', function() { helpBtn.style.background = '#ffedd5'; });
+    helpBtn.addEventListener('mouseleave', function() { helpBtn.style.background = '#fff7ed'; });
+    helpBtn.addEventListener('click', function() {
+      helpBtn.textContent = 'Checking...';
+      helpBtn.disabled = true;
+      fetch(PRINT_SERVER + '/diagnostics', { signal: AbortSignal.timeout(5000) })
+        .then(function(r) { return r.json(); })
+        .then(function(tests) {
+          var failed = tests.filter(function(t) { return !t.passed; });
+          var msg = '';
+          if (failed.length === 0) {
+            msg = '\u2705 Everything looks good! Try clicking Test to print a test label.';
+          } else {
+            msg = '\u26A0\uFE0F Issues found:\n';
+            failed.forEach(function(t) {
+              if (t.test === 'Printer detected') msg += '\n\u2022 Your printer may be off or disconnected. Check the USB cable and turn it on.';
+              else if (t.test === 'CSV loaded') msg += '\n\u2022 Roster data is missing. Labels will still print but without allergy/birthday info.';
+              else if (t.test === 'Label rendering') msg += '\n\u2022 Label rendering failed. Try restarting the server.';
+              else msg += '\n\u2022 ' + t.test + ': ' + (t.detail || 'failed');
+            });
+          }
+          alert(msg);
+        })
+        .catch(function() {
+          alert('\u274C Cannot reach the print server.\n\nMake sure the Awana Print window is open on this computer.');
+        })
+        .finally(function() {
+          helpBtn.textContent = 'Help \u2014 Not Working?';
+          helpBtn.disabled = false;
+        });
+    });
+
+    panelBody.append(quickModeRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
@@ -886,17 +1151,32 @@
     console.log('[Awana] Widget injected');
   }
 
-  // Check if the print server is running a newer version and notify the user
+  // Check server health: extension version mismatch, server updates, CSV warnings
   function checkForExtensionUpdate() {
     fetch(PRINT_SERVER + '/health', { signal: AbortSignal.timeout(3000) })
       .then(function(r) { return r.json(); })
       .then(function(data) {
+        var notice = document.getElementById('awana-update-notice');
+        // Extension version mismatch (highest priority)
         if (data.version && data.version !== EXTENSION_VERSION) {
-          var notice = document.getElementById('awana-update-notice');
           if (notice) {
             notice.style.display = 'block';
             notice.textContent = 'Update available: v' + data.version + ' (reload extension)';
           }
+        } else if (data.latestVersion && data.latestVersion !== data.version) {
+          // Server itself is outdated
+          if (notice) {
+            notice.style.display = 'block';
+            notice.textContent = 'Server update v' + data.latestVersion + ' available \u2014 restart server to apply';
+          }
+        }
+        // CSV warnings
+        var csvWarning = document.getElementById('awana-csv-warning');
+        if (csvWarning && data.warnings && Array.isArray(data.warnings)) {
+          var hasCsvIssue = data.warnings.some(function(w) {
+            return w.type === 'csvStale' || w.type === 'csvMissing' || w.type === 'csvEmpty';
+          });
+          csvWarning.style.display = hasCsvIssue ? 'block' : 'none';
         }
       })
       .catch(function() { /* server offline, ignore */ });
@@ -925,10 +1205,19 @@
         });
         var saved = localStorage.getItem(PRINTER_KEY) || '';
         var exists = Array.from(select.options).some(function(o) { return o.value === saved; });
-        select.value = exists ? saved : '';
+        if (exists && saved) {
+          select.value = saved;
+        } else if (!saved && data.autoDetected) {
+          // Auto-select when only one printer is connected and nothing was saved
+          select.value = data.autoDetected;
+          localStorage.setItem(PRINTER_KEY, data.autoDetected);
+        } else {
+          select.value = exists ? saved : '';
+          if (!exists && saved) localStorage.removeItem(PRINTER_KEY);
+        }
         selectedPrinterName = select.value;
-        if (!exists && saved) localStorage.removeItem(PRINTER_KEY);
-        console.log('[Awana] Loaded ' + printers.length + ' printer(s)');
+        console.log('[Awana] Loaded ' + printers.length + ' printer(s)' +
+          (data.autoDetected ? ' (auto-detected: ' + data.autoDetected + ')' : ''));
       })
       .catch(function(err) {
         console.log('[Awana] Could not load printers:', err.message);
@@ -1014,16 +1303,20 @@
       var key = displayName.toLowerCase();
       current.add(key);
 
-      // Cache club info while the kid is still visible — once they disappear,
-      // lookupClub() can't find them.
+      // Cache club info + DOM element while the kid is still visible — once
+      // they disappear, lookupClub() can't find them.  The element reference
+      // is always refreshed so search/quick-mode clicks target the current DOM.
+      var imgEl = clubberEls[i].querySelector('.club img');
       if (!ROSTER_CACHE[key]) {
-        var imgEl = clubberEls[i].querySelector('.club img');
         ROSTER_CACHE[key] = {
           displayName: displayName,
           clubName: imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '',
-          clubImageData: imgEl ? getClubImageDataUrl(imgEl) : null
+          clubImageData: imgEl ? getClubImageDataUrl(imgEl) : null,
+          element: clubberEls[i]
         };
         rosterDirty = true;
+      } else {
+        ROSTER_CACHE[key].element = clubberEls[i]; // keep element fresh
       }
     }
 
@@ -1141,7 +1434,14 @@
     // Check for siblings after printing the current child
     setTimeout(function() {
       findSiblings(name).then(function(siblings) {
-        if (siblings.length > 0) {
+        if (siblings.length === 0) return;
+        if (quickModeEnabled) {
+          // Auto-check-in all siblings without showing the panel
+          var autoSibs = siblings.map(function(sib) {
+            return Object.assign({}, sib, { options: {} });
+          });
+          batchCheckInSiblings(autoSibs);
+        } else {
           showSiblingPanel(siblings, name);
         }
       });
@@ -1163,25 +1463,37 @@
 
     var payload = { name: fullName, clubName: clubName, clubImageData: imageData, printerName: selectedPrinterName || '' };
 
-    var printPromise;
-    if (selectedMode !== 'dialog') {
-      printPromise = fetch(PRINT_SERVER + '/print', {
+    function attemptPrint(p, retriesLeft) {
+      return fetch(PRINT_SERVER + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(p),
         signal: AbortSignal.timeout(5000)
       }).then(function(response) {
-        if (response.ok) {
-          setStatus('\u2705');
-          playSuccess();
-          clearStatus();
-          flushQueue(); // try flushing any queued items
-          console.log('[Awana] Silent print sent to server');
-          return true;
-        }
-        return false;
+        if (response.ok) return true;
+        throw new Error('HTTP ' + response.status);
       }).catch(function(err) {
-        console.log('[Awana] Server unavailable, queuing:', err.message);
+        if (retriesLeft > 0) {
+          console.log('[Awana] Print failed, retrying in 3s (' + retriesLeft + ' left):', err.message);
+          return new Promise(function(resolve) {
+            setTimeout(function() { resolve(attemptPrint(p, retriesLeft - 1)); }, 3000);
+          });
+        }
+        throw err;
+      });
+    }
+
+    var printPromise;
+    if (selectedMode !== 'dialog') {
+      printPromise = attemptPrint(payload, 1).then(function() {
+        setStatus('\u2705');
+        playSuccess();
+        clearStatus();
+        flushQueue();
+        console.log('[Awana] Silent print sent to server');
+        return true;
+      }).catch(function(err) {
+        console.log('[Awana] Server unavailable after retry, queuing:', err.message);
         queuePrint(payload);
         setStatus('\uD83D\uDCE6'); // 📦 queued icon
         clearStatus();
@@ -1372,8 +1684,57 @@
     } catch (e) { console.log('[Awana] autoRefresh error:', e); }
   }
 
+  // ── Quick Mode: one-click check-in interceptor ──────────────────────────────
+  // When Quick Mode is ON, intercept clicks on .clubber elements. Let the native
+  // click flow through (TwoTimTwo opens its modal), then auto-dismiss the modal.
+  // We print immediately — before the modal even opens — since we already have
+  // the name + club info.  The existing onCheckin() path also fires when
+  // #lastCheckin updates, but printedNames dedup prevents a double print.
+  var _quickModeProcessing = false;
+  document.body.addEventListener('click', function(e) {
+    if (!quickModeEnabled) return;
+    if (_quickModeProcessing) return;
+    var clubberEl = e.target.closest('.clubber');
+    if (!clubberEl) return;
+    var nameEl = clubberEl.querySelector('.name');
+    if (!nameEl) return;
+    var name = nameEl.innerText.trim();
+    if (!name) return;
+    if (selectedMode === 'off') return;
+    var key = name.toLowerCase().trim();
+    if (printedNames.has(key)) return; // already printed
+    if (batchPrintedNames.has(key)) return;
+
+    console.log('[Awana] Quick Mode check-in:', name);
+    // Print immediately
+    markPrinted(name);
+    batchPrintedNames.add(key);
+    setTimeout(function() { batchPrintedNames.delete(key); }, 8000);
+    lastPrintTime = Date.now();
+    var club = lookupClub(name);
+    doPrint(name, club.clubName, club.clubImageData);
+
+    // Let native click open the modal, then auto-dismiss after 150ms
+    setTimeout(function() {
+      _quickModeProcessing = true;
+      pollForCheckinButton({ name: name, element: clubberEl }, [], {}, 30);
+      setTimeout(function() { _quickModeProcessing = false; }, 500);
+    }, 150);
+  }, true); // capture phase
+
   injectWidget();
   loadPrintedState();
+  // Restore printer selection from chrome.storage.local (survives extension updates)
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['awana_selectedPrinterName'], function(result) {
+      if (result.awana_selectedPrinterName && !localStorage.getItem(PRINTER_KEY)) {
+        selectedPrinterName = result.awana_selectedPrinterName;
+        localStorage.setItem(PRINTER_KEY, selectedPrinterName);
+        var sel = document.getElementById('awana-printer-select');
+        if (sel) sel.value = selectedPrinterName;
+      }
+    });
+  }
   fetchPrinters();
   watchCheckins();
   // Establish the roster baseline on load (or re-populate ROSTER_CACHE after a
@@ -1385,6 +1746,8 @@
   setInterval(autoRefresh, AUTO_REFRESH_INTERVAL_MS);
   syncCsv();
   checkForExtensionUpdate();
+  // Periodically check server health for CSV warnings + update notices
+  setInterval(checkForExtensionUpdate, 60000);
   updateQueueBadge();
 
   // Flush any queued prints on startup

@@ -53,6 +53,16 @@
   .tab-content.active { display: block; }
   .update-banner { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 8px 16px; font-size: 13px; font-weight: 600; text-align: center; }
   .empty { text-align: center; padding: 24px; color: #94a3b8; font-size: 13px; }
+  .traffic-light { display: flex; align-items: center; gap: 14px; padding: 16px 20px; border-radius: 10px; margin-bottom: 4px; }
+  .traffic-light.green { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .traffic-light.yellow { background: #fffbeb; border: 1px solid #fde68a; }
+  .traffic-light.red { background: #fef2f2; border: 1px solid #fecaca; }
+  .traffic-dot { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; }
+  .traffic-dot.green { background: #22c55e; box-shadow: 0 0 12px rgba(34,197,94,0.4); }
+  .traffic-dot.yellow { background: #f59e0b; box-shadow: 0 0 12px rgba(245,158,11,0.3); }
+  .traffic-dot.red { background: #ef4444; box-shadow: 0 0 12px rgba(239,68,68,0.3); }
+  .traffic-text { font-size: 15px; font-weight: 700; }
+  .traffic-detail { font-size: 12px; color: #64748b; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -70,6 +80,15 @@
 <div id="update-banner" class="update-banner" style="display:none"></div>
 
 <div class="container">
+  <!-- Traffic light health indicator -->
+  <div id="traffic-light" class="traffic-light green">
+    <div id="traffic-dot" class="traffic-dot green"></div>
+    <div>
+      <div id="traffic-text" class="traffic-text">Checking status...</div>
+      <div id="traffic-detail" class="traffic-detail"></div>
+    </div>
+  </div>
+
   <!-- Status cards row -->
   <div class="row">
     <div class="card">
@@ -207,6 +226,14 @@ function formatUptime(seconds) {
   return h + 'h ' + m + 'm';
 }
 
+var WARNING_DESCRIPTIONS = {
+  csvMissing: 'The roster file (clubbers.csv) is missing. Labels will print without allergy or birthday info.',
+  csvEmpty: 'The roster file has no data. Labels will print without allergy or birthday info.',
+  csvStale: 'The roster data hasn\'t been updated recently. It may be missing new kids or allergy changes.',
+  printerNotFound: 'The configured printer was not found. Check that it\'s connected and turned on.',
+  printerCheckFailed: 'Could not check printer status. This may resolve on its own.'
+};
+
 // Load health status
 function loadHealth() {
   fetch(BASE + '/health').then(function(r) { return r.json(); }).then(function(data) {
@@ -224,19 +251,54 @@ function loadHealth() {
       banner.textContent = 'Update available: v' + data.latestVersion + ' (current: v' + data.version + ')';
     }
 
-    // Warnings
+    // Warnings + traffic light
+    var warnings = data.warnings || [];
     var warnCard = document.getElementById('warnings-card');
     var warnList = document.getElementById('warnings-list');
-    if (data.warnings && data.warnings.length > 0) {
+    var tl = document.getElementById('traffic-light');
+    var td = document.getElementById('traffic-dot');
+    var tt = document.getElementById('traffic-text');
+    var tdet = document.getElementById('traffic-detail');
+
+    var hasError = warnings.some(function(w) { return w.type === 'printerNotFound'; });
+    var hasWarning = warnings.length > 0;
+
+    if (hasError) {
+      tl.className = 'traffic-light red';
+      td.className = 'traffic-dot red';
+      tt.textContent = 'Problem Detected';
+      tdet.textContent = 'Check the warnings below for details.';
+    } else if (hasWarning) {
+      tl.className = 'traffic-light yellow';
+      td.className = 'traffic-dot yellow';
+      tt.textContent = 'Attention Needed';
+      tdet.textContent = warnings.length + ' warning' + (warnings.length > 1 ? 's' : '') + ' \u2014 check below.';
+    } else {
+      tl.className = 'traffic-light green';
+      td.className = 'traffic-dot green';
+      tt.textContent = 'Everything Looks Good';
+      tdet.textContent = 'Server is running, printer connected, roster loaded.';
+    }
+
+    if (hasWarning) {
       warnCard.style.display = 'block';
-      warnList.innerHTML = data.warnings.map(function(w) {
-        return '<div class="warning-item">' + w.message + '</div>';
+      warnList.innerHTML = warnings.map(function(w) {
+        var desc = WARNING_DESCRIPTIONS[w.type] || w.message;
+        return '<div class="warning-item">' + desc + '</div>';
       }).join('');
     } else {
       warnCard.style.display = 'none';
     }
   }).catch(function() {
     document.getElementById('status-badge').innerHTML = '<span class="status-dot err"></span> Offline';
+    var tl = document.getElementById('traffic-light');
+    var td = document.getElementById('traffic-dot');
+    var tt = document.getElementById('traffic-text');
+    var tdet = document.getElementById('traffic-detail');
+    tl.className = 'traffic-light red';
+    td.className = 'traffic-dot red';
+    tt.textContent = 'Server Offline';
+    tdet.textContent = 'Cannot connect. Make sure the Awana Print window is open.';
   });
 }
 
@@ -363,7 +425,7 @@ loadHistory();
 loadSettings();
 
 // Refresh periodically
-setInterval(loadHealth, 30000);
+setInterval(loadHealth, 10000);
 setInterval(loadHistory, 15000);
 </script>
 </body>

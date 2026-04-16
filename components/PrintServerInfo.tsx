@@ -267,11 +267,49 @@ export const PrintServerInfo: React.FC = () => {
         </div>
       </div>
 
-      {/* ── New in v2 ─────────────────────────────────────────────────────── */}
+      {/* ── New in v3 ─────────────────────────────────────────────────────── */}
       <div className="mt-8 border-t border-gray-200 pt-6">
         <h3 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
           <i className="fa fa-star text-yellow-500"></i>
-          New in v2.0
+          New in v3.0
+        </h3>
+        <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-bolt text-blue-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-blue-700 block mb-0.5">Quick Mode</strong>
+              <span className="text-gray-600">One-click check-in with auto-sibling detection and keyboard shortcuts. Toggle it on for the fastest check-in experience.</span>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-search text-blue-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-blue-700 block mb-0.5">Search Bar</strong>
+              <span className="text-gray-600">Type-ahead roster search in the widget. Type a name, press Enter or click to check in.</span>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-play-circle text-blue-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-blue-700 block mb-0.5">Auto-Start</strong>
+              <span className="text-gray-600">Optionally start the print server automatically when the PC boots. No manual setup on check-in night.</span>
+            </div>
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-life-ring text-blue-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-blue-700 block mb-0.5">Help Button</strong>
+              <span className="text-gray-600">One-click diagnostics with plain-English guidance when something goes wrong.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── v2.0 features ─────────────────────────────────────────────────── */}
+      <div className="mt-4 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-bold text-gray-700 mb-3 flex items-center gap-2">
+          <i className="fa fa-star text-yellow-500"></i>
+          v2.0 Features
         </h3>
         <div className="grid grid-cols-2 gap-2 mb-4 text-xs">
           <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
