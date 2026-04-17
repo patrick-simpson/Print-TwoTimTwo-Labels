@@ -1,3 +1,6 @@
+## [3.0.1] - 2026-04-17
+Broadcast real-time check-in events via Pusher so external dashboards/displays can react instantly. After each successful print, `print-server/server.js` triggers a `checkin` event on `awana-channel` with `firstName`, `club`, `isBirthday`, and `isFirstTimer`. Pusher is initialised with placeholder credentials (appId/key/secret/cluster) that must be replaced before use. Added `pusher` npm dependency.
+
 ## [3.0.0] - 2026-04-16
 "Go Big" release: 14 improvements to reduce clicks, add automation, and simplify setup. The #1 volunteer complaint was "too many buttons to click" — Quick Mode addresses this directly.
 

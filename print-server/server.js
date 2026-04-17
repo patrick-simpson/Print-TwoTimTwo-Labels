@@ -12,6 +12,7 @@ process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejecti
 
 const express = require('express');
 const cors    = require('cors');
+const Pusher  = require('pusher');
 const { createCanvas, loadImage } = require('canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
@@ -19,6 +20,13 @@ const https = require('https');
 const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
+
+const pusher = new Pusher({
+  appId:   'YOUR_APP_ID',
+  key:     'YOUR_KEY',
+  secret:  'YOUR_SECRET',
+  cluster: 'YOUR_CLUSTER',
+});
 
 const PORT         = 3456;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
@@ -918,6 +926,13 @@ app.post('/print', async (req, res) => {
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
+
+    pusher.trigger('awana-channel', 'checkin', {
+      firstName,
+      club: clubName,
+      isBirthday: !!birthday,
+      isFirstTimer: !!visitor,
+    }).catch(e => console.warn('[pusher] trigger failed:', e.message));
 
     // Log to print history
     addHistoryEntry({
