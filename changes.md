@@ -1,3 +1,13 @@
+﻿## [3.0.2.3] - 2026-04-18
+Fixed duplicate prints and server responsiveness issues.
+
+### Fixes (print-server/server.js)
+- **Asynchronous Printing:** Refactored printImage and printer diagnostics to use non-blocking asynchronous execution. This prevents the server from appearing 'offline' in the dashboard during active printing.
+- **Server-Side Deduplication:** Implemented a 4-hour cooldown for reprinting the same name. This prevents 'phantom' prints even if the client triggers multiple requests.
+
+### Fixes (chrome-extension/content.js)
+- **Session Persistence:** Updated printedNames deduplication set to reliably persist in sessionStorage. This ensures that children already printed during a session remain marked as 'printed' even after the page auto-refreshes or is manually reloaded.
+
 ## [3.0.2.2] - 2026-04-17
 Fixes Quick Mode auto-sibling check-in.
 
@@ -19,7 +29,7 @@ Hotfix for print server crash and configuration improvements.
 Broadcast real-time check-in events via Pusher so external dashboards/displays can react instantly. After each successful print, `print-server/server.js` triggers a `checkin` event on `awana-channel` with `firstName`, `club`, `isBirthday`, and `isFirstTimer`. Pusher is initialised with placeholder credentials (appId/key/secret/cluster) that must be replaced before use. Added `pusher` npm dependency.
 
 ## [3.0.0] - 2026-04-16
-"Go Big" release: 14 improvements to reduce clicks, add automation, and simplify setup. The #1 volunteer complaint was "too many buttons to click" — Quick Mode addresses this directly.
+"Go Big" release: 14 improvements to reduce clicks, add automation, and simplify setup. The #1 volunteer complaint was "too many buttons to click" â€” Quick Mode addresses this directly.
 
 ### Quick Mode (chrome-extension/content.js)
 - **One-click check-in:** New "Quick Mode" toggle in the widget. When ON, clicking a child's name immediately prints their label and auto-dismisses the check-in modal (skips Bible/Friend options). Visual cue: panel header turns blue.
@@ -35,7 +45,7 @@ Broadcast real-time check-in events via Pusher so external dashboards/displays c
 - **Auto-start on boot:** Install script now offers to add a shortcut to the Windows Startup folder (opt-in, idempotent).
 - **Stale CSV warning:** Yellow banner appears in the widget when the server's `/health` endpoint reports `csvStale`, `csvMissing`, or `csvEmpty`. Click to refresh.
 - **Auto-retry failed prints:** `doPrint()` now retries once after 3 seconds before queuing. Handles transient server hiccups.
-- **Non-blocking update notice:** Widget now shows "Server update vX available — restart server to apply" when the server detects a newer version on GitHub.
+- **Non-blocking update notice:** Widget now shows "Server update vX available â€” restart server to apply" when the server detects a newer version on GitHub.
 - **Self-healing server:** `launch-awana.bat` now runs a restart loop (max 5 restarts per Zero-Loop Policy) instead of a fire-and-forget `start /min`. Server runs in the foreground of the "Keep this window open" window.
 
 ### Setup Simplification (chrome-extension/content.js, print-server/server.js, install-and-run.ps1)
@@ -45,11 +55,11 @@ Broadcast real-time check-in events via Pusher so external dashboards/displays c
 
 ### Dashboard & UX (print-server/public/index.html, chrome-extension/content.js)
 - **Traffic-light health dashboard:** Large green/yellow/red indicator at the top of the server dashboard (localhost:3456). Plain-English warning descriptions instead of technical codes. Auto-refreshes every 10 seconds (was 30s).
-- **"Help — Not Working?" panic button:** Orange button at the bottom of the widget. Runs `/diagnostics`, parses the 4 test results, and shows plain-English guidance (printer off, server unreachable, roster missing, etc.).
+- **"Help â€” Not Working?" panic button:** Orange button at the bottom of the widget. Runs `/diagnostics`, parses the 4 test results, and shows plain-English guidance (printer off, server unreachable, roster missing, etc.).
 - **Periodic health checks:** Extension now re-checks `/health` every 60 seconds to surface warnings promptly.
 
 ## [2.3.0] - 2026-04-15
-Fix phantom prints caused by the roster-diff remote check-in detector, and replace the "Happy Birthday!" text banner with a 🍰 cake emoji in the bottom-right icon row.
+Fix phantom prints caused by the roster-diff remote check-in detector, and replace the "Happy Birthday!" text banner with a ðŸ° cake emoji in the bottom-right icon row.
 
 ### Why
 Two live-event bugs:
@@ -60,13 +70,13 @@ Both are the same root cause. `scanClubberList()` treats any `.clubber` row that
 
 ### Phantom-print fix (chrome-extension/content.js)
 - **Mass-disappearance guard:** if > 3 kids go missing in a single scan **and** the roster shrinks below 80% of its previous size, treat it as a UI reshuffle (filter / tab switch / reload) and re-baseline `knownClubbers` without printing anyone. Clears `pendingMissing` to prevent stale state.
-- **Consecutive-miss confirmation:** a new `pendingMissing` `Map<nameKey, missCount>` requires a kid to be absent for **2 consecutive scans** (≥ 10 seconds at the 5-second `SCAN_INTERVAL_MS`) before the diff path fires. A single-scan flap (brief filter, virtualization glitch) clears pending state as soon as the kid reappears in `current`.
+- **Consecutive-miss confirmation:** a new `pendingMissing` `Map<nameKey, missCount>` requires a kid to be absent for **2 consecutive scans** (â‰¥ 10 seconds at the 5-second `SCAN_INTERVAL_MS`) before the diff path fires. A single-scan flap (brief filter, virtualization glitch) clears pending state as soon as the kid reappears in `current`.
 - The scan iterates the union of `knownClubbers` + `pendingMissing.keys()` so in-flight pending entries continue to be re-evaluated after `knownClubbers` rolls forward to the latest scan.
-- The `#lastCheckin` observer path is unchanged — it remains the trusted primary detector for check-ins made on this browser.
+- The `#lastCheckin` observer path is unchanged â€” it remains the trusted primary detector for check-ins made on this browser.
 
 ### Birthday cake emoji (print-server/server.js)
 - Removed the red 9pt bold "Happy Birthday!" text banner that used to sit under the handbook group (and its contribution to `blockH`, so the centered text block is now truly centered on non-birthday labels as well).
-- Added a 🍰 glyph at **26pt** (~1.6× the 16pt allergy emoji size) to the bottom-right icon row. Rendered with the same emoji font stack as the allergy emojis (`"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`) so visual style matches.
+- Added a ðŸ° glyph at **26pt** (~1.6Ã— the 16pt allergy emoji size) to the bottom-right icon row. Rendered with the same emoji font stack as the allergy emojis (`"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`) so visual style matches.
 - Ordering in the row: **cake leftmost, allergy emojis to its right**, with the rightmost allergy emoji anchored against the label's right padding. The icon row renders whenever `hasAllergy || isBirthday`.
 - Per-glyph measurement via `ctx.measureText` so the differently-sized cake and allergy emojis share the same baseline and pack cleanly without overlap.
 
@@ -77,22 +87,22 @@ Both are the same root cause. `scanClubberList()` treats any `.clubber` row that
 Detect remote check-ins by diffing the `.clubber` roster across scans, so a kid checked in from another device (phone, second laptop) eventually gets their label printed here. Auto-refresh the page during peak time so the diff sees fresh data.
 
 ### Why
-TwoTimTwo.com doesn't push real-time updates — the existing `#lastCheckin` observer only fires for check-ins made on *this* browser. If a volunteer uses a phone or a second laptop to check someone in, the label never prints because the laptop never sees the event. This was causing missed labels during the 5:40–6:00 PM rush when multiple volunteers are checking kids in simultaneously.
+TwoTimTwo.com doesn't push real-time updates â€” the existing `#lastCheckin` observer only fires for check-ins made on *this* browser. If a volunteer uses a phone or a second laptop to check someone in, the label never prints because the laptop never sees the event. This was causing missed labels during the 5:40â€“6:00 PM rush when multiple volunteers are checking kids in simultaneously.
 
 ### Remote check-in detection (chrome-extension/content.js)
 - New `scanClubberList()` captures the visible `.clubber` names on every scan; any name present on the previous scan but missing now is treated as a check-in (local *or* remote) and its label is printed via the normal `doPrint()` path.
 - Club name + icon image are cached in `ROSTER_CACHE` while the kid is still visible, so they can still be printed after the kid disappears (where `lookupClub()` would fail).
-- A session-scoped `printedNames` `Set` dedupes across the `#lastCheckin` path, the batch-sibling path, and the new diff path — a locally-checked-in kid is never reprinted. `onCheckin()` and `batchCheckInSiblings()` now call `markPrinted()` to feed this set.
+- A session-scoped `printedNames` `Set` dedupes across the `#lastCheckin` path, the batch-sibling path, and the new diff path â€” a locally-checked-in kid is never reprinted. `onCheckin()` and `batchCheckInSiblings()` now call `markPrinted()` to feed this set.
 - State (`printedNames`, `knownClubbers`, `ROSTER_CACHE`, baseline flag) is persisted to `sessionStorage` so detection survives the peak-window auto-refresh reload. A 4-hour idle timeout auto-clears the dedup state between Awana nights.
-- First scan after load is a baseline-only populate — we never print the full roster on page load.
+- First scan after load is a baseline-only populate â€” we never print the full roster on page load.
 - Scans fire once on init, on every debounced `MutationObserver` callback, and on a 5-second safety interval.
 
 ### Peak-window auto-refresh (chrome-extension/content.js)
 - New `autoRefresh()` reloads the page every 30 seconds when the local clock is between 17:40 and 18:00.
-- Suppressed when the document is hidden, the sibling panel (`#awana-sibling-panel`) is open, the check-in modal (`#checkin-modal`) is open, or any `INPUT`/`TEXTAREA`/`SELECT` is focused — preserves in-progress user actions.
+- Suppressed when the document is hidden, the sibling panel (`#awana-sibling-panel`) is open, the check-in modal (`#checkin-modal`) is open, or any `INPUT`/`TEXTAREA`/`SELECT` is focused â€” preserves in-progress user actions.
 
 ### Scope
-- **Chrome extension only** — `electron-app/src/checkin-script.js` intentionally not updated in this release.
+- **Chrome extension only** â€” `electron-app/src/checkin-script.js` intentionally not updated in this release.
 
 ## [2.1.0] - 2026-04-09
 Batch check-in reliability and quality improvements: duplicate prevention, faster throughput, club-specific fonts, age-appropriate sibling options, and correct multi-family separation.
@@ -104,20 +114,20 @@ Batch check-in reliability and quality improvements: duplicate prevention, faste
 - Name keys stored in `batchPrintedNames` are now `.trim()`ed for both write and read, eliminating any edge-case mismatch from trailing whitespace in `#lastCheckin`.
 
 **Faster batch check-ins:**
-- `BATCH_DELAY` reduced from 700 ms to 400 ms between siblings. The print fires before the check-in modal is submitted so the modal round-trip is the real bottleneck — 400 ms is sufficient for the next sibling selection without sacrificing reliability.
+- `BATCH_DELAY` reduced from 700 ms to 400 ms between siblings. The print fires before the check-in modal is submitted so the modal round-trip is the real bottleneck â€” 400 ms is sufficient for the next sibling selection without sacrificing reliability.
 
 **Club-specific label fonts:**
 - Each Awana club now uses a distinct font personality on the printed label:
-  - Puggles / Cubbies → Comic Sans MS (fun, rounded, age-appropriate)
-  - Sparks → Trebuchet MS (modern, energetic)
-  - T&T → Arial Black (bold, strong)
-  - Trek → Georgia (classic, mature)
-  - Journey → Palatino Linotype (sophisticated)
-  - Unknown / default → Helvetica / Arial (unchanged)
+  - Puggles / Cubbies â†’ Comic Sans MS (fun, rounded, age-appropriate)
+  - Sparks â†’ Trebuchet MS (modern, energetic)
+  - T&T â†’ Arial Black (bold, strong)
+  - Trek â†’ Georgia (classic, mature)
+  - Journey â†’ Palatino Linotype (sophisticated)
+  - Unknown / default â†’ Helvetica / Arial (unchanged)
 - `fitFontSize` updated to accept a `fontFamily` parameter so auto-sizing uses the same face as rendering.
 
 **No Bible / Friend options for Puggles and Cubbies:**
-- Sibling check-in panel now detects the sibling's club name. If the club is Puggles or Cubbies the Bible and Friend checkboxes are omitted — those programmes don't track those options.
+- Sibling check-in panel now detects the sibling's club name. If the club is Puggles or Cubbies the Bible and Friend checkboxes are omitted â€” those programmes don't track those options.
 
 **Correct Miller-family (same-last-name) separation:**
 - `findSiblings` previously always fell back to DOM last-name matching when the server returned zero siblings, incorrectly grouping unrelated families who share a last name.
@@ -125,27 +135,27 @@ Batch check-in reliability and quality improvements: duplicate prevention, faste
 - Families with the same last name are correctly separated as long as the synced CSV contains any distinguishing field: HouseholdID, PrimaryContact, Guardian, or Address.
 
 ## [2.0.5] - 2026-04-08
-Critical fixes for sibling check-in — all siblings were timing out due to four bugs in button detection and options application.
+Critical fixes for sibling check-in â€” all siblings were timing out due to four bugs in button detection and options application.
 
 ### Bug Fixes (pollForCheckinButton)
 
-**Bug 1 — offsetParent always null for position:fixed elements:**
+**Bug 1 â€” offsetParent always null for position:fixed elements:**
 - `#checkin-modal` uses CSS `position: fixed`, which means `offsetParent` is **always `null`** regardless of visibility. Strategy 1 was never finding the button because the visibility check failed immediately.
 - **Fix:** Replace `ttModal.offsetParent !== null` with `window.getComputedStyle(ttModal).display !== 'none'`.
 
-**Bug 2 — Wrong modalContainer from `.closest('[class*="modal"]')`:**
+**Bug 2 â€” Wrong modalContainer from `.closest('[class*="modal"]')`:**
 - `.closest()` walks up the DOM and stops at the first ancestor matching the selector. For `button#checkin`, it matched `.modal-footer` (an ancestor whose class name contains "modal"), not `#checkin-modal`. Result: 0 checkboxes found, Bible/Friend options never applied.
 - **Fix:** Use `document.getElementById('checkin-modal')` directly instead of `.closest()`.
 
-**Bug 3 — Double-submission from dual click handlers:**
+**Bug 3 â€” Double-submission from dual click handlers:**
 - Code called both `checkinBtn.click()` and `checkinBtn.dispatchEvent(new MouseEvent('click'))`, firing the form submission handler twice and creating duplicate check-in records.
 - **Fix:** Remove the `dispatchEvent` line. `.click()` alone is sufficient.
 
-**Bug 4 — Broken timeout fallback calls immediately:**
+**Bug 4 â€” Broken timeout fallback calls immediately:**
 - `setTimeout(batchCheckInSiblings(remaining), BATCH_DELAY)` executed `batchCheckInSiblings(remaining)` right away (passing `undefined` to `setTimeout`). The deferred batch never ran.
 - **Fix:** Wrap in a function: `setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY)`.
 
-**Bonus — Strategy 4 selector specificity:**
+**Bonus â€” Strategy 4 selector specificity:**
 - Changed from `.modal button` to `#checkin-modal button` to avoid accidentally matching buttons in other Bootstrap modals on the page (like `#page-info-window`).
 
 **Result:** Siblings now check in correctly with Bible/Friend options applied and no duplicate submissions.
@@ -169,18 +179,18 @@ Fixes sibling batch check-in, speeds up batch processing, and updates checkbox U
 
 ### Sibling Check-in Fix
 - **Root cause fixed:** `pollForCheckinButton` Strategy 1 now directly targets `button#checkin` inside `#checkin-modal` when that modal is visible. TwoTimTwo's Bootstrap modal is pre-rendered in the DOM (always present but hidden), so the previous "new button" detection (Strategy 2) always skipped it since it was in the pre-click snapshot. Now we check modal visibility (`offsetParent !== null`) before querying the button.
-- **Strategy 2 simplified:** No longer relies on pre-click button snapshot — now simply scans all visible buttons for check-in text, which correctly handles both React (dynamic) and Bootstrap (static) modal patterns.
+- **Strategy 2 simplified:** No longer relies on pre-click button snapshot â€” now simply scans all visible buttons for check-in text, which correctly handles both React (dynamic) and Bootstrap (static) modal patterns.
 - **Strategy 3 hardened:** Added visibility check (`offsetParent !== null`) before matching by text, preventing false positives from hidden modals.
 
 ### Faster Batch Check-ins
 - **Print queued in background:** `batchCheckInSiblings` now fires `doPrint` for each sibling immediately before clicking their card, so label printing happens in the background while check-ins proceed.
-- **Reduced inter-sibling delay:** `PRINT_COOLDOWN + 500` (2500ms) → `BATCH_DELAY` (700ms) between siblings. Entire batch of 3 siblings now takes ~2s instead of ~7.5s.
+- **Reduced inter-sibling delay:** `PRINT_COOLDOWN + 500` (2500ms) â†’ `BATCH_DELAY` (700ms) between siblings. Entire batch of 3 siblings now takes ~2s instead of ~7.5s.
 - **Deduplication guard:** Added `batchPrintedNames` Set. When `#lastCheckin div` updates after a batch check-in, `onCheckin` checks this set and skips printing to prevent double-prints. Names are cleared from the set after 8 seconds.
 
 ### Sibling Panel UI
 - **Per-child checkboxes:** Each sibling row now shows Bible (default checked) and Friend (default unchecked) checkboxes on the right, instead of a global "Check-in Options" section at the bottom.
 - **Removed global options:** Bible, Book, and Uniform global checkboxes replaced by per-sibling Bible and Friend options.
-- **`applyCheckinOptions` updated:** Now maps Bible → `/bible/i` and Friend → `/friend|brought/i` (removed Book and Uniform patterns).
+- **`applyCheckinOptions` updated:** Now maps Bible â†’ `/bible/i` and Friend â†’ `/friend|brought/i` (removed Book and Uniform patterns).
 
 ### Simulator CheckinModal
 - **Checkboxes repositioned:** Bible and Friend checkboxes now appear to the right of the child's name/info in the modal header, not in a separate body section below.
@@ -202,20 +212,20 @@ Critical fixes for batch check-in and print dialog consistency.
 Fixes race condition in batch sibling check-in, adds check-in attribute options to the sibling panel, and improves sibling detection using the synced CSV roster.
 
 ### Extension & Bookmarklet Fixes
-- **Batch check-in race condition fixed:** `batchCheckInSiblings()` no longer uses a hardcoded 600 ms `setTimeout` before looking for the check-in button. It now polls every 100 ms for up to 3 seconds, checking button visibility (`offsetParent !== null`) before clicking — eliminating failures on slower connections or React/Vue SPA pages where the modal renders asynchronously.
+- **Batch check-in race condition fixed:** `batchCheckInSiblings()` no longer uses a hardcoded 600 ms `setTimeout` before looking for the check-in button. It now polls every 100 ms for up to 3 seconds, checking button visibility (`offsetParent !== null`) before clicking â€” eliminating failures on slower connections or React/Vue SPA pages where the modal renders asynchronously.
 - **Dual-click for framework compatibility:** Once the check-in button is found, both `.click()` and a bubbling `MouseEvent('click')` are dispatched so React/Vue synthetic event handlers are reliably triggered.
 - **Check-in Options in sibling panel:** The sibling sidebar now includes a "Check-in Options" section with Bible, Book, and Uniform checkboxes (unchecked by default). Checked options are applied to the modal's corresponding checkboxes (with `change` + `click` events) before the check-in form is submitted.
 - **CSV-based sibling detection:** `findSiblings()` is now async and first queries the new server `/siblings` endpoint before falling back to the existing DOM last-name match. This finds siblings in blended families or families where children have different last names, as long as the roster CSV includes a common family identifier (Household ID, Primary Contact, Guardian, or Address).
 
 ### Server Changes
-- **`GET /siblings?name=First+Last`:** New endpoint returns an array of sibling names for the given child, derived from the synced `clubbers.csv`. Groups families by the best available identifier (HouseholdID → PrimaryContact → Guardian → Address → LastName fallback). Returns `{ siblings: [] }` if the child is not in the CSV or has no detected family members.
+- **`GET /siblings?name=First+Last`:** New endpoint returns an array of sibling names for the given child, derived from the synced `clubbers.csv`. Groups families by the best available identifier (HouseholdID â†’ PrimaryContact â†’ Guardian â†’ Address â†’ LastName fallback). Returns `{ siblings: [] }` if the child is not in the CSV or has no detected family members.
 - **Extended CSV column support:** `HEADER_MAP` now recognises family/household identifier columns exported by TwoTimTwo and similar systems: `Primary Contact`, `Guardian`, `Parents`, `Household ID`, `Family ID`, `Address`, and common variants.
 
 ## [2.0.0] - 2026-04-06
 Major release adding dashboard, sibling batch check-in, offline queue, and operational tooling.
 
 ### Server Features
-- **Dashboard Web UI:** Open `localhost:3456` for real-time server status, print history, label preview, settings, and diagnostics — all in one page.
+- **Dashboard Web UI:** Open `localhost:3456` for real-time server status, print history, label preview, settings, and diagnostics â€” all in one page.
 - **Label Preview Endpoint:** `GET /preview?name=Alice+Smith` returns a rendered PNG without printing. Used by dashboard and useful for testing.
 - **Print History:** Every print is logged to `print-history.json`. View today's prints on the dashboard with one-click reprint buttons.
 - **Reprint Endpoint:** `POST /reprint` reprints any label from history without re-checking-in the child.
@@ -236,10 +246,10 @@ Major release adding dashboard, sibling batch check-in, offline queue, and opera
 - **v2.0 Feature Tiles:** PrintServerInfo component updated with new feature descriptions.
 
 ## [1.10.9] - 2026-04-04
-- **Widget Default Minimized:** Widget now starts collapsed as a small green pill instead of an expanded panel. Prevents the widget from obstructing page content on first load. Click the pill to expand; click × to collapse again. State persists across page loads.
+- **Widget Default Minimized:** Widget now starts collapsed as a small green pill instead of an expanded panel. Prevents the widget from obstructing page content on first load. Click the pill to expand; click Ã— to collapse again. State persists across page loads.
 
 ## [1.10.8] - 2026-04-04
-- **Widget Position Fix:** Reverted inline DOM injection (placed widget in wrong sidebar). Widget now uses `position: fixed` at `top: 55px, right: 12px` — floating over the right column below the site nav bars.
+- **Widget Position Fix:** Reverted inline DOM injection (placed widget in wrong sidebar). Widget now uses `position: fixed` at `top: 55px, right: 12px` â€” floating over the right column below the site nav bars.
 
 ## [1.10.7] - 2026-04-04
 - **Widget Position Fix:** Widget now inserts to the RIGHT of `#lastCheckin` (was incorrectly inserting to the left).
@@ -256,17 +266,17 @@ Major release adding dashboard, sibling batch check-in, offline queue, and opera
 
 ## [1.10.4] - 2026-04-04
 - **Allergy Icons Redesign:** Removed red bottom bar. Allergy icons now appear in the lower-right corner of the label. Icons are larger (16pt vs 13pt).
-- **Removed Shellfish:** Dropped SHELLFISH (🦐) from allergy detection and icon map.
-- **DYE Icon:** Changed from ⚠ to 💧 (water drop) for food dye/artificial coloring sensitivity.
+- **Removed Shellfish:** Dropped SHELLFISH (ðŸ¦) from allergy detection and icon map.
+- **DYE Icon:** Changed from âš  to ðŸ’§ (water drop) for food dye/artificial coloring sensitivity.
 
 ## [1.10.3] - 2026-04-04
-- **Aspect Ratio Fix:** Club logo images were squished to 64×64 square before being sent to the print server. Fixed `getClubImageDataUrl()` in both content.js and bookmarklet.js to letterbox images preserving natural aspect ratio.
-- **HandbookGroup Filter:** Children in handbook group "All" (case-insensitive) now print no group text — the field is treated as blank.
+- **Aspect Ratio Fix:** Club logo images were squished to 64Ã—64 square before being sent to the print server. Fixed `getClubImageDataUrl()` in both content.js and bookmarklet.js to letterbox images preserving natural aspect ratio.
+- **HandbookGroup Filter:** Children in handbook group "All" (case-insensitive) now print no group text â€” the field is treated as blank.
 - **Walk-in Guest Print:** Added free-text input to extension widget. Type any name and press Print/Enter to print a basic label for walk-in guests not in the TwoTimTwo roster.
 
 ## [1.10.2] - 2026-03-30
-- **Orientation Fix:** Replaced landscape flag with explicit `PaperSize("Label", 400, 200)` (4"×2" in hundredths of inches). D450 label stock was being rotated 90° extra, producing portrait output.
-- **Emoji Allergy Icons:** Replaced text strip ("NUTS • DAIRY") with emojis (🥜🥛🌾🥚🦐⚠) using Segoe UI Emoji font, increased from 14pt to 20pt.
+- **Orientation Fix:** Replaced landscape flag with explicit `PaperSize("Label", 400, 200)` (4"Ã—2" in hundredths of inches). D450 label stock was being rotated 90Â° extra, producing portrait output.
+- **Emoji Allergy Icons:** Replaced text strip ("NUTS â€¢ DAIRY") with emojis (ðŸ¥œðŸ¥›ðŸŒ¾ðŸ¥šðŸ¦âš ) using Segoe UI Emoji font, increased from 14pt to 20pt.
 
 ## [1.10.1] - 2026-03-30
 - **Silent Print Fix:** Fixed blank page submissions. Root cause: `$img` in outer scope was inaccessible in `add_PrintPage` event handler (known .NET closure issue). Now store image path as `PrintDocument` property, load fresh inside handler via `$sender.LabelImagePath`. Script written to temp file with `-File` flag to avoid multiline quoting issues. Added `$ErrorActionPreference = 'Stop'` for real error surfacing.
@@ -285,8 +295,8 @@ Major release adding dashboard, sibling batch check-in, offline queue, and opera
 
 ## [1.9.1] - 2026-03-29
 - **PNG Engine:** Replaced PDF (pdfkit + pdf-to-printer) with PNG (canvas + PowerShell System.Drawing). 1200x600 pixels at 300 DPI eliminates driver rotation issues. Tested on Labelife D450 BT.
-- **Widget UX:** Minimize button → arrow tab on left edge. Full collapse when minimized.
-- **Dependency change:** pdfkit/pdf-to-printer → canvas.
+- **Widget UX:** Minimize button â†’ arrow tab on left edge. Full collapse when minimized.
+- **Dependency change:** pdfkit/pdf-to-printer â†’ canvas.
 
 ## [1.9.0] - 2026-03-29
 - **Orientation (real fix):** PDF page 4"x2" portrait, passing `orientation: 'portrait'` and `scale: 'noscale'` to pdf-to-printer to prevent driver rotation.
@@ -315,3 +325,4 @@ Major release adding dashboard, sibling batch check-in, offline queue, and opera
 ---
 
 **Older releases:** See [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md)
+
