@@ -1,6 +1,6 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 3.0.1
-# Updated    : 2026-03-27
+# Version    : 3.0.2
+# Updated    : 2026-04-17
 #
 # This script:
 #   1. Checks/upgrades PowerShell to v7+
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "3.0.1"
+$ScriptVersion = "3.0.2"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -474,12 +474,23 @@ Write-Host ""
 Write-Host "[5/8] Loading saved settings..." -ForegroundColor White
 $configPath = Join-Path $printServerPath "config.json"
 
-$cfg = [ordered]@{ printerName = ""; checkinUrl = "https://kvbchurch.twotimtwo.com/clubber/checkin?#" }
+$cfg = [ordered]@{ 
+    printerName = ""; 
+    checkinUrl = "https://kvbchurch.twotimtwo.com/clubber/checkin?#";
+    pusherAppId = "";
+    pusherKey = "";
+    pusherSecret = "";
+    pusherCluster = "";
+}
 if (Test-Path $configPath) {
     try {
         $saved = Get-Content $configPath -Raw | ConvertFrom-Json
         if ($saved.printerName) { $cfg.printerName = $saved.printerName }
         if ($saved.checkinUrl)  { $cfg.checkinUrl  = $saved.checkinUrl  }
+        if ($saved.pusherAppId) { $cfg.pusherAppId = $saved.pusherAppId }
+        if ($saved.pusherKey)   { $cfg.pusherKey   = $saved.pusherKey   }
+        if ($saved.pusherSecret){ $cfg.pusherSecret= $saved.pusherSecret}
+        if ($saved.pusherCluster){ $cfg.pusherCluster= $saved.pusherCluster}
     } catch {}
 }
 if ($PrinterName) { $cfg.printerName = $PrinterName }
@@ -622,9 +633,24 @@ function Configure {
     $newUrl = Read-Host "Enter check-in URL (press Enter to keep: $($cfg.checkinUrl))"
     if ($newUrl.Trim()) { $cfg.checkinUrl = $newUrl.Trim() }
 
+    Write-Host ""
+    Write-Host "--- Pusher Integration (for Joyful Welcome Screen) ---" -ForegroundColor Cyan
+    Write-Host "Get these keys from pusher.com (Channels app settings)" -ForegroundColor Gray
+    
+    $newAppId = Read-Host "Enter Pusher App ID (press Enter to keep: $($cfg.pusherAppId))"
+    if ($newAppId.Trim()) { $cfg.pusherAppId = $newAppId.Trim() }
+
+    $newKey = Read-Host "Enter Pusher Key (press Enter to keep: $($cfg.pusherKey))"
+    if ($newKey.Trim()) { $cfg.pusherKey = $newKey.Trim() }
+
+    $newSecret = Read-Host "Enter Pusher Secret (press Enter to keep: $($cfg.pusherSecret))"
+    if ($newSecret.Trim()) { $cfg.pusherSecret = $newSecret.Trim() }
+
+    $newCluster = Read-Host "Enter Pusher Cluster (press Enter to keep: $($cfg.pusherCluster))"
+    if ($newCluster.Trim()) { $cfg.pusherCluster = $newCluster.Trim() }
+
     # Save config
-    [PSCustomObject]@{ printerName = $cfg.printerName; checkinUrl = $cfg.checkinUrl } |
-        ConvertTo-Json | Set-Content $configPath
+    $cfg | ConvertTo-Json | Set-Content $configPath
     Write-Host ""
     Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
@@ -640,6 +666,7 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
     Write-Host "Current settings:" -ForegroundColor White
     Write-Host "  Printer : $($cfg.printerName)" -ForegroundColor White
     Write-Host "  URL     : $($cfg.checkinUrl)" -ForegroundColor White
+    Write-Host "  Pusher  : $(if($cfg.pusherKey){"Configured ($($cfg.pusherKey))"}else{"Not configured"})" -ForegroundColor White
     Write-Host ""
     Write-Host "Starting in 5 seconds...  Press any key to change settings." -ForegroundColor Gray
 
@@ -662,8 +689,7 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
     Write-Host ""
 
     # Save config
-    [PSCustomObject]@{ printerName = $cfg.printerName; checkinUrl = $cfg.checkinUrl } |
-        ConvertTo-Json | Set-Content $configPath
+    $cfg | ConvertTo-Json | Set-Content $configPath
     Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
 

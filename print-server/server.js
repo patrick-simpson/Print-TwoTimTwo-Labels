@@ -21,16 +21,35 @@ const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
 
-const pusher = new Pusher({
-  appId:   'YOUR_APP_ID',
-  key:     'YOUR_KEY',
-  secret:  'YOUR_SECRET',
-  cluster: 'YOUR_CLUSTER',
-});
-
 const PORT         = 3456;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
 const SERVER_VERSION = require('./package.json').version;
+
+// ── Load configuration ────────────────────────────────────────────────────────
+const CONFIG_FILE = path.join(__dirname, 'config.json');
+let config = {};
+try {
+  if (fs.existsSync(CONFIG_FILE)) {
+    config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  }
+} catch (e) {
+  console.warn('[config] Failed to load config.json:', e.message);
+}
+
+const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret) 
+  ? new Pusher({
+      appId:   config.pusherAppId,
+      key:     config.pusherKey,
+      secret:  config.pusherSecret,
+      cluster: config.pusherCluster || 'us2',
+    })
+  : null;
+
+if (pusher) {
+  console.log(`[pusher] Initialized with App ID: ${config.pusherAppId}`);
+} else {
+  console.log('[pusher] Not configured (Joyful Welcome Screen disabled)');
+}
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
 const PAGE_W  = 4 * 72;  // 288 pt
@@ -1205,11 +1224,22 @@ app.get('/config', (req, res) => {
 });
 
 app.post('/config', (req, res) => {
-  const { printerName, checkinUrl } = req.body || {};
+  const { 
+    printerName, checkinUrl, 
+    pusherAppId, pusherKey, pusherSecret, pusherCluster 
+  } = req.body || {};
   try {
     const config = {};
+    if (fs.existsSync(CONFIG_FILE)) {
+      Object.assign(config, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
+    }
     if (printerName !== undefined) config.printerName = printerName;
     if (checkinUrl !== undefined) config.checkinUrl = checkinUrl;
+    if (pusherAppId !== undefined) config.pusherAppId = pusherAppId;
+    if (pusherKey !== undefined) config.pusherKey = pusherKey;
+    if (pusherSecret !== undefined) config.pusherSecret = pusherSecret;
+    if (pusherCluster !== undefined) config.pusherCluster = pusherCluster;
+    
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
     console.log('[config] Saved:', JSON.stringify(config));
     res.json({ ok: true });

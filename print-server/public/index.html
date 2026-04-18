@@ -177,6 +177,28 @@
               <label>Check-in URL</label>
               <input type="text" id="settings-url" placeholder="https://yourchurch.twotimtwo.com/clubber/checkin">
             </div>
+            <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label style="color:#4caf50">Pusher Integration (Joyful Welcome Screen)</label>
+              <p style="font-size:11px; color:#64748b; margin-bottom:8px">Get these from your Pusher Channels dashboard</p>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div>
+                  <label>App ID</label>
+                  <input type="text" id="settings-pusher-id" placeholder="123456">
+                </div>
+                <div>
+                  <label>Cluster</label>
+                  <input type="text" id="settings-pusher-cluster" placeholder="us2">
+                </div>
+                <div>
+                  <label>Key</label>
+                  <input type="text" id="settings-pusher-key" placeholder="abc123def456">
+                </div>
+                <div>
+                  <label>Secret</label>
+                  <input type="text" id="settings-pusher-secret" placeholder="**********">
+                </div>
+              </div>
+            </div>
             <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
             <div id="settings-status" style="font-size:12px;color:#22c55e;display:none">Settings saved</div>
           </div>
@@ -365,6 +387,11 @@ function loadSettings() {
   // Load config
   fetch(BASE + '/config').then(function(r) { return r.json(); }).then(function(config) {
     document.getElementById('settings-url').value = config.checkinUrl || '';
+    document.getElementById('settings-pusher-id').value = config.pusherAppId || '';
+    document.getElementById('settings-pusher-cluster').value = config.pusherCluster || 'us2';
+    document.getElementById('settings-pusher-key').value = config.pusherKey || '';
+    document.getElementById('settings-pusher-secret').value = config.pusherSecret || '';
+
     // Load printers for dropdown
     return fetch(BASE + '/printers');
   }).then(function(r) { return r.json(); }).then(function(data) {
@@ -388,10 +415,22 @@ function loadSettings() {
 function saveSettings() {
   var printerName = document.getElementById('settings-printer').value;
   var checkinUrl = document.getElementById('settings-url').value.trim();
+  var pusherAppId = document.getElementById('settings-pusher-id').value.trim();
+  var pusherCluster = document.getElementById('settings-pusher-cluster').value.trim();
+  var pusherKey = document.getElementById('settings-pusher-key').value.trim();
+  var pusherSecret = document.getElementById('settings-pusher-secret').value.trim();
+
   fetch(BASE + '/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ printerName: printerName, checkinUrl: checkinUrl })
+    body: JSON.stringify({ 
+      printerName: printerName, 
+      checkinUrl: checkinUrl,
+      pusherAppId: pusherAppId,
+      pusherCluster: pusherCluster,
+      pusherKey: pusherKey,
+      pusherSecret: pusherSecret
+    })
   }).then(function(r) {
     if (r.ok) {
       var el = document.getElementById('settings-status');
