@@ -1,3 +1,14 @@
+## [3.0.2] - 2026-04-17
+Hotfix for print server crash and configuration improvements.
+
+### Fixes (print-server/server.js)
+- **Fix crash on print:** Added null check for `pusher` object. The server would previously crash if Pusher was not configured (default state).
+- **Fix SyntaxError:** Removed redundant `CONFIG_FILE` declaration that prevented the server from starting.
+
+### Setup (install-and-run.ps1, print-server/public/index.html)
+- **Pusher Configuration:** Added UI and script prompts to configure Pusher App ID, Key, Secret, and Cluster. Credentials are saved to `config.json` and persist across restarts.
+- **Improved Settings Dashboard:** Settings panel now includes a dedicated Pusher section with helpful hints.
+
 ## [3.0.1] - 2026-04-17
 Broadcast real-time check-in events via Pusher so external dashboards/displays can react instantly. After each successful print, `print-server/server.js` triggers a `checkin` event on `awana-channel` with `firstName`, `club`, `isBirthday`, and `isFirstTimer`. Pusher is initialised with placeholder credentials (appId/key/secret/cluster) that must be replaced before use. Added `pusher` npm dependency.
 

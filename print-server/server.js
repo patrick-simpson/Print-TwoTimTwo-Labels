@@ -946,12 +946,14 @@ app.post('/print', async (req, res) => {
 
     printImage(pngPath, effectivePrinter);
 
-    pusher.trigger('awana-channel', 'checkin', {
-      firstName,
-      club: clubName,
-      isBirthday: !!birthday,
-      isFirstTimer: !!visitor,
-    }).catch(e => console.warn('[pusher] trigger failed:', e.message));
+    if (pusher) {
+      pusher.trigger('awana-channel', 'checkin', {
+        firstName,
+        club: clubName,
+        isBirthday: !!birthday,
+        isFirstTimer: !!visitor,
+      }).catch(e => console.warn('[pusher] trigger failed:', e.message));
+    }
 
     // Log to print history
     addHistoryEntry({
@@ -1208,7 +1210,6 @@ app.get('/health', async (req, res) => {
 });
 
 // ── Config endpoints ─────────────────────────────────────────────────────────
-const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 app.get('/config', (req, res) => {
   try {
