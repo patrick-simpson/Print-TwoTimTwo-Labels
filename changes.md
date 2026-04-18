@@ -1,3 +1,9 @@
+## [3.0.2.2] - 2026-04-17
+Fixes Quick Mode auto-sibling check-in.
+
+### Fixes (chrome-extension/content.js)
+- **Quick Mode Auto-Siblings:** Fixed an issue where clicking a child''s name in Quick Mode would skip the sibling check-in logic. Sibling detection and automatic check-in is now integrated directly into the Quick Mode click interceptor.
+
 ## [3.0.2.1] - 2026-04-17
 Hotfix for print server crash and configuration improvements.
 

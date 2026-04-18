@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.0.2.1';
+  const EXTENSION_VERSION = '3.0.2.2';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -1713,6 +1713,19 @@
     lastPrintTime = Date.now();
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
+
+      // Quick Mode Auto-Sibling Check-in
+      setTimeout(function() {
+        findSiblings(name).then(function(siblings) {
+          if (siblings && siblings.length > 0) {
+            console.log("[Awana] Quick Mode: automatically checking in " + siblings.length + " sibling(s)");
+            var autoSibs = siblings.map(function(sib) {
+              return Object.assign({}, sib, { options: {} });
+            });
+            batchCheckInSiblings(autoSibs);
+          }
+        });
+      }, 500);
 
     // Let native click open the modal, then auto-dismiss after 150ms
     setTimeout(function() {
