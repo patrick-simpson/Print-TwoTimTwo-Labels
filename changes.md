@@ -1,4 +1,4 @@
-## [3.0.2] - 2026-04-17
+## [3.0.2.1] - 2026-04-17
 Hotfix for print server crash and configuration improvements.
 
 ### Fixes (print-server/server.js)
