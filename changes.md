@@ -1,4 +1,12 @@
-﻿## [3.0.2.3] - 2026-04-18
+﻿## [3.0.2.4] - 2026-04-29
+Added extension settings page for Pusher configuration.
+
+### Added (chrome-extension/)
+- **Options Page:** New settings page (`options.html` / `options.js`) accessible via right-click → "Options" on the extension icon, or via the new "Extension Settings" button in the popup.
+- **Pusher Fields:** App ID, Key, Secret, and Cluster inputs that load from and save to the print server's `/config` endpoint.
+- **Offline Handling:** Settings page shows a warning banner when the print server is unreachable, but remains usable.
+
+## [3.0.2.3] - 2026-04-18
 Fixed duplicate prints and server responsiveness issues.
 
 ### Fixes (print-server/server.js)
