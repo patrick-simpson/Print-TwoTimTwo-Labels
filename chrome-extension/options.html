@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>KVBC Check-in Settings</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; padding: 32px; color: #1e293b; }
+    .container { max-width: 480px; margin: 0 auto; }
+    h2 { margin: 0 0 4px 0; font-size: 20px; }
+    .subtitle { font-size: 12px; color: #64748b; margin-bottom: 24px; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .card h3 { margin: 0 0 4px 0; font-size: 14px; font-weight: 600; }
+    .card .description { font-size: 12px; color: #64748b; margin: 0 0 16px 0; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 4px; }
+    .field input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; font-family: system-ui, sans-serif; outline: none; transition: border-color 0.15s; }
+    .field input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+    .field input::placeholder { color: #9ca3af; }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+    .btn { padding: 9px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; border: none; cursor: pointer; transition: background 0.15s; }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-primary:disabled { background: #93c5fd; cursor: default; }
+    .status { font-size: 12px; }
+    .status.success { color: #16a34a; }
+    .status.error { color: #dc2626; }
+    .banner { padding: 10px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 20px; background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; display: none; }
+    .banner.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>KVBC Check-in Settings</h2>
+    <div class="subtitle">Extension Settings</div>
+
+    <div id="offline-banner" class="banner">
+      Print server is offline (localhost:3456). Settings can still be saved and will take effect when the server restarts.
+    </div>
+
+    <div class="card">
+      <h3>Pusher Configuration</h3>
+      <p class="description">
+        Used to broadcast real-time check-in events to the Joyful Welcome Screen.
+        Get credentials at <strong>pusher.com</strong>.
+      </p>
+      <div class="field">
+        <label for="pusher-app-id">App ID</label>
+        <input type="text" id="pusher-app-id" placeholder="e.g. 1234567" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="pusher-key">Key</label>
+        <input type="text" id="pusher-key" placeholder="e.g. abc123def456" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="pusher-secret">Secret</label>
+        <input type="password" id="pusher-secret" placeholder="••••••••••••" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="pusher-cluster">Cluster</label>
+        <input type="text" id="pusher-cluster" placeholder="us2" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button id="save-btn" class="btn btn-primary">Save</button>
+        <span id="status-msg" class="status"></span>
+      </div>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -21,5 +21,6 @@
 }
 
 document.getElementById('check-btn').addEventListener('click', checkServer);
+document.getElementById('settings-btn').addEventListener('click', () => chrome.runtime.openOptionsPage());
 // Check status immediately when popup opens
 checkServer();
