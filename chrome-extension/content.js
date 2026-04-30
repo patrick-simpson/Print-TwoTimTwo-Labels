@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.0.2.3';
+  const EXTENSION_VERSION = '3.0.3';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -45,7 +45,12 @@
   // it as a UI reshuffle (filter / tab switch / reload with filter active) and
   // re-baseline instead of printing anyone.
   var MASS_DISAPPEAR_RATIO = 0.8;
-  var MASS_DISAPPEAR_ABS   = 3;
+  // Any roster shrink that crosses the 80 % ratio is treated as a UI
+  // reshuffle. Set abs threshold to 1 (was 3) so small clubs (≤10 kids) are
+  // protected from search-filter phantom prints — a real check-in only loses
+  // 1 kid at a time, so a 50-kid roster never shrinks to <80 % from a single
+  // checkin and a legitimate single check-in still flows through guard B.
+  var MASS_DISAPPEAR_ABS   = 1;
   var REMOTE_PRINTED_KEY  = 'awana_printedNames';
   var REMOTE_PRINTED_TS   = 'awana_printedTs';
   var REMOTE_BASELINE_KEY = 'awana_baselineDone';
@@ -507,8 +512,19 @@
     markPrinted(sib.name); // record in session dedup so remote scan won't reprint
     doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
 
-    // Click the sibling's clubber element to open the check-in modal
-    sib.element.click();
+    // Re-query the clubber element by name. The reference captured at
+    // findSiblings() time goes stale after the previous sibling's check-in
+    // re-renders the roster — clicking a detached node is a silent no-op.
+    var freshEl = findClubberElByName(sib.name);
+    if (!freshEl || !freshEl.isConnected) {
+      console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
+      return;
+    }
+    sib.element = freshEl;
+    freshEl.click();
 
     // Poll for the modal's check-in button (up to 3s)
     pollForCheckinButton(sib, remaining, options, 30);
@@ -1270,11 +1286,7 @@
 
     const observer = new MutationObserver(function() {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(function() {
-        checkForChange();
-        // Also scan the clubber list for remote check-ins on every mutation
-        try { scanClubberList(); } catch (e) { console.log('[Awana] scan error:', e); }
-      }, DEBOUNCE_MS);
+      debounceTimer = setTimeout(checkForChange, DEBOUNCE_MS);
     });
 
     const watchTarget = document.querySelector('#lastCheckin') || document.body;
@@ -1292,7 +1304,30 @@
   // Any name that was present last scan but is now missing just got checked
   // in (locally OR remotely).  On the very first scan we only populate the
   // baseline — we must NOT print the entire roster.
+
+  // A search filter on the page hides .clubber rows the same way a check-in
+  // does. Skip the diff scan whenever any non-widget text input has a value,
+  // and drop any half-accumulated pendingMissing state — otherwise a quick
+  // typing flap would breach PENDING_MISS_THRESHOLD and phantom-print.
+  function isSearchActive() {
+    var inputs = document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])');
+    for (var i = 0; i < inputs.length; i++) {
+      var inp = inputs[i];
+      if (inp.id === 'awana-search-input') continue;
+      if (inp.id && inp.id.indexOf('awana-walkin') === 0) continue;
+      if (inp.closest && inp.closest('#awana-printer-widget')) continue;
+      if (!inp.offsetParent) continue;
+      var v = (inp.value || '').trim();
+      if (v.length > 0) return true;
+    }
+    return false;
+  }
+
   function scanClubberList() {
+    if (isSearchActive()) {
+      if (pendingMissing.size > 0) pendingMissing.clear();
+      return;
+    }
     var current = new Set();
     var clubberEls = document.querySelectorAll('.clubber');
     for (var i = 0; i < clubberEls.length; i++) {
@@ -1398,6 +1433,22 @@
     lastPrintTime = Date.now();
     markPrinted(fullName);
     doPrint(fullName, clubName || '', clubImageData || null);
+  }
+
+  // Re-query a .clubber row by display name. Element references captured
+  // at findSiblings() time go stale once TwoTimTwo re-renders the roster
+  // after a check-in, so batchCheckInSiblings must re-resolve before each
+  // .click() — otherwise the click hits a detached node and the modal
+  // never opens (label prints, page check-in silently fails).
+  function findClubberElByName(name) {
+    var target = (name || '').trim();
+    if (!target) return null;
+    var els = document.querySelectorAll('.clubber');
+    for (var i = 0; i < els.length; i++) {
+      var nameEl = els[i].querySelector('.name');
+      if (nameEl && nameEl.innerText.trim() === target) return els[i];
+    }
+    return null;
   }
 
   function lookupClub(name) {

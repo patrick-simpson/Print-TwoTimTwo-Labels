@@ -1,4 +1,22 @@
-﻿## [3.0.2.4] - 2026-04-29
+﻿## [3.0.3] - 2026-04-30
+Two volunteer-reported bugs from the live event: phantom labels printing during page searches, and batch sibling check-in printing labels but not actually checking the kids in on TwoTimTwo.
+
+### Why
+- **Phantom prints during search.** Prior phantom-print fixes (v2.3.0 mass-disappearance guard, v3.0.2.3 server-side dedup) reduced but didn't eliminate it. Two gaps remained:
+  - `watchCheckins()` was calling `scanClubberList()` from inside the MutationObserver callback. Each search keystroke fires DOM mutations; with `PENDING_MISS_THRESHOLD = 2`, a kid hidden during typing could hit two consecutive misses inside ~200 ms instead of the documented ≥10 s.
+  - The mass-disappearance guard required `missingCount > 3` strict-greater. A 7-kid club with 3 hidden by search produces exactly 3 — guard skips, consecutive-miss confirmation fires, label phantom-prints.
+- **Batch siblings printed but not checked in.** `batchCheckInSiblings()` clicked `sib.element` — a DOM reference captured at `findSiblings()` time. After the first sibling's check-in, TwoTimTwo re-renders the roster, the cached node detaches, and `.click()` on a detached node is a silent no-op. The print succeeded (it only needs cached name/club), but the modal never opened so `pollForCheckinButton()` had nothing to click.
+
+### Fixes (chrome-extension/content.js)
+- **Pause roster-diff during search:** new `isSearchActive()` helper checks for any visible non-widget text/search input with non-empty value. `scanClubberList()` now returns early and clears `pendingMissing` when search is active.
+- **Drop mutation-driven scan:** `watchCheckins()` no longer calls `scanClubberList()` from the `MutationObserver` callback. The 5-second `setInterval` and the once-on-init scan remain — remote check-in detection latency is unchanged from documented behaviour.
+- **Tightened Guard A:** `MASS_DISAPPEAR_ABS` lowered from 3 to 1. Combined with the unchanged `<80%` ratio, this catches the small-roster gap (7-kid club with 3 hidden) without touching legitimate single check-ins (a 50-kid roster never crosses 80% from one kid disappearing).
+- **Fresh DOM lookup before batch click:** new `findClubberElByName()` re-queries the live `.clubber` row by name. `batchCheckInSiblings()` now resolves a fresh element immediately before `.click()` and skips to the next sibling if the row is gone.
+
+### Scope
+- **Chrome extension only.** `print-server/` and `electron-app/` are unchanged.
+
+## [3.0.2.4] - 2026-04-29
 Added extension settings page for Pusher configuration.
 
 ### Added (chrome-extension/)
