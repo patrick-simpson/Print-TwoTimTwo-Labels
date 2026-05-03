@@ -39,6 +39,25 @@
     </div>
 
     <div class="card">
+      <h3>Step Up Night</h3>
+      <p class="description">
+        On Step Up Night, kids who are graduating to a different club next year
+        get an inverted label that says "Stepping up to [next club]" instead of
+        their handbook group. <strong>Auto</strong> detects "Step Up" text on
+        the TwoTimTwo page; use <strong>On</strong> or <strong>Off</strong> to
+        force the mode.
+      </p>
+      <div class="field">
+        <label for="stepup-mode">Mode</label>
+        <select id="stepup-mode" style="width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;">
+          <option value="auto">Auto (detect from page)</option>
+          <option value="on">On (always step-up)</option>
+          <option value="off">Off (never step-up)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Pusher Configuration</h3>
       <p class="description">
         Used to broadcast real-time check-in events to the Joyful Welcome Screen.

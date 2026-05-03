@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.0.3';
+  const EXTENSION_VERSION = '3.5.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -15,11 +15,13 @@
   const QUEUE_KEY      = 'awana_printQueue';
   const MUTE_KEY       = 'awana_soundMuted';
   const QUICK_MODE_KEY = 'awana_quickMode';
+  const STEP_UP_KEY    = 'awana_stepUpMode'; // 'auto' | 'on' | 'off'
 
   let selectedMode        = localStorage.getItem(STORAGE_KEY) || 'auto';
   let selectedPrinterName = localStorage.getItem(PRINTER_KEY) || '';
   let soundMuted          = localStorage.getItem(MUTE_KEY) === 'true';
   let quickModeEnabled    = localStorage.getItem(QUICK_MODE_KEY) === 'true';
+  let stepUpMode          = localStorage.getItem(STEP_UP_KEY) || 'auto';
   let lastPrintedName = null;
   let lastPrintTime = 0;
   var batchPrintedNames = new Set();
@@ -108,6 +110,28 @@
     return text && text.toLowerCase().includes('undo');
   }
 
+  // Step Up Night — the one Wednesday a year when kids whose age/grade puts
+  // them in a different club next year get a "Stepping up to X" label.
+  // Detection: scan the TwoTimTwo page for "step up" text (case-insensitive)
+  // outside our own widget. The widget toggle ('auto' | 'on' | 'off') lets
+  // the volunteer override either way.
+  function isStepUpNight() {
+    if (stepUpMode === 'on')  return true;
+    if (stepUpMode === 'off') return false;
+    var headings = document.querySelectorAll(
+      'h1, h2, h3, h4, [class*="event"], [class*="club-night"], [class*="theme"], [class*="title"], [class*="header"], #event-name, #club-night'
+    );
+    for (var i = 0; i < headings.length; i++) {
+      var el = headings[i];
+      if (el.closest && el.closest('#awana-printer-widget')) continue;
+      if (el.id === 'awana-search-input') continue;
+      if (!el.offsetParent && el.tagName !== 'TITLE') continue;
+      var text = el.innerText || el.textContent || '';
+      if (/step\s*up/i.test(text)) return true;
+    }
+    return false;
+  }
+
   // ── Audio feedback ──────────────────────────────────────────────────────────
   var audioCtx = null;
   function playTone(freq, duration, type) {
@@ -150,6 +174,16 @@
     console.log('[Awana] Flushing ' + q.length + ' queued print(s)');
     var item = q.shift();
     saveQueue(q);
+    // Drop any queued item whose target was already printed in this session
+    // (or carried over via sessionStorage). Without this, a queue persisted in
+    // localStorage across a browser crash can replay a label that another path
+    // (onCheckin / roster diff / Pusher) has already produced.
+    var dedupKey = (item && item.name ? String(item.name) : '').toLowerCase().trim();
+    if (dedupKey && printedNames.has(dedupKey)) {
+      console.log('[Awana] Dropping queued print (already printed this session):', item.name);
+      if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
+      return;
+    }
     fetch(PRINT_SERVER + '/print', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -157,6 +191,7 @@
       signal: AbortSignal.timeout(5000)
     }).then(function(r) {
       if (r.ok) {
+        if (dedupKey) markPrinted(item.name);
         playSuccess();
         console.log('[Awana] Flushed queued print: ' + item.name);
         if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
@@ -418,10 +453,63 @@
     });
   }
 
-  function pollForCheckinButton(sib, remaining, options, attempts) {
+  // After clicking the modal's check-in button, wait for the kid's row to
+  // disappear from the .clubber roster — that's the only signal that
+  // TwoTimTwo actually accepted the check-in. If the row is still there
+  // after the verify window, re-click the row once before giving up. This
+  // protects against modal races where the click landed but TwoTimTwo
+  // dismissed the modal without recording the check-in.
+  function verifyBatchCheckin(sib, remaining, options, pollAttempt, retriesLeft) {
+    if (!findClubberElByName(sib.name)) {
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
+      return;
+    }
+    if (pollAttempt < 20) { // up to 2 s for TwoTimTwo to update the DOM
+      setTimeout(function() {
+        verifyBatchCheckin(sib, remaining, options, pollAttempt + 1, retriesLeft);
+      }, 100);
+      return;
+    }
+    if (retriesLeft > 0) {
+      console.log('[Awana] Batch: ' + sib.name + ' did not check in after click — retrying once');
+      var freshEl = findClubberElByName(sib.name);
+      if (freshEl) {
+        freshEl.click();
+        setTimeout(function() {
+          pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+        }, 200);
+        return;
+      }
+      // Race: row vanished between attempts → success
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
+      return;
+    }
+    console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted)');
+    if (remaining.length > 0) {
+      setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+    }
+  }
+
+  function pollForCheckinButton(sib, remaining, options, attempts, retriesLeft) {
+    if (typeof retriesLeft !== 'number') retriesLeft = 1;
     if (attempts <= 0) {
+      // Modal never opened — click the row again before giving up
+      if (retriesLeft > 0) {
+        console.log('[Awana] Modal never opened for ' + sib.name + ' — re-clicking row');
+        var freshEl = findClubberElByName(sib.name);
+        if (freshEl) {
+          freshEl.click();
+          setTimeout(function() {
+            pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+          }, 200);
+          return;
+        }
+      }
       console.log('[Awana] Timed out waiting for check-in button for ' + sib.name);
-      // Bug 4 fix: wrap in function so it's deferred, not called immediately
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -482,11 +570,13 @@
       // Bug 3 fix: only call .click() once — the dispatchEvent was causing a double-submission
       checkinBtn.click();
 
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-      }
+      // Verify the click actually checked the kid in (row disappears)
+      // before moving to the next sibling. Retry once on failure.
+      verifyBatchCheckin(sib, remaining, options, 0, retriesLeft);
     } else {
-      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
+      setTimeout(function() {
+        pollForCheckinButton(sib, remaining, options, attempts - 1, retriesLeft);
+      }, 100);
     }
   }
 
@@ -833,7 +923,11 @@
       var club = clubSelect.value;
       var isVisitor = visitorCb.checked;
       // Send with visitor flag if checked
-      var payload = { name: name, clubName: club, clubImageData: null, printerName: selectedPrinterName || '' };
+      var payload = {
+        name: name, clubName: club, clubImageData: null,
+        printerName: selectedPrinterName || '',
+        stepUpNight: isStepUpNight()
+      };
       if (isVisitor) payload.visitor = true;
       setStatus('\u23F3');
       fetch(PRINT_SERVER + '/print', {
@@ -904,6 +998,69 @@
     });
     // Apply initial visual state
     applyQuickModeVisuals();
+
+    // ── Step Up Night control ──
+    // 'auto' detects the page text; 'on'/'off' force the mode regardless.
+    var stepUpRow = document.createElement('div');
+    Object.assign(stepUpRow.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      padding: '6px 8px', background: '#f8fafc',
+      borderRadius: '6px', border: '1px solid #e2e8f0',
+      transition: 'all 0.15s ease'
+    });
+    var stepUpLbl = document.createElement('label');
+    Object.assign(stepUpLbl.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      fontSize: '12px', fontWeight: '600', cursor: 'pointer', flex: '1', color: '#1e293b'
+    });
+    var stepUpText = document.createElement('span');
+    stepUpText.textContent = 'Step Up Night';
+    var stepUpSelect = document.createElement('select');
+    stepUpSelect.id = 'awana-stepup-select';
+    Object.assign(stepUpSelect.style, {
+      padding: '2px 4px', borderRadius: '4px',
+      border: '1px solid #cbd5e1', fontSize: '11px',
+      background: '#fff', color: '#1e293b'
+    });
+    [
+      { v: 'auto', l: 'Auto' },
+      { v: 'on',   l: 'On'   },
+      { v: 'off',  l: 'Off'  }
+    ].forEach(function(opt) {
+      var o = document.createElement('option');
+      o.value = opt.v; o.textContent = opt.l;
+      if (opt.v === stepUpMode) o.selected = true;
+      stepUpSelect.appendChild(o);
+    });
+    var stepUpHint = document.createElement('span');
+    Object.assign(stepUpHint.style, { fontSize: '10px', color: '#64748b', fontWeight: '400' });
+    function updateStepUpHint() {
+      if (stepUpMode === 'auto') {
+        stepUpHint.textContent = isStepUpNight() ? 'auto: ON' : 'auto: off';
+      } else {
+        stepUpHint.textContent = '';
+      }
+    }
+    function applyStepUpVisuals() {
+      var active = isStepUpNight();
+      stepUpRow.style.background = active ? '#fff7ed' : '#f8fafc';
+      stepUpRow.style.borderColor = active ? '#fdba74' : '#e2e8f0';
+      updateStepUpHint();
+    }
+    stepUpLbl.append(stepUpText);
+    stepUpRow.append(stepUpLbl, stepUpHint, stepUpSelect);
+    stepUpSelect.addEventListener('change', function() {
+      stepUpMode = stepUpSelect.value;
+      localStorage.setItem(STEP_UP_KEY, stepUpMode);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ awana_stepUpMode: stepUpMode });
+      }
+      applyStepUpVisuals();
+      console.log('[Awana] Step Up Night mode:', stepUpMode, '→ active:', isStepUpNight());
+    });
+    applyStepUpVisuals();
+    // Re-evaluate auto detection every minute (page text may load late)
+    setInterval(function() { if (stepUpMode === 'auto') applyStepUpVisuals(); }, 60000);
 
     // ── Search bar ──
     var searchContainer = document.createElement('div');
@@ -1144,7 +1301,7 @@
         });
     });
 
-    panelBody.append(quickModeRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
+    panelBody.append(quickModeRow, stepUpRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
@@ -1512,7 +1669,11 @@
       return;
     }
 
-    var payload = { name: fullName, clubName: clubName, clubImageData: imageData, printerName: selectedPrinterName || '' };
+    var payload = {
+      name: fullName, clubName: clubName, clubImageData: imageData,
+      printerName: selectedPrinterName || '',
+      stepUpNight: isStepUpNight()
+    };
 
     function attemptPrint(p, retriesLeft) {
       return fetch(PRINT_SERVER + '/print', {
@@ -1789,13 +1950,29 @@
   injectWidget();
   loadPrintedState();
   // Restore printer selection from chrome.storage.local (survives extension updates)
+  // Also restore Step Up Night mode if it was set on the options page.
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['awana_selectedPrinterName'], function(result) {
+    chrome.storage.local.get(['awana_selectedPrinterName', 'awana_stepUpMode'], function(result) {
       if (result.awana_selectedPrinterName && !localStorage.getItem(PRINTER_KEY)) {
         selectedPrinterName = result.awana_selectedPrinterName;
         localStorage.setItem(PRINTER_KEY, selectedPrinterName);
         var sel = document.getElementById('awana-printer-select');
         if (sel) sel.value = selectedPrinterName;
+      }
+      if (result.awana_stepUpMode && result.awana_stepUpMode !== stepUpMode) {
+        stepUpMode = result.awana_stepUpMode;
+        localStorage.setItem(STEP_UP_KEY, stepUpMode);
+        var sus = document.getElementById('awana-stepup-select');
+        if (sus) sus.value = stepUpMode;
+      }
+    });
+    chrome.storage.onChanged && chrome.storage.onChanged.addListener(function(changes, area) {
+      if (area !== 'local') return;
+      if (changes.awana_stepUpMode) {
+        stepUpMode = changes.awana_stepUpMode.newValue || 'auto';
+        localStorage.setItem(STEP_UP_KEY, stepUpMode);
+        var sus = document.getElementById('awana-stepup-select');
+        if (sus) sus.value = stepUpMode;
       }
     });
   }

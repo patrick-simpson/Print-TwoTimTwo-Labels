@@ -1,4 +1,50 @@
-﻿## [3.0.3] - 2026-04-30
+﻿## [3.5.0] - 2026-05-03
+Step Up Night support: kids who are graduating to a different club next year get an inverted, hard-to-miss label that says "Stepping up to <next club>" in place of their handbook group.
+
+### Why
+This Wednesday is Step Up Night at KVBC. Volunteers need to be able to spot stepping-up kids at a glance so they're routed to the right room — same name, same allergy/birthday icons, but a label that visually screams "this kid is changing clubs".
+
+### Detection (chrome-extension/content.js, options.html / options.js)
+- New `isStepUpNight()` scans the TwoTimTwo page DOM (excluding the widget) for any heading or event/title element whose visible text contains "step up" (case-insensitive).
+- New widget toggle (Auto / On / Off) sits next to Quick Mode. The hint shows the live auto-detect result so volunteers can see what the page reports.
+- Same toggle is also surfaced on the extension Options page; the two stay in sync via `chrome.storage.local` and the `chrome.storage.onChanged` listener in the content script.
+- The current mode is included on every `/print` and `/label` payload as `stepUpNight: true|false`.
+
+### Eligibility (print-server/server.js)
+- New `isSteppingUp(record, clubName)` decides whether a given kid actually graduates next year:
+  - **Puggles:** all of them step up to Cubbies.
+  - **Cubbies:** the kid's 5th birthday must fall on or before October 15 of the next Awana-year start (the script automatically uses this calendar year's Oct 15 if today is January–June, next year's Oct 15 otherwise).
+  - **Sparks:** 2nd-graders step up to T&T.
+  - **T&T:** 5th-graders step up to Trek.
+  - **Trek:** 8th-graders step up to Journey.
+  - **Journey:** 12th-graders step up to Graduates.
+- Helpers added: `parseBirthdate` (handles both `MM/DD/YYYY` and `YYYY-MM-DD`), `parseGrade` (`K`/`Kindergarten` → 0, `1st` → 1, …, `12th` → 12; rejects Pre-K), `clubKey`, `nextClubFor`, plus the `STEP_UP_GRADUATING_GRADE` and `STEP_UP_NEXT_CLUB` constants for easy adjustment.
+- `/print` and `/label` only honour the client's `stepUpNight` flag for kids who actually pass `isSteppingUp()`. Everyone else prints a normal label tonight.
+
+### Inverted label rendering (print-server/server.js — `generateLabel`)
+- Stepping-up labels render on a black background with white name, light-gray supporting text, and an amber "Stepping up to <next club>" line replacing the handbook-group line. The visitor pill inverts to white-on-black so it stays readable.
+- The current club's icon panel is dropped on stepping-up labels (the kid is leaving that club; widening the text area also makes the message more prominent).
+- All previously-existing label features (allergy emojis, birthday cake, visitor pill, club font personality, etc.) still render — the change is a pure color/text-content swap.
+
+### Scope
+- Chrome extension + print server. The Electron HTML renderer (`electron-app/`) is unchanged.
+
+## [3.0.4] - 2026-05-03
+Belt-and-suspenders pass after the v3.0.3 fixes: close the last two paths that could produce errant labels and make batch check-in self-verify so kids can't be left as "label printed but not actually checked in".
+
+### Why
+A full audit of every print trigger and the batch check-in chain found two remaining gaps:
+- **Stale offline queue could replay a label.** `flushQueue()` reads from `localStorage` (persists across crashes / restarts) but never consulted `printedNames` before `POST /print`. If a kid was queued during a server outage, then printed via another path (onCheckin / roster diff / Pusher) before the queue flushed, the queue would re-print them.
+- **Batch check-in clicked the modal button but never confirmed TwoTimTwo accepted it.** With v3.0.3's fresh-element re-query, `.click()` reliably opens the modal and the modal button gets clicked — but if TwoTimTwo dismissed the modal without recording the check-in (modal race, network blip), the chain proceeded to the next sibling regardless. The label was already printed but the kid was left visible in the roster.
+
+### Fixes (chrome-extension/content.js)
+- **Queue-flush dedup:** `flushQueue()` now checks `printedNames` before sending each queued item; already-printed entries are dropped. Successful flushes also call `markPrinted()` so a later path won't re-emit them.
+- **Self-verifying batch check-in:** new `verifyBatchCheckin()` polls the `.clubber` roster for up to 2 s after the modal click; if the kid's row is still present, it re-clicks the row and re-runs `pollForCheckinButton` once before logging and moving on. `pollForCheckinButton()` got a matching `retriesLeft` parameter and now also re-clicks the row once if the modal never opened (button never appeared inside its 3 s window). Existing single-call sites (Quick Mode, search-triggered check-in) inherit the verification automatically.
+
+### Scope
+- **Chrome extension only.** No server changes.
+
+## [3.0.3] - 2026-04-30
 Two volunteer-reported bugs from the live event: phantom labels printing during page searches, and batch sibling check-in printing labels but not actually checking the kids in on TwoTimTwo.
 
 ### Why
