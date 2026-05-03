@@ -318,6 +318,93 @@ function buildFamilyIndex(rows) {
   return index;
 }
 
+// ── Step Up Night eligibility ─────────────────────────────────────────────────
+// Step Up Night is the one Wednesday a year when kids whose age/grade puts
+// them in a different club next year are recognised on their label. The
+// label is inverted (black bg / white text) and the handbook-group line is
+// replaced with "Stepping up to <Next Club>".
+
+const STEP_UP_GRADUATING_GRADE = {
+  spark:   2,  // last grade in Sparks
+  't&t':   5,  // last grade in T&T
+  trek:    8,  // last grade in Trek
+  journey: 12  // last grade in Journey
+};
+
+const STEP_UP_NEXT_CLUB = {
+  puggle:  'Cubbies',
+  cubbie:  'Sparks',
+  spark:   'T&T',
+  't&t':   'Trek',
+  trek:    'Journey',
+  journey: 'Graduates'
+};
+
+function clubKey(clubName) {
+  const n = String(clubName || '').trim().toLowerCase();
+  if (!n) return null;
+  if (n.includes('puggle'))  return 'puggle';
+  if (n.includes('cubbie'))  return 'cubbie';
+  if (n.includes('spark'))   return 'spark';
+  if (n.includes('trek'))    return 'trek';
+  if (n.includes('journey')) return 'journey';
+  if (n.includes('t&t') || n.includes('t & t') || n === 'tnt' || n === 't t') return 't&t';
+  return null;
+}
+
+function nextClubFor(clubName) {
+  const k = clubKey(clubName);
+  return k ? (STEP_UP_NEXT_CLUB[k] || null) : null;
+}
+
+function parseBirthdate(s) {
+  if (!s || String(s).trim() === '' || s === 'N/A') return null;
+  try {
+    let t = String(s).trim();
+    const slash = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slash) {
+      t = `${slash[3]}-${slash[1].padStart(2, '0')}-${slash[2].padStart(2, '0')}`;
+    }
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? null : d;
+  } catch { return null; }
+}
+
+function parseGrade(s) {
+  if (s === null || s === undefined) return null;
+  const t = String(s).trim().toLowerCase();
+  if (!t) return null;
+  if (t === 'k' || t.startsWith('kinder')) return 0;
+  if (t.startsWith('pre')) return null;        // Pre-K isn't a school grade
+  const m = t.match(/(\d{1,2})/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (isNaN(n) || n < 0 || n > 12) return null;
+  return n;
+}
+
+// Cubbies cutoff: kid steps up only if their 5th birthday is on or before
+// October 15 of the next Awana year start. Awana year begins in September,
+// so before July we use this calendar year's cutoff; July onward we roll to
+// next year so the eligibility is correct for kids checking in over summer.
+function isSteppingUp(record, clubName) {
+  const k = clubKey(clubName);
+  if (!k) return false;
+  if (k === 'puggle') return true;
+  if (k === 'cubbie') {
+    const bd = parseBirthdate(record && record.Birthdate);
+    if (!bd) return false;
+    const today = new Date();
+    const cutoffYear = today.getMonth() < 6 ? today.getFullYear() : today.getFullYear() + 1;
+    const cutoff = new Date(cutoffYear, 9, 15); // Oct 15
+    const fifthBirthday = new Date(bd.getFullYear() + 5, bd.getMonth(), bd.getDate());
+    return fifthBirthday <= cutoff;
+  }
+  const grade = parseGrade(record && record.Grade);
+  if (grade === null) return false;
+  return grade === STEP_UP_GRADUATING_GRADE[k];
+}
+
 // ── Birthday-week check ───────────────────────────────────────────────────────
 // Returns true if the child's next birthday falls within the next 7 days
 // (inclusive of today). Handles year-wrapping correctly: if today is Dec 30
@@ -474,11 +561,42 @@ const SCALE = DPI / 72;            // convert pt → px
 
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
-  allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false
+  allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
+  stepUp = false, stepUpNextClub = ''
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   isBirthday    = !!isBirthday;
+  stepUp        = !!stepUp;
+
+  // Step-up labels are inverted (black bg, light text) and replace the
+  // handbook-group line with "Stepping up to <next club>" so volunteers
+  // and parents can spot graduating kids at a glance.
+  const COLOR = stepUp ? {
+    bg: '#000000',
+    name: '#ffffff',
+    last: '#e5e7eb',
+    club: '#cbd5e1',
+    group: '#fbbf24',                // amber draws the eye on black
+    sep: '#52525b',
+    iconBg: '#1f2937',
+    iconDivider: '#3f3f46',
+    iconPlaceholder: '#d4d4d8',
+    visitorBg: '#ffffff',
+    visitorText: '#000000'
+  } : {
+    bg: '#ffffff',
+    name: '#000000',
+    last: '#222222',
+    club: '#444444',
+    group: '#666666',
+    sep: '#cccccc',
+    iconBg: '#f4f4f4',
+    iconDivider: '#d0d0d0',
+    iconPlaceholder: '#aaaaaa',
+    visitorBg: '#000000',
+    visitorText: '#ffffff'
+  };
 
   const pngPath = path.join(os.tmpdir(), `awana-${Date.now()}.png`);
 
@@ -488,11 +606,13 @@ async function generateLabel(
   // Scale all drawing from points to pixels
   ctx.scale(SCALE, SCALE);
 
-  // White background
-  ctx.fillStyle = '#ffffff';
+  // Background
+  ctx.fillStyle = COLOR.bg;
   ctx.fillRect(0, 0, PAGE_W, PAGE_H);
 
-  const hasIcon = !!clubImageBuffer;
+  // On step-up labels, drop the club icon entirely — the kid is leaving
+  // that club, and the wider text area makes the message more obvious.
+  const hasIcon = !stepUp && !!clubImageBuffer;
   const textX   = hasIcon ? TEXT_X : BX + 8;
   const textW   = hasIcon ? TEXT_W : BW - 16;
 
@@ -504,7 +624,7 @@ async function generateLabel(
     ctx.save();
     roundedRect(ctx, BX, BY, BW, BH, CORNER);
     ctx.clip();
-    ctx.fillStyle = '#f4f4f4';
+    ctx.fillStyle = COLOR.iconBg;
     ctx.fillRect(BX, BY, ICON_COL_W, BH);
     ctx.restore();
 
@@ -513,7 +633,7 @@ async function generateLabel(
     ctx.moveTo(DIVIDER_X, BY + 12);
     ctx.lineTo(DIVIDER_X, BY + BH - 12);
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = '#d0d0d0';
+    ctx.strokeStyle = COLOR.iconDivider;
     ctx.stroke();
 
     // Club icon image (76×76 pt max, centred in the icon zone)
@@ -535,15 +655,18 @@ async function generateLabel(
       ctx.beginPath();
       ctx.arc(BX + ICON_COL_W / 2, BY + BH / 2, 20, 0, Math.PI * 2);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = '#aaa';
+      ctx.strokeStyle = COLOR.iconPlaceholder;
       ctx.stroke();
     }
   }
 
   // ── Text area ─────────────────────────────────────────────────────────────
+  // On step-up labels, the handbook group line is replaced with the
+  // "Stepping up to <next club>" callout — always show that line.
+  const stepUpGroupText = stepUp ? ('Stepping up to ' + (stepUpNextClub || 'next club')) : '';
   const hasLast  = lastName.trim().length > 0;
   const hasClub  = clubName.trim().length > 0 && !hasIcon;
-  const hasGroup = handbookGroup.length > 0;
+  const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 
   const ALLERGY_STRIP_H = 0;  // No bottom strip — allergy icons go in bottom-right corner
@@ -579,7 +702,7 @@ async function generateLabel(
   const firstFont = `bold ${fs1}px ${fontFamily}`;
   ctx.font = firstFont;
   const safeFirst = truncateTextCanvas(ctx, firstName, firstFont, textW);
-  ctx.fillStyle = '#000000';
+  ctx.fillStyle = COLOR.name;
   ctx.fillText(safeFirst, textCenterX, y);
   y += fs1;
 
@@ -589,7 +712,7 @@ async function generateLabel(
     const lastFont = `${fs2}px ${fontFamily}`;
     ctx.font = lastFont;
     const safeLast = truncateTextCanvas(ctx, lastName, lastFont, textW);
-    ctx.fillStyle = '#222222';
+    ctx.fillStyle = COLOR.last;
     ctx.fillText(safeLast, textCenterX, y);
     y += fs2;
   }
@@ -602,27 +725,29 @@ async function generateLabel(
     ctx.moveTo(textX + sepMargin, y + 0.5);
     ctx.lineTo(textX + textW - sepMargin, y + 0.5);
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = '#cccccc';
+    ctx.strokeStyle = COLOR.sep;
     ctx.stroke();
     y += 5;
     const clubFont = `italic ${fs3}px ${fontFamily}`;
     ctx.font = clubFont;
     const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
-    ctx.fillStyle = '#444444';
+    ctx.fillStyle = COLOR.club;
     ctx.fillText(safeClub, textCenterX, y);
     y += fs3;
   }
 
-  // ── Handbook group ────────────────────────────────────────────────────────
+  // ── Handbook group / step-up callout ──────────────────────────────────────
   if (hasGroup) {
     y += GAP;
-    let groupStr = handbookGroup.length > 30
-      ? handbookGroup.slice(0, 29) + '…'
-      : handbookGroup;
-    const groupFont = `italic ${fs4}px ${fontFamily}`;
+    let groupStr = stepUp
+      ? stepUpGroupText
+      : (handbookGroup.length > 30 ? handbookGroup.slice(0, 29) + '…' : handbookGroup);
+    const groupFont = stepUp
+      ? `bold ${fs4}px ${fontFamily}`
+      : `italic ${fs4}px ${fontFamily}`;
     ctx.font = groupFont;
     groupStr = truncateTextCanvas(ctx, groupStr, groupFont, textW);
-    ctx.fillStyle = '#666666';
+    ctx.fillStyle = COLOR.group;
     ctx.fillText(groupStr, textCenterX, y);
     y += fs4;
   }
@@ -636,11 +761,11 @@ async function generateLabel(
     const vPad = 4;
     const vX = BX + BW - vPad - vWidth - 8;
     const vY = BY + vPad;
-    // Rounded pill background
-    ctx.fillStyle = '#000000';
+    // Rounded pill background — invert on step-up so it stays readable
+    ctx.fillStyle = COLOR.visitorBg;
     roundedRect(ctx, vX - vPad, vY - 1, vWidth + vPad * 2, fs5 + 4, 4);
     ctx.fill();
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = COLOR.visitorText;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillText(vText, vX, vY + 1);
@@ -833,7 +958,8 @@ app.post('/label', async (req, res) => {
     lastName:  reqLast,
     clubName      = '',
     clubImageData = null,
-    visitor       = false
+    visitor       = false,
+    stepUpNight   = false
   } = req.body || {};
 
   let firstName, lastName;
@@ -864,11 +990,17 @@ app.post('/label', async (req, res) => {
     birthday = false;
   }
 
+  // Step Up Night eligibility — only kicks in when the client says it's
+  // step-up night AND the kid is in a graduating cohort.
+  const stepUp = !!stepUpNight && isSteppingUp(record, clubName);
+  const stepUpNextClub = stepUp ? (nextClubFor(clubName) || '') : '';
+
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor
+      allergyTokens, handbookGroup, birthday, !!visitor,
+      stepUp, stepUpNextClub
     );
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
@@ -887,7 +1019,8 @@ app.post('/print', async (req, res) => {
     clubName      = '',
     clubImageData = null,
     printerName   = '',
-    visitor       = false
+    visitor       = false,
+    stepUpNight   = false
   } = req.body || {};
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
@@ -933,6 +1066,14 @@ app.post('/print', async (req, res) => {
     }
   }
 
+  // Step Up Night: only honour the client's flag if the kid is actually in
+  // a graduating cohort (puggle = always, cubbie = 5 by Oct 15, others =
+  // graduating grade). All other kids print a normal label tonight.
+  const stepUp = !!stepUpNight && isSteppingUp(record, clubName);
+  const stepUpNextClub = stepUp ? (nextClubFor(clubName) || '') : '';
+  if (stepUp) {
+    console.log(`[print] ${firstName} ${lastName} stepping up: ${clubName} → ${stepUpNextClub}`);
+  }
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
   let pngPath = null;
@@ -940,7 +1081,8 @@ app.post('/print', async (req, res) => {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor
+      allergyTokens, handbookGroup, birthday, !!visitor,
+      stepUp, stepUpNextClub
     );
     pngPath = result.pngPath;
 

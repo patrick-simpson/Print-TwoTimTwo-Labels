@@ -1,4 +1,35 @@
-﻿## [3.0.4] - 2026-05-03
+﻿## [3.5.0] - 2026-05-03
+Step Up Night support: kids who are graduating to a different club next year get an inverted, hard-to-miss label that says "Stepping up to <next club>" in place of their handbook group.
+
+### Why
+This Wednesday is Step Up Night at KVBC. Volunteers need to be able to spot stepping-up kids at a glance so they're routed to the right room — same name, same allergy/birthday icons, but a label that visually screams "this kid is changing clubs".
+
+### Detection (chrome-extension/content.js, options.html / options.js)
+- New `isStepUpNight()` scans the TwoTimTwo page DOM (excluding the widget) for any heading or event/title element whose visible text contains "step up" (case-insensitive).
+- New widget toggle (Auto / On / Off) sits next to Quick Mode. The hint shows the live auto-detect result so volunteers can see what the page reports.
+- Same toggle is also surfaced on the extension Options page; the two stay in sync via `chrome.storage.local` and the `chrome.storage.onChanged` listener in the content script.
+- The current mode is included on every `/print` and `/label` payload as `stepUpNight: true|false`.
+
+### Eligibility (print-server/server.js)
+- New `isSteppingUp(record, clubName)` decides whether a given kid actually graduates next year:
+  - **Puggles:** all of them step up to Cubbies.
+  - **Cubbies:** the kid's 5th birthday must fall on or before October 15 of the next Awana-year start (the script automatically uses this calendar year's Oct 15 if today is January–June, next year's Oct 15 otherwise).
+  - **Sparks:** 2nd-graders step up to T&T.
+  - **T&T:** 5th-graders step up to Trek.
+  - **Trek:** 8th-graders step up to Journey.
+  - **Journey:** 12th-graders step up to Graduates.
+- Helpers added: `parseBirthdate` (handles both `MM/DD/YYYY` and `YYYY-MM-DD`), `parseGrade` (`K`/`Kindergarten` → 0, `1st` → 1, …, `12th` → 12; rejects Pre-K), `clubKey`, `nextClubFor`, plus the `STEP_UP_GRADUATING_GRADE` and `STEP_UP_NEXT_CLUB` constants for easy adjustment.
+- `/print` and `/label` only honour the client's `stepUpNight` flag for kids who actually pass `isSteppingUp()`. Everyone else prints a normal label tonight.
+
+### Inverted label rendering (print-server/server.js — `generateLabel`)
+- Stepping-up labels render on a black background with white name, light-gray supporting text, and an amber "Stepping up to <next club>" line replacing the handbook-group line. The visitor pill inverts to white-on-black so it stays readable.
+- The current club's icon panel is dropped on stepping-up labels (the kid is leaving that club; widening the text area also makes the message more prominent).
+- All previously-existing label features (allergy emojis, birthday cake, visitor pill, club font personality, etc.) still render — the change is a pure color/text-content swap.
+
+### Scope
+- Chrome extension + print server. The Electron HTML renderer (`electron-app/`) is unchanged.
+
+## [3.0.4] - 2026-05-03
 Belt-and-suspenders pass after the v3.0.3 fixes: close the last two paths that could produce errant labels and make batch check-in self-verify so kids can't be left as "label printed but not actually checked in".
 
 ### Why

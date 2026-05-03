@@ -25,6 +25,21 @@ async function loadConfig() {
   }
 }
 
+function loadStepUpMode() {
+  const sel = document.getElementById('stepup-mode');
+  if (!sel) return;
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['awana_stepUpMode'], function(result) {
+      sel.value = result.awana_stepUpMode || 'auto';
+    });
+  }
+  sel.addEventListener('change', function() {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ awana_stepUpMode: sel.value });
+    }
+  });
+}
+
 async function saveConfig() {
   const btn = document.getElementById('save-btn');
   btn.disabled = true;
@@ -56,3 +71,4 @@ async function saveConfig() {
 
 document.getElementById('save-btn').addEventListener('click', saveConfig);
 loadConfig();
+loadStepUpMode();
