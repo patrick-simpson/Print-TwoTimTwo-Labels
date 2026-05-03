@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.0.3';
+  const EXTENSION_VERSION = '3.0.4';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -150,6 +150,16 @@
     console.log('[Awana] Flushing ' + q.length + ' queued print(s)');
     var item = q.shift();
     saveQueue(q);
+    // Drop any queued item whose target was already printed in this session
+    // (or carried over via sessionStorage). Without this, a queue persisted in
+    // localStorage across a browser crash can replay a label that another path
+    // (onCheckin / roster diff / Pusher) has already produced.
+    var dedupKey = (item && item.name ? String(item.name) : '').toLowerCase().trim();
+    if (dedupKey && printedNames.has(dedupKey)) {
+      console.log('[Awana] Dropping queued print (already printed this session):', item.name);
+      if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
+      return;
+    }
     fetch(PRINT_SERVER + '/print', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -157,6 +167,7 @@
       signal: AbortSignal.timeout(5000)
     }).then(function(r) {
       if (r.ok) {
+        if (dedupKey) markPrinted(item.name);
         playSuccess();
         console.log('[Awana] Flushed queued print: ' + item.name);
         if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
@@ -418,10 +429,63 @@
     });
   }
 
-  function pollForCheckinButton(sib, remaining, options, attempts) {
+  // After clicking the modal's check-in button, wait for the kid's row to
+  // disappear from the .clubber roster — that's the only signal that
+  // TwoTimTwo actually accepted the check-in. If the row is still there
+  // after the verify window, re-click the row once before giving up. This
+  // protects against modal races where the click landed but TwoTimTwo
+  // dismissed the modal without recording the check-in.
+  function verifyBatchCheckin(sib, remaining, options, pollAttempt, retriesLeft) {
+    if (!findClubberElByName(sib.name)) {
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
+      return;
+    }
+    if (pollAttempt < 20) { // up to 2 s for TwoTimTwo to update the DOM
+      setTimeout(function() {
+        verifyBatchCheckin(sib, remaining, options, pollAttempt + 1, retriesLeft);
+      }, 100);
+      return;
+    }
+    if (retriesLeft > 0) {
+      console.log('[Awana] Batch: ' + sib.name + ' did not check in after click — retrying once');
+      var freshEl = findClubberElByName(sib.name);
+      if (freshEl) {
+        freshEl.click();
+        setTimeout(function() {
+          pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+        }, 200);
+        return;
+      }
+      // Race: row vanished between attempts → success
+      if (remaining.length > 0) {
+        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+      }
+      return;
+    }
+    console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted)');
+    if (remaining.length > 0) {
+      setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+    }
+  }
+
+  function pollForCheckinButton(sib, remaining, options, attempts, retriesLeft) {
+    if (typeof retriesLeft !== 'number') retriesLeft = 1;
     if (attempts <= 0) {
+      // Modal never opened — click the row again before giving up
+      if (retriesLeft > 0) {
+        console.log('[Awana] Modal never opened for ' + sib.name + ' — re-clicking row');
+        var freshEl = findClubberElByName(sib.name);
+        if (freshEl) {
+          freshEl.click();
+          setTimeout(function() {
+            pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+          }, 200);
+          return;
+        }
+      }
       console.log('[Awana] Timed out waiting for check-in button for ' + sib.name);
-      // Bug 4 fix: wrap in function so it's deferred, not called immediately
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -482,11 +546,13 @@
       // Bug 3 fix: only call .click() once — the dispatchEvent was causing a double-submission
       checkinBtn.click();
 
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-      }
+      // Verify the click actually checked the kid in (row disappears)
+      // before moving to the next sibling. Retry once on failure.
+      verifyBatchCheckin(sib, remaining, options, 0, retriesLeft);
     } else {
-      setTimeout(function() { pollForCheckinButton(sib, remaining, options, attempts - 1); }, 100);
+      setTimeout(function() {
+        pollForCheckinButton(sib, remaining, options, attempts - 1, retriesLeft);
+      }, 100);
     }
   }
 

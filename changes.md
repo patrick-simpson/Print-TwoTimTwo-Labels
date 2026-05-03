@@ -1,4 +1,19 @@
-﻿## [3.0.3] - 2026-04-30
+﻿## [3.0.4] - 2026-05-03
+Belt-and-suspenders pass after the v3.0.3 fixes: close the last two paths that could produce errant labels and make batch check-in self-verify so kids can't be left as "label printed but not actually checked in".
+
+### Why
+A full audit of every print trigger and the batch check-in chain found two remaining gaps:
+- **Stale offline queue could replay a label.** `flushQueue()` reads from `localStorage` (persists across crashes / restarts) but never consulted `printedNames` before `POST /print`. If a kid was queued during a server outage, then printed via another path (onCheckin / roster diff / Pusher) before the queue flushed, the queue would re-print them.
+- **Batch check-in clicked the modal button but never confirmed TwoTimTwo accepted it.** With v3.0.3's fresh-element re-query, `.click()` reliably opens the modal and the modal button gets clicked — but if TwoTimTwo dismissed the modal without recording the check-in (modal race, network blip), the chain proceeded to the next sibling regardless. The label was already printed but the kid was left visible in the roster.
+
+### Fixes (chrome-extension/content.js)
+- **Queue-flush dedup:** `flushQueue()` now checks `printedNames` before sending each queued item; already-printed entries are dropped. Successful flushes also call `markPrinted()` so a later path won't re-emit them.
+- **Self-verifying batch check-in:** new `verifyBatchCheckin()` polls the `.clubber` roster for up to 2 s after the modal click; if the kid's row is still present, it re-clicks the row and re-runs `pollForCheckinButton` once before logging and moving on. `pollForCheckinButton()` got a matching `retriesLeft` parameter and now also re-clicks the row once if the modal never opened (button never appeared inside its 3 s window). Existing single-call sites (Quick Mode, search-triggered check-in) inherit the verification automatically.
+
+### Scope
+- **Chrome extension only.** No server changes.
+
+## [3.0.3] - 2026-04-30
 Two volunteer-reported bugs from the live event: phantom labels printing during page searches, and batch sibling check-in printing labels but not actually checking the kids in on TwoTimTwo.
 
 ### Why
