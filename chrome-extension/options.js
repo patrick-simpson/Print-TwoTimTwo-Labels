@@ -25,17 +25,19 @@ async function loadConfig() {
   }
 }
 
-function loadStepUpMode() {
-  const sel = document.getElementById('stepup-mode');
+// Bind a <select> to a chrome.storage.local key so the widget on the
+// TwoTimTwo page and this Options page stay in sync.
+function bindModeSelect(elementId, storageKey) {
+  const sel = document.getElementById(elementId);
   if (!sel) return;
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['awana_stepUpMode'], function(result) {
-      sel.value = result.awana_stepUpMode || 'auto';
+    chrome.storage.local.get([storageKey], function(result) {
+      sel.value = result[storageKey] || 'auto';
     });
   }
   sel.addEventListener('change', function() {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ awana_stepUpMode: sel.value });
+      chrome.storage.local.set({ [storageKey]: sel.value });
     }
   });
 }
@@ -71,4 +73,5 @@ async function saveConfig() {
 
 document.getElementById('save-btn').addEventListener('click', saveConfig);
 loadConfig();
-loadStepUpMode();
+bindModeSelect('stepup-mode', 'awana_stepUpMode');
+bindModeSelect('store-mode',  'awana_storeMode');

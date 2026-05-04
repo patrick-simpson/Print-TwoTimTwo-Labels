@@ -1,5 +1,5 @@
 # Awana Label Print Server -- All-in-One Installer
-# Version    : 3.5.0
+# Version    : 3.6.0
 # Updated    : 2026-04-17
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "3.5.0"
+$ScriptVersion = "3.6.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {

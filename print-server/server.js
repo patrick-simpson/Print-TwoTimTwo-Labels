@@ -562,12 +562,18 @@ const SCALE = DPI / 72;            // convert pt → px
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = ''
+  stepUp = false, stepUpNextClub = '', awanaShares = null
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
+  // null / undefined / non-finite → no badge. Negative numbers are coerced
+  // to nothing as well so a malformed payload doesn't print "🪙 -3".
+  if (awanaShares !== null && awanaShares !== undefined) {
+    const n = Number(awanaShares);
+    awanaShares = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
+  }
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -774,15 +780,21 @@ async function generateLabel(
   }
 
   // ── Bottom-right icon row: 🍰 birthday (larger) + allergy emojis ─────────
-  if (hasAllergy || isBirthday) {
+  if (hasAllergy || isBirthday || awanaShares != null) {
     const ALLERGY_EMOJI_SIZE = 16;
     const BDAY_EMOJI_SIZE    = 26;
     const EMOJI_FONT_STACK   = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
     const PAD     = 6;
     const SPACING = 2;
 
-    // Build ordered glyph list: cake first (leftmost), allergies to its right.
+    // Build ordered glyph list, leftmost first:
+    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy emojis
     const glyphs = [];
+    if (awanaShares != null) {
+      // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
+      // falls back to sans-serif for the digits, no extra font wiring.
+      glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: ALLERGY_EMOJI_SIZE });
+    }
     if (isBirthday) {
       glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
     }
@@ -959,7 +971,8 @@ app.post('/label', async (req, res) => {
     clubName      = '',
     clubImageData = null,
     visitor       = false,
-    stepUpNight   = false
+    stepUpNight   = false,
+    awanaShares   = null
   } = req.body || {};
 
   let firstName, lastName;
@@ -1000,7 +1013,7 @@ app.post('/label', async (req, res) => {
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub
+      stepUp, stepUpNextClub, awanaShares
     );
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
@@ -1020,7 +1033,8 @@ app.post('/print', async (req, res) => {
     clubImageData = null,
     printerName   = '',
     visitor       = false,
-    stepUpNight   = false
+    stepUpNight   = false,
+    awanaShares   = null
   } = req.body || {};
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
@@ -1074,6 +1088,9 @@ app.post('/print', async (req, res) => {
   if (stepUp) {
     console.log(`[print] ${firstName} ${lastName} stepping up: ${clubName} → ${stepUpNextClub}`);
   }
+  if (awanaShares != null) {
+    console.log(`[print] ${firstName} ${lastName} shares badge: ${awanaShares}`);
+  }
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
   let pngPath = null;
@@ -1082,7 +1099,7 @@ app.post('/print', async (req, res) => {
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub
+      stepUp, stepUpNextClub, awanaShares
     );
     pngPath = result.pngPath;
 

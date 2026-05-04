@@ -1,4 +1,39 @@
-﻿## [3.5.0] - 2026-05-03
+﻿## [3.6.0] - 2026-05-03
+Awana Store Night support: each kid's label gets a small `🪙 N` badge in the bottom-right icon strip showing their current share balance, sourced live from TwoTimTwo's share-balance report.
+
+### Why
+On Awana Store nights, kids spend their accumulated shares ("shekels") at a small in-house store. Today the volunteer at the counter has to look every kid up by hand in TwoTimTwo. This change puts the balance straight on the label so they can scan and ring up in one motion.
+
+### Detection (chrome-extension/content.js, options.html / options.js)
+- New `isAwanaStoreNight()` reuses the same DOM scanner as `isStepUpNight()`, matching `/store/i` (case-insensitive). The detection helper was factored into a shared `scanCalendarFor(pattern)` so both modes use identical exclusion rules.
+- New widget toggle (Auto / On / Off) sits immediately after the Step Up Night row. The hint shows the live auto-detect result and the count of kids currently in the share-balance cache.
+- Mirrored on the extension Options page; the two stay in sync via `chrome.storage.local` and the existing `chrome.storage.onChanged` listener. The Options page now uses a small `bindModeSelect(elementId, storageKey)` helper that handles both Step Up and Store toggles.
+
+### Share-balance fetch + cache (chrome-extension/content.js)
+- `fetchShareBalances()` issues five parallel `GET https://kvbchurch.twotimtwo.com/report/shekelBalance?club_id=N&output=csv` requests for `N=2..6` (Cubbies, Sparks, T&T, Trek, Journey) using the volunteer's logged-in TwoTimTwo session (`credentials: 'same-origin'`).
+- A tiny inline parser handles the simple `"Name","Balance"` two-column CSVs and bails on anything that looks like an HTML response (e.g. a login-redirect page).
+- Results are merged into a single map keyed on `lowercase + trim + collapse-whitespace` of the full name, so the double-spaces seen in the source data (`"Avery  McAdam"`) don't break lookups.
+- Cache TTL is 5 minutes. `getShareBalance(firstName, lastName)` returns whatever's currently cached and kicks off a background refresh if stale — never blocks the print path.
+- Initial fetch fires when Store mode becomes active (widget init, toggle change, options-page change). A per-minute timer refreshes both the auto-detection and the cache count shown in the widget hint.
+
+### Print payload (chrome-extension/content.js)
+- Both `doPrint()` and `triggerWalkIn()` now include `awanaShares: <csvBalance + 1>` in the payload when Store mode is active and the kid is found in the cache. The `+ 1` reflects tonight's attendance share (the CSV is last week's total).
+- Kids missing from all 5 CSVs send no `awanaShares` field — per spec, the label shows no badge rather than implying a balance the kid doesn't have.
+
+### Server-side rendering (print-server/server.js)
+- `generateLabel(...)` accepts a new optional final parameter `awanaShares = null`. Non-finite or negative values are coerced to `null` so a malformed payload can't print "🪙 -3".
+- The existing bottom-right icon row branch now triggers on `(hasAllergy || isBirthday || awanaShares != null)` and prepends the shares glyph as the leftmost entry: read order is `🪙 N → 🍰 → allergy emojis`. The existing emoji font stack (`Segoe UI Emoji`, …, `sans-serif`) handles both the coin glyph and the ASCII digits.
+- `/print` and `/label` accept and pass-through `awanaShares` from the request body.
+- Composes cleanly with Step Up Night: a stepping-up kid on a Store night gets the inverted black/amber label AND the `🪙 N` badge.
+
+### Scope
+- Chrome extension + print server. The Electron HTML renderer (`electron-app/`) is unchanged. Reprint/preview/diagnostic paths intentionally don't carry `awanaShares` (they'd need access to the share cache too, and reprints from history are contextual).
+
+### Things to watch
+- CSV fetch needs an active TwoTimTwo session. If it isn't, all 5 fetches return HTML; we detect this and skip silently — labels just won't have badges. The widget hint will say "loading…" indefinitely in that case.
+- The `+1` rule is a fixed assumption per the requirement; if a kid missed last week and the office hasn't reconciled, the printed number could be off by one. Not trying to be clever about it.
+
+## [3.5.0] - 2026-05-03
 Step Up Night support: kids who are graduating to a different club next year get an inverted, hard-to-miss label that says "Stepping up to <next club>" in place of their handbook group.
 
 ### Why
