@@ -58,6 +58,25 @@
     </div>
 
     <div class="card">
+      <h3>Awana Store Night</h3>
+      <p class="description">
+        On Awana Store nights, every kid's label gets a small <strong>🪙 N</strong> badge
+        showing their current share balance (last week's total + 1 for tonight).
+        Balances are pulled live from TwoTimTwo's share-balance report using your
+        logged-in session. <strong>Auto</strong> detects "Store" text on the
+        TwoTimTwo page; use <strong>On</strong> or <strong>Off</strong> to force.
+      </p>
+      <div class="field">
+        <label for="store-mode">Mode</label>
+        <select id="store-mode" style="width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;">
+          <option value="auto">Auto (detect from page)</option>
+          <option value="on">On (always show shares)</option>
+          <option value="off">Off (never show shares)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Pusher Configuration</h3>
       <p class="description">
         Used to broadcast real-time check-in events to the Joyful Welcome Screen.

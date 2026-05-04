@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.5.0';
+  const EXTENSION_VERSION = '3.6.1';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -16,12 +16,14 @@
   const MUTE_KEY       = 'awana_soundMuted';
   const QUICK_MODE_KEY = 'awana_quickMode';
   const STEP_UP_KEY    = 'awana_stepUpMode'; // 'auto' | 'on' | 'off'
+  const STORE_KEY      = 'awana_storeMode';  // 'auto' | 'on' | 'off'
 
   let selectedMode        = localStorage.getItem(STORAGE_KEY) || 'auto';
   let selectedPrinterName = localStorage.getItem(PRINTER_KEY) || '';
   let soundMuted          = localStorage.getItem(MUTE_KEY) === 'true';
   let quickModeEnabled    = localStorage.getItem(QUICK_MODE_KEY) === 'true';
   let stepUpMode          = localStorage.getItem(STEP_UP_KEY) || 'auto';
+  let storeMode           = localStorage.getItem(STORE_KEY) || 'auto';
   let lastPrintedName = null;
   let lastPrintTime = 0;
   var batchPrintedNames = new Set();
@@ -115,9 +117,7 @@
   // Detection: scan the TwoTimTwo page for "step up" text (case-insensitive)
   // outside our own widget. The widget toggle ('auto' | 'on' | 'off') lets
   // the volunteer override either way.
-  function isStepUpNight() {
-    if (stepUpMode === 'on')  return true;
-    if (stepUpMode === 'off') return false;
+  function scanCalendarFor(pattern) {
     var headings = document.querySelectorAll(
       'h1, h2, h3, h4, [class*="event"], [class*="club-night"], [class*="theme"], [class*="title"], [class*="header"], #event-name, #club-night'
     );
@@ -127,9 +127,100 @@
       if (el.id === 'awana-search-input') continue;
       if (!el.offsetParent && el.tagName !== 'TITLE') continue;
       var text = el.innerText || el.textContent || '';
-      if (/step\s*up/i.test(text)) return true;
+      if (pattern.test(text)) return true;
     }
     return false;
+  }
+
+  function isStepUpNight() {
+    if (stepUpMode === 'on')  return true;
+    if (stepUpMode === 'off') return false;
+    return scanCalendarFor(/step\s*up/i);
+  }
+
+  // Awana Store Night — kids spend their accumulated shares ("shekels") at
+  // a small in-house store. On these nights the label gets a small 🪙 N
+  // badge in the bottom-right icon strip, sourced from TwoTimTwo's own
+  // share-balance report (one CSV per club, fetched with the volunteer's
+  // logged-in session). The +1 reflects tonight's attendance share.
+  function isAwanaStoreNight() {
+    if (storeMode === 'on')  return true;
+    if (storeMode === 'off') return false;
+    return scanCalendarFor(/store/i);
+  }
+
+  // Share-balance cache. Populated by fetchShareBalances() when a Store
+  // Night becomes active. byKey is normalized "first last" → integer.
+  var SHARES = { byKey: {}, fetchedAt: 0, fetching: false, lastError: null };
+  var SHARES_TTL_MS = 5 * 60 * 1000;
+  var SHARES_CLUB_IDS = [2, 3, 4, 5, 6]; // Cubbies, Sparks, T&T, Trek, Journey
+
+  function normalizeName(name) {
+    return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  // Tiny CSV parser — these files are simple, trusted, same-origin, two
+  // columns ("Name","Balance"). Returns array of [name, balance] pairs,
+  // skipping header. Bails on anything that doesn't look like CSV (e.g.
+  // a login redirect HTML page).
+  function parseShareCsv(text) {
+    if (!text || /<\s*html/i.test(text.slice(0, 200))) return [];
+    var lines = text.split(/\r?\n/);
+    var out = [];
+    for (var i = 1; i < lines.length; i++) {  // skip header
+      var line = lines[i].trim();
+      if (!line) continue;
+      // Match "Name","Balance" — balance may be empty
+      var m = line.match(/^"([^"]*)","([^"]*)"\s*$/);
+      if (!m) continue;
+      out.push([m[1], m[2]]);
+    }
+    return out;
+  }
+
+  function fetchShareBalances() {
+    if (SHARES.fetching) return Promise.resolve();
+    SHARES.fetching = true;
+    var byKey = {};
+    var origin = location.origin;  // e.g. https://kvbchurch.twotimtwo.com
+    return Promise.all(SHARES_CLUB_IDS.map(function(id) {
+      var url = origin + '/report/shekelBalance?club_id=' + id + '&output=csv';
+      return fetch(url, { credentials: 'same-origin' })
+        .then(function(r) { return r.ok ? r.text() : ''; })
+        .then(function(txt) {
+          parseShareCsv(txt).forEach(function(row) {
+            var key = normalizeName(row[0]);
+            if (!key) return;
+            var bal = parseInt(row[1], 10);
+            byKey[key] = isNaN(bal) ? 0 : bal;
+          });
+        })
+        .catch(function(e) {
+          console.warn('[Awana] Share balance fetch failed for club ' + id + ':', e.message);
+        });
+    })).then(function() {
+      SHARES.byKey = byKey;
+      SHARES.fetchedAt = Date.now();
+      SHARES.lastError = null;
+      var count = Object.keys(byKey).length;
+      console.log('[Awana] Loaded share balances:', count, 'kids across', SHARES_CLUB_IDS.length, 'clubs');
+      return byKey;
+    }).catch(function(e) {
+      SHARES.lastError = e.message;
+      console.warn('[Awana] Share balance load failed:', e.message);
+    }).then(function(v) {
+      SHARES.fetching = false;
+      return v;
+    });
+  }
+
+  // Kicks off a refresh if cache is stale; returns whatever we have right
+  // now without blocking. Returns null if the kid isn't in any CSV (per
+  // user's "no badge for unknown kids" rule).
+  function getShareBalance(firstName, lastName) {
+    if (Date.now() - SHARES.fetchedAt > SHARES_TTL_MS) fetchShareBalances();
+    var key = normalizeName(firstName + ' ' + lastName);
+    return Object.prototype.hasOwnProperty.call(SHARES.byKey, key) ? SHARES.byKey[key] : null;
   }
 
   // ── Audio feedback ──────────────────────────────────────────────────────────
@@ -929,6 +1020,11 @@
         stepUpNight: isStepUpNight()
       };
       if (isVisitor) payload.visitor = true;
+      if (isAwanaStoreNight()) {
+        var parts = name.split(/\s+/);
+        var bal = getShareBalance(parts[0] || '', parts.slice(1).join(' '));
+        if (bal !== null) payload.awanaShares = bal + 1;
+      }
       setStatus('\u23F3');
       fetch(PRINT_SERVER + '/print', {
         method: 'POST',
@@ -1061,6 +1157,88 @@
     applyStepUpVisuals();
     // Re-evaluate auto detection every minute (page text may load late)
     setInterval(function() { if (stepUpMode === 'auto') applyStepUpVisuals(); }, 60000);
+
+    // ── Awana Store Night control ──
+    // Same Auto/On/Off pattern as Step Up. When active, fetchShareBalances
+    // pulls one CSV per club_id 2..6 from the volunteer's logged-in
+    // TwoTimTwo session and labels get a 🪙 N badge in the icon strip.
+    var storeRow = document.createElement('div');
+    Object.assign(storeRow.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      padding: '6px 8px', background: '#f8fafc',
+      borderRadius: '6px', border: '1px solid #e2e8f0',
+      transition: 'all 0.15s ease'
+    });
+    var storeLbl = document.createElement('label');
+    Object.assign(storeLbl.style, {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      fontSize: '12px', fontWeight: '600', cursor: 'pointer', flex: '1', color: '#1e293b'
+    });
+    var storeText = document.createElement('span');
+    storeText.textContent = 'Awana Store Night';
+    var storeSelect = document.createElement('select');
+    storeSelect.id = 'awana-store-select';
+    Object.assign(storeSelect.style, {
+      padding: '2px 4px', borderRadius: '4px',
+      border: '1px solid #cbd5e1', fontSize: '11px',
+      background: '#fff', color: '#1e293b'
+    });
+    [
+      { v: 'auto', l: 'Auto' },
+      { v: 'on',   l: 'On'   },
+      { v: 'off',  l: 'Off'  }
+    ].forEach(function(opt) {
+      var o = document.createElement('option');
+      o.value = opt.v; o.textContent = opt.l;
+      if (opt.v === storeMode) o.selected = true;
+      storeSelect.appendChild(o);
+    });
+    var storeHint = document.createElement('span');
+    Object.assign(storeHint.style, { fontSize: '10px', color: '#64748b', fontWeight: '400' });
+    function applyStoreVisuals() {
+      var active = isAwanaStoreNight();
+      storeRow.style.background = active ? '#fef3c7' : '#f8fafc';
+      storeRow.style.borderColor = active ? '#fcd34d' : '#e2e8f0';
+      if (storeMode === 'auto') {
+        if (active) {
+          var n = Object.keys(SHARES.byKey).length;
+          storeHint.textContent = n ? ('auto: ON, ' + n + ' kids') : 'auto: ON, loading…';
+        } else {
+          storeHint.textContent = 'auto: off';
+        }
+      } else if (active) {
+        var n2 = Object.keys(SHARES.byKey).length;
+        storeHint.textContent = n2 ? (n2 + ' kids loaded') : 'loading…';
+      } else {
+        storeHint.textContent = '';
+      }
+    }
+    storeLbl.append(storeText);
+    storeRow.append(storeLbl, storeHint, storeSelect);
+    storeSelect.addEventListener('change', function() {
+      storeMode = storeSelect.value;
+      localStorage.setItem(STORE_KEY, storeMode);
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ awana_storeMode: storeMode });
+      }
+      if (isAwanaStoreNight()) {
+        fetchShareBalances().then(applyStoreVisuals);
+      }
+      applyStoreVisuals();
+      console.log('[Awana] Store Night mode:', storeMode, '→ active:', isAwanaStoreNight());
+    });
+    applyStoreVisuals();
+    // Re-evaluate auto detection (and refresh balance count) every minute
+    setInterval(function() {
+      if (storeMode === 'auto') applyStoreVisuals();
+      if (isAwanaStoreNight() && Date.now() - SHARES.fetchedAt > SHARES_TTL_MS) {
+        fetchShareBalances().then(applyStoreVisuals);
+      }
+    }, 60000);
+    // Initial fetch if active on load
+    if (isAwanaStoreNight() && SHARES.fetchedAt === 0) {
+      fetchShareBalances().then(applyStoreVisuals);
+    }
 
     // ── Search bar ──
     var searchContainer = document.createElement('div');
@@ -1301,7 +1479,7 @@
         });
     });
 
-    panelBody.append(quickModeRow, stepUpRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
+    panelBody.append(quickModeRow, stepUpRow, storeRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
@@ -1582,12 +1760,11 @@
   function triggerRemotePrint(fullName, clubName, clubImageData) {
     if (selectedMode === 'off') return;
     var key = fullName.toLowerCase().trim();
+    // Same fix as onCheckin: per-name dedup is sufficient. The roster-diff
+    // path can detect several remote check-ins in the same scan tick, and
+    // each one needs to print — gating on a 2 s global cooldown silently
+    // dropped all but the first.
     if (printedNames.has(key)) return;
-    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) {
-      // Another print is in flight; retry on the next scan
-      return;
-    }
-    lastPrintTime = Date.now();
     markPrinted(fullName);
     doPrint(fullName, clubName || '', clubImageData || null);
   }
@@ -1629,8 +1806,11 @@
 
   function onCheckin(name) {
     if (selectedMode === 'off') return;
-    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
     var key = name.toLowerCase().trim();
+    // Per-name dedup is the actual deduplication mechanism. Two parents
+    // checking different kids back-to-back must both print, so we do NOT
+    // gate on a global time cooldown here — that was the v3.0.4 regression
+    // that dropped the second of any two prints within 2 s.
     if (batchPrintedNames.has(key)) return; // already printed in batch
     if (printedNames.has(key)) return; // already printed this session (local or remote)
 
@@ -1674,6 +1854,12 @@
       printerName: selectedPrinterName || '',
       stepUpNight: isStepUpNight()
     };
+    if (isAwanaStoreNight()) {
+      var bal = getShareBalance(firstName, lastName);
+      if (bal !== null) payload.awanaShares = bal + 1;
+    }
+
+    console.log('[Awana] POST /print:', fullName, '|', clubName || '(no club)');
 
     function attemptPrint(p, retriesLeft) {
       return fetch(PRINT_SERVER + '/print', {
@@ -1950,9 +2136,9 @@
   injectWidget();
   loadPrintedState();
   // Restore printer selection from chrome.storage.local (survives extension updates)
-  // Also restore Step Up Night mode if it was set on the options page.
+  // Also restore Step Up Night and Awana Store mode if set on the options page.
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['awana_selectedPrinterName', 'awana_stepUpMode'], function(result) {
+    chrome.storage.local.get(['awana_selectedPrinterName', 'awana_stepUpMode', 'awana_storeMode'], function(result) {
       if (result.awana_selectedPrinterName && !localStorage.getItem(PRINTER_KEY)) {
         selectedPrinterName = result.awana_selectedPrinterName;
         localStorage.setItem(PRINTER_KEY, selectedPrinterName);
@@ -1965,6 +2151,13 @@
         var sus = document.getElementById('awana-stepup-select');
         if (sus) sus.value = stepUpMode;
       }
+      if (result.awana_storeMode && result.awana_storeMode !== storeMode) {
+        storeMode = result.awana_storeMode;
+        localStorage.setItem(STORE_KEY, storeMode);
+        var sst = document.getElementById('awana-store-select');
+        if (sst) sst.value = storeMode;
+        if (isAwanaStoreNight()) fetchShareBalances();
+      }
     });
     chrome.storage.onChanged && chrome.storage.onChanged.addListener(function(changes, area) {
       if (area !== 'local') return;
@@ -1973,6 +2166,13 @@
         localStorage.setItem(STEP_UP_KEY, stepUpMode);
         var sus = document.getElementById('awana-stepup-select');
         if (sus) sus.value = stepUpMode;
+      }
+      if (changes.awana_storeMode) {
+        storeMode = changes.awana_storeMode.newValue || 'auto';
+        localStorage.setItem(STORE_KEY, storeMode);
+        var sst = document.getElementById('awana-store-select');
+        if (sst) sst.value = storeMode;
+        if (isAwanaStoreNight()) fetchShareBalances();
       }
     });
   }
