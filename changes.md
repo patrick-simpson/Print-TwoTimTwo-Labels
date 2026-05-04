@@ -1,4 +1,25 @@
-﻿## [3.6.0] - 2026-05-03
+﻿## [3.6.1] - 2026-05-03
+Hotfix: drop the 2-second blanket print cooldown that was silently swallowing the second of any two back-to-back check-ins.
+
+### Why
+Volunteer report after v3.0.4: standard click → modal → confirm flow was missing prints. Two parents checking different kids back-to-back would get one label and one missed kid, with no visible error.
+
+### Root cause
+`onCheckin` (the fast path triggered by the `#lastCheckin` mutation observer) and `triggerRemotePrint` (the roster-diff fallback) both had a `Date.now() - lastPrintTime < PRINT_COOLDOWN` early-return. Designed as a belt-and-suspenders cross-path dedup, but it was over-broad — it gated on **time** rather than **name**, so a different kid checked in within 2 s of the previous one was dropped without ever reaching `doPrint`.
+
+The actual deduplication mechanism (`printedNames` Set + `batchPrintedNames` Set, both keyed on lowercase name) is sufficient: every print path checks the sets *before* POSTing, and writes to them *before* POSTing, so the race window where the same kid would be printed twice from two different detection paths is already zero.
+
+### Fix (chrome-extension/content.js)
+- Removed the `Date.now() - lastPrintTime < PRINT_COOLDOWN` gate from both `onCheckin` and `triggerRemotePrint`. Per-name dedup is unchanged.
+- `lastPrintTime` is still updated for diagnostic continuity but no longer gates anything.
+- Added a `console.log('[Awana] POST /print:', fullName, ...)` line in `doPrint` so the next time something looks off, the volunteer (or whoever's helping debug) can open DevTools, watch the console, and see exactly which check-ins fired their POST and which didn't.
+- `PRINT_COOLDOWN` constant is preserved — it's still used as the polling interval for `flushQueue`.
+
+### Behavior change
+- **Before:** two parents back-to-back → first label prints, second drops silently. Three parents in 4 s → only the first label prints.
+- **After:** every kid checked in via the standard flow gets a label. Same-kid double-detection is still blocked by `printedNames`.
+
+## [3.6.0] - 2026-05-03
 Awana Store Night support: each kid's label gets a small `🪙 N` badge in the bottom-right icon strip showing their current share balance, sourced live from TwoTimTwo's share-balance report.
 
 ### Why

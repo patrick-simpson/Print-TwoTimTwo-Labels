@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.6.0';
+  const EXTENSION_VERSION = '3.6.1';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -1760,12 +1760,11 @@
   function triggerRemotePrint(fullName, clubName, clubImageData) {
     if (selectedMode === 'off') return;
     var key = fullName.toLowerCase().trim();
+    // Same fix as onCheckin: per-name dedup is sufficient. The roster-diff
+    // path can detect several remote check-ins in the same scan tick, and
+    // each one needs to print — gating on a 2 s global cooldown silently
+    // dropped all but the first.
     if (printedNames.has(key)) return;
-    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) {
-      // Another print is in flight; retry on the next scan
-      return;
-    }
-    lastPrintTime = Date.now();
     markPrinted(fullName);
     doPrint(fullName, clubName || '', clubImageData || null);
   }
@@ -1807,8 +1806,11 @@
 
   function onCheckin(name) {
     if (selectedMode === 'off') return;
-    if (Date.now() - lastPrintTime < PRINT_COOLDOWN) return;
     var key = name.toLowerCase().trim();
+    // Per-name dedup is the actual deduplication mechanism. Two parents
+    // checking different kids back-to-back must both print, so we do NOT
+    // gate on a global time cooldown here — that was the v3.0.4 regression
+    // that dropped the second of any two prints within 2 s.
     if (batchPrintedNames.has(key)) return; // already printed in batch
     if (printedNames.has(key)) return; // already printed this session (local or remote)
 
@@ -1856,6 +1858,8 @@
       var bal = getShareBalance(firstName, lastName);
       if (bal !== null) payload.awanaShares = bal + 1;
     }
+
+    console.log('[Awana] POST /print:', fullName, '|', clubName || '(no club)');
 
     function attemptPrint(p, retriesLeft) {
       return fetch(PRINT_SERVER + '/print', {
