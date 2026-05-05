@@ -185,8 +185,8 @@ export const PrintServerInfo: React.FC = () => {
           <div className="bg-yellow-50 border border-yellow-200 rounded p-2 flex items-start gap-2">
             <i className="fa fa-birthday-cake text-yellow-500 mt-0.5 flex-shrink-0"></i>
             <div>
-              <strong className="text-yellow-700 block mb-0.5">Birthday banner</strong>
-              <span className="text-gray-600">Red "Happy Birthday!" line printed when a birthday falls within the next 7 days</span>
+              <strong className="text-yellow-700 block mb-0.5">Birthday indicator</strong>
+              <span className="text-gray-600">Cake emoji 🍰 printed in bottom-right corner when a birthday is in the same calendar week</span>
             </div>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
