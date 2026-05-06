@@ -1,4 +1,23 @@
-﻿## [3.6.1] - 2026-05-03
+﻿## [3.6.2] - 2026-05-05
+Fix: birthday cake emoji now displays during the calendar week containing the birthday, not for any birthday within the next 7 days.
+
+### Why
+The previous "next 7 days" logic was too broad. At Awana events, displaying the cake emoji the entire week *before* a birthday created confusion — volunteers seeing the cake would expect it to be someone's actual birthday, but it would sometimes be 5+ days away. The cake emoji should signal "this birthday is happening this week" rather than "this birthday might happen in the next week."
+
+### Root cause
+`isBirthdayWeek()` function was calculating `diffDays >= 0 && diffDays <= 6`, which displays the cake for any birthday within 7 days, regardless of calendar week boundaries.
+
+### Fix (print-server/server.js)
+- Modified `isBirthdayWeek()` to use ISO week number comparison instead of day difference arithmetic.
+- Birthday now shows a cake emoji only if it falls within the same calendar week as today (same ISO week number and year).
+- Updated documentation (PrintServerInfo.tsx) to clarify that the emoji shows "when a birthday is in the same calendar week" and corrected it to say "cake emoji 🍰 in bottom-right corner" instead of the outdated "red Happy Birthday line".
+
+### Behavior change
+- **Before:** A child's label shows a cake emoji for 7 days: from 6 days before their birthday through the day after.
+- **After:** A child's label shows a cake emoji only during the calendar week containing their birthday (Mon–Sun or your locale's week start/end).
+- **Example:** If a birthday is Thursday May 6, the cake emoji shows from Monday May 4 through Sunday May 10 (the same ISO week), but not on May 3 (prior week) or May 11 (next week).
+
+## [3.6.1] - 2026-05-03
 Hotfix: drop the 2-second blanket print cooldown that was silently swallowing the second of any two back-to-back check-ins.
 
 ### Why

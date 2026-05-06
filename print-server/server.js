@@ -441,8 +441,20 @@ function isBirthdayWeek(birthdateStr) {
       next = new Date(today.getFullYear() + 1, bday.getMonth(), bday.getDate());
     }
 
-    const diffDays = Math.round((next.getTime() - today.getTime()) / 86400000);
-    return diffDays >= 0 && diffDays <= 6;
+    // Check if birthday is in the same ISO week as today
+    const getWeekNumber = (date) => {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+      const yearStart = new Date(d.getFullYear(), 0, 1);
+      const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+      return { year: d.getFullYear(), week: weekNum };
+    };
+
+    const todayWeek = getWeekNumber(today);
+    const birthdayWeek = getWeekNumber(next);
+
+    return todayWeek.year === birthdayWeek.year && todayWeek.week === birthdayWeek.week;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
     return false;
