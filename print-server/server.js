@@ -289,6 +289,26 @@ function findClubber(firstName, lastName) {
   ) || null;
 }
 
+// ── Get share balance from CSV for store night ────────────────────────────────
+// Returns the share balance from the "Share Balance" column, excluding Cubbies
+// and Puggles. Returns null if not found, column missing, or club excluded.
+function getShareBalanceFromCSV(record) {
+  if (!record) return null;
+
+  const balance = record['Share Balance'];
+  if (balance === undefined || balance === null || String(balance).trim() === '') {
+    return null;
+  }
+
+  const club = (record.Club || record.HandbookGroup || '').toLowerCase();
+  if (club.includes('cubbie') || club.includes('puggle')) {
+    return null;
+  }
+
+  const num = Number(balance);
+  return (Number.isFinite(num) && num >= 0) ? num : null;
+}
+
 // ── Family index for sibling lookup ──────────────────────────────────────────
 // Groups clubbers by the best available family identifier (HouseholdID →
 // PrimaryContact → Guardian → Address → LastName fallback) and builds a
@@ -1020,12 +1040,22 @@ app.post('/label', async (req, res) => {
   const stepUp = !!stepUpNight && isSteppingUp(record, clubName);
   const stepUpNextClub = stepUp ? (nextClubFor(clubName) || '') : '';
 
+  // Get share balance from CSV (for store night) and increment by 1
+  let csvShares = null;
+  if (record) {
+    const balance = getShareBalanceFromCSV(record);
+    if (balance !== null) {
+      csvShares = balance + 1;
+    }
+  }
+  const finalShares = csvShares !== null ? csvShares : awanaShares;
+
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares
+      stepUp, stepUpNextClub, finalShares
     );
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
@@ -1100,9 +1130,20 @@ app.post('/print', async (req, res) => {
   if (stepUp) {
     console.log(`[print] ${firstName} ${lastName} stepping up: ${clubName} → ${stepUpNextClub}`);
   }
-  if (awanaShares != null) {
-    console.log(`[print] ${firstName} ${lastName} shares badge: ${awanaShares}`);
+
+  // Get share balance from CSV (for store night) and increment by 1
+  let csvShares = null;
+  if (record) {
+    const balance = getShareBalanceFromCSV(record);
+    if (balance !== null) {
+      csvShares = balance + 1;
+    }
   }
+  if (csvShares != null) {
+    console.log(`[print] ${firstName} ${lastName} shares badge: ${csvShares} (from CSV: ${csvShares - 1})`);
+  }
+  // Use CSV shares if available, otherwise use request body shares (for backwards compatibility)
+  const finalShares = csvShares !== null ? csvShares : awanaShares;
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
   let pngPath = null;
@@ -1111,7 +1152,7 @@ app.post('/print', async (req, res) => {
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares
+      stepUp, stepUpNextClub, finalShares
     );
     pngPath = result.pngPath;
 

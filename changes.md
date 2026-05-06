@@ -1,4 +1,21 @@
-﻿## [3.6.2] - 2026-05-05
+﻿## [3.6.3] - 2026-05-06
+Feature: read store night share balance directly from CSV instead of TwoTimTwo API.
+
+### Why
+Faster and more reliable to use the existing CSV data (which already downloads during check-in) instead of making an additional API call. Avoids network delays and API availability issues on store night.
+
+### What changed
+- Share balance now read from "Share Balance" CSV column for each child
+- Balance automatically incremented by 1 to represent tonight's store attendance share
+- Cubbies and Puggles excluded from share display (filtered by Club/HandbookGroup column)
+- Backwards compatible: if CSV data unavailable or child not in CSV, falls back to request body shares
+- Both `/print` and `/label` endpoints updated to use CSV shares
+
+### Behavior
+- **Before:** Share balance fetched from TwoTimTwo's `/report/shekelBalance` API endpoint on every print
+- **After:** Share balance read directly from CSV row's "Share Balance" column, incremented by 1, displayed as coin emoji 🪙 in bottom-right corner (Sparks, T&T, Trek, Journey only)
+
+## [3.6.2] - 2026-05-05
 Fix: birthday cake emoji now displays during the calendar week containing the birthday, not for any birthday within the next 7 days.
 
 ### Why
