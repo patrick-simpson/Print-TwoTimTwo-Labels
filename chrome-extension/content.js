@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.6.3';
+  const EXTENSION_VERSION = '3.6.4';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -1598,7 +1598,6 @@
     function checkForChange() {
       const lastCheckinEl = document.querySelector('#lastCheckin div');
       if (!lastCheckinEl) {
-        lastPrintedName = null;
         return;
       }
 
@@ -1614,8 +1613,6 @@
         lastPrintedName = text;
         console.log('[Awana] Check-in detected:', text);
         onCheckin(text);
-      } else if (!text) {
-        lastPrintedName = null;
       }
     }
 

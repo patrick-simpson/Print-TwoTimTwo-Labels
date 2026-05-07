@@ -1,4 +1,22 @@
-﻿## [3.6.3] - 2026-05-06
+﻿## [3.6.4] - 2026-05-06
+Bugfix: prevent duplicate label prints when TwoTimTwo rapidly clears and re-updates the check-in display.
+
+### Why
+A timing race condition could cause the same child's label to print twice if TwoTimTwo's page cleared the #lastCheckin element and immediately updated it with the same name (which can happen during page refreshes or AJAX updates).
+
+### Root cause
+The `checkForChange()` function was resetting `lastPrintedName = null` whenever the #lastCheckin element was empty. This allowed the same name to be detected as "new" moments later when TwoTimTwo re-populated it, bypassing the `text !== lastPrintedName` guard. Although `onCheckin()` has `printedNames` dedup, the per-session Set could miss rapid repeated calls if timing aligned poorly.
+
+### Fix (chrome-extension/content.js)
+- Removed the code that resets `lastPrintedName` to null when the element clears
+- Keep `lastPrintedName` persistently set, so rapid clear-and-repopulate cycles with the same name don't re-trigger onCheckin()
+- Removed unnecessary clearing when `lastCheckinEl` doesn't exist
+
+### Behavior change
+- **Before:** Very rarely, if TwoTimTwo cleared #lastCheckin and quickly re-populated it (e.g., during page refresh or AJAX), a child's label could print twice
+- **After:** `lastPrintedName` gate prevents re-detection of the same check-in, even if the DOM element was briefly empty
+
+## [3.6.3] - 2026-05-06
 Feature: read store night share balance directly from CSV instead of TwoTimTwo API.
 
 ### Why
