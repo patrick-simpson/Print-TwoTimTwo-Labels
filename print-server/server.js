@@ -1063,6 +1063,27 @@ app.post('/print', async (req, res) => {
     return res.status(400).json({ error: 'name or firstName is required' });
   }
 
+  // Duplicate suppression: the same child never legitimately checks in twice
+  // within the window, but client-side phantom triggers (DOM re-renders,
+  // roster reshuffles, offline-queue replays from a fresh tab) can re-POST the
+  // same name. Per-name only — two different kids back-to-back are unaffected.
+  // Deliberate reprints bypass via force:true or the /reprint endpoint.
+  const dedupName = dedupKey(firstName, lastName);
+  const lastPrintedMs = recentPrints.get(dedupName);
+  if (req.body.force !== true && lastPrintedMs && Date.now() - lastPrintedMs < DEDUP_WINDOW_MS) {
+    console.log(`[print] DUPLICATE suppressed: ${firstName} ${lastName} (printed ${Math.round((Date.now() - lastPrintedMs) / 1000)}s ago)`);
+    addHistoryEntry({
+      firstName, lastName, clubName, clubImageData,
+      printer: effectivePrinter, success: true, skipped: true
+    });
+    return res.json({
+      success: true,
+      skipped: true,
+      reason: 'duplicate',
+      lastPrintedAt: new Date(lastPrintedMs).toISOString()
+    });
+  }
+
   // Reload CSV on every request so mid-event additions are always picked up.
   // If the file is locked or missing, loadClubbers() returns [] and logs a
   // warning — this request continues with a basic label.
@@ -1126,6 +1147,9 @@ app.post('/print', async (req, res) => {
       }).catch(e => console.warn('[pusher] trigger failed:', e.message));
     }
 
+    // Arm dedup only after a successful print — a 500 must stay retryable.
+    recentPrints.set(dedupName, Date.now());
+
     // Log to print history
     addHistoryEntry({
       firstName, lastName, clubName, clubImageData,
@@ -1175,6 +1199,7 @@ function addHistoryEntry(entry) {
     clubImageData: entry.clubImageData || null,
     printer: entry.printer || '',
     success: entry.success,
+    skipped: !!entry.skipped,
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -1182,6 +1207,25 @@ function addHistoryEntry(entry) {
 }
 
 let printHistory = loadHistory();
+
+// ── Duplicate print suppression ──────────────────────────────────────────────
+const DEDUP_WINDOW_MS = 2 * 60 * 1000;
+const recentPrints = new Map(); // dedupKey -> epoch ms of last successful print
+
+function dedupKey(firstName, lastName) {
+  return `${firstName} ${lastName}`.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Seed from print history so dedup survives a mid-event server restart.
+// Skipped entries are excluded so a suppressed duplicate never extends the window.
+for (const entry of printHistory) {
+  if (!entry.success || entry.skipped || !entry.timestamp) continue;
+  const ts = Date.parse(entry.timestamp);
+  if (Number.isFinite(ts) && Date.now() - ts < DEDUP_WINDOW_MS) {
+    const key = dedupKey(entry.firstName || '', entry.lastName || '');
+    if (!recentPrints.has(key)) recentPrints.set(key, ts); // history is newest-first
+  }
+}
 
 app.get('/history', (req, res) => {
   const history = loadHistory();

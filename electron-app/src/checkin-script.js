@@ -10,6 +10,10 @@
   // ── Constants ──────────────────────────────────────────────────────────────
   const PRINT_COOLDOWN    = 2000;
   const DEBOUNCE_MS       = 100;
+  // During the first seconds after load, #lastCheckin mutations are treated as
+  // the SPA populating pre-existing state (a fresh window would otherwise
+  // reprint the previous check-in) — they prime lastPrintedName, not print.
+  const WATCH_GRACE_MS    = 3000;
   const STATUS_TIMEOUT    = 3000;
   const PRINT_SERVER      = 'http://localhost:3456';
   const STORAGE_KEY       = 'awana_selectedPrinterId';
@@ -85,7 +89,7 @@
       fontSize: '11px', padding: '2px 7px', background: '#e2e8f0',
       border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer'
     });
-    testBtn.addEventListener('click', () => doPrint('Test Child', 'Sparks', null));
+    testBtn.addEventListener('click', () => doPrint('Test Child', 'Sparks', null, { force: true }));
 
     row.append(lbl, sel, status, testBtn);
     wrap.appendChild(row);
@@ -103,20 +107,35 @@
   // ── MutationObserver ───────────────────────────────────────────────────────
   function watchCheckins() {
     let timer = null;
-    const check = () => {
+    const watchStartedAt = Date.now();
+    const readName = () => {
       const div = document.querySelector('#lastCheckin div');
-      if (!div) { lastPrintedName = null; return; }
+      if (!div) return null;
       const clone = div.cloneNode(true);
       clone.querySelector('a')?.remove();
-      const name = clone.textContent.trim();
+      return clone.textContent.trim();
+    };
+    const check = () => {
+      const name = readName();
+      if (name === null) { lastPrintedName = null; return; }
       if (isUndo(name)) { lastPrintedName = name; return; }
       if (name && name !== lastPrintedName) {
+        if (Date.now() - watchStartedAt < WATCH_GRACE_MS) {
+          // SPA populating pre-existing state, not a live check-in.
+          lastPrintedName = name;
+          return;
+        }
         lastPrintedName = name;
         onCheckin(name);
       } else if (!name) {
         lastPrintedName = null;
       }
     };
+
+    // Prime from whatever is already in the DOM so a fresh window never
+    // treats the previous check-in as new.
+    const initialName = readName();
+    if (initialName) lastPrintedName = initialName;
 
     const target = document.querySelector('#lastCheckin') || document.body;
     new MutationObserver(() => {
@@ -154,7 +173,7 @@
   }
 
   // ── Print ──────────────────────────────────────────────────────────────────
-  async function doPrint(name, clubName, clubImageData) {
+  async function doPrint(name, clubName, clubImageData, opts) {
     setStatus('⏳');
     const parts     = name.split(' ');
     const firstName = parts[0] || '';
@@ -170,7 +189,9 @@
         const res = await fetch(`${PRINT_SERVER}/print`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, clubName, clubImageData }),
+          // force: deliberate manual prints (Test button) bypass the server's
+          // duplicate-suppression window.
+          body: JSON.stringify({ name, clubName, clubImageData, force: !!(opts && opts.force) }),
           signal: AbortSignal.timeout(5000)
         });
         if (res.ok) { setStatus('✅'); clearStatus(); return; }

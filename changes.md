@@ -1,4 +1,48 @@
-﻿## [3.6.2] - 2026-05-05
+﻿## [3.7.0] - 2026-06-09
+Phantom-print prevention: layered defense so labels can't fire without a real, committed check-in — server-side duplicate suppression, startup priming of the `#lastCheckin` watcher, confirmation-gated sibling prints, and a hardened roster-diff scanner.
+
+### Why
+Labels were occasionally printing with nobody checked in (or printing twice for the same kid). All deduplication lived client-side in per-tab `sessionStorage`, so a fresh tab, a second laptop, or a replayed offline queue had zero protection. Several detection paths also printed *before* TwoTimTwo actually committed the check-in, so a cancelled or failed check-in still produced a label.
+
+### Root causes
+1. **No server-side protection** — `POST /print` printed whatever it received, every time.
+2. **Fresh-tab startup phantom** — `watchCheckins()` started with `lastPrintedName = null`; when the SPA (re)rendered `#lastCheckin` still containing the previous check-in, the observer saw a "change" and printed that kid again. Most likely source of unexplained phantoms.
+3. **Print-before-commit** — batch sibling labels printed before the modal's check-in button was even clicked; a dropped/cancelled check-in still printed.
+4. **Roster-diff inference** — any `.clubber` row vanishing (tab-refocus re-render storms, throttled hidden-tab timers, mid-render scans right after load) could look like a check-in.
+
+### Fix
+**print-server/server.js — duplicate suppression (last line of defense)**
+- `POST /print` now rejects a second print of the same normalized name within a 2-minute window. Response is HTTP 200 `{ success: true, skipped: true, reason: 'duplicate', lastPrintedAt }` so clients treat it as delivered (no retry loops, no offline-queue churn).
+- Keyed on **name, never time alone** — two different kids back-to-back are structurally unaffected (preserves the v3.6.1 fix).
+- Dedup arms only on print **success**; a 500 (jammed printer) stays retryable.
+- Window is seeded from `print-history.json` on startup, so it survives a mid-event server restart. Suppressed requests are logged to history with `skipped: true`.
+- `force: true` in the request body bypasses the window. `/reprint` and `/label` are untouched — deliberate reprints always work.
+- Known edge case: two distinct children with identical first+last names inside the 2-minute window collide; recover via the reprint UI (this collision already existed in CSV enrichment).
+
+**chrome-extension/content.js + electron-app/src/checkin-script.js — startup guard**
+- `watchCheckins()` now primes `lastPrintedName` from whatever is already in `#lastCheckin` *before* attaching the observer, and treats mutations in the first 3 s (`WATCH_GRACE_MS`) as the SPA populating pre-existing state — they re-prime instead of printing. A real check-in landing inside the grace window is still caught by the roster-diff backstop (~15 s later); it is never lost because `printedNames` was never set.
+
+**chrome-extension/content.js — sibling prints now confirmation-gated (hybrid policy)**
+- Direct human clicks (Quick Mode click on a kid, search-result click) still print instantly — the volunteer intended it.
+- Automated batch-sibling prints moved from "before the modal click" to `verifyBatchCheckin()`'s success branch — the label prints only once the kid's row actually disappears from the roster (the only signal TwoTimTwo committed the check-in). Club info is captured before the click since the row vanishes on success.
+- A sibling whose check-in cannot be verified (retries exhausted, or the modal never opened) now shows ⚠ + error tone instead of failing silently — the volunteer knows the kid got neither a check-in nor a label.
+- Whichever confirmed path fires first (`verifyBatchCheckin` or `onCheckin` via `#lastCheckin`) prints exactly once; both mark `printedNames` before POSTing.
+
+**chrome-extension/content.js — roster-diff hardening**
+- New 7 s suppression window (`SCAN_SUPPRESS_MS`) after page load and after the tab regains visibility: suppressed scans keep `ROSTER_CACHE` fresh but never diff or print. `knownClubbers` is deliberately left untouched during suppression, so a check-in that lands inside the window still diffs (and prints) once scans resume — suppression delays, never drops.
+- Scans are discarded outright while the tab is hidden (throttled timers diff half-rendered DOM).
+- `PENDING_MISS_THRESHOLD` raised 2 → 3: a kid must be missing from three consecutive 5 s scans before the roster-diff path prints. Remote-label latency goes ~10 s → ~15 s.
+- Considered and rejected: a "swap signature" virtualization guard (N names appear while N disappear) — interacts badly with simultaneous undo + check-in and virtualization has not been observed on TwoTimTwo.
+
+**Force flags for deliberate manual prints**
+- Widget Test button, walk-in print, and the Electron Test button send `force: true` — printing the same test/walk-in label twice in a row always works.
+- Clients show a ⏭ status (no success chime) when the server reports a suppressed duplicate.
+
+### Behavior change
+- **Before:** a fresh tab could reprint the last check-in on load; a cancelled sibling check-in still printed; a tab-refocus re-render could phantom-print; the same name POSTed twice printed twice.
+- **After:** the same kid prints at most once per 2 minutes server-wide (force/reprint bypasses); sibling labels print only after the check-in is confirmed; load/refocus re-renders never print; remote (other-device) check-ins print ~15 s after the kid leaves the roster instead of ~10 s.
+
+## [3.6.2] - 2026-05-05
 Fix: birthday cake emoji now displays during the calendar week containing the birthday, not for any birthday within the next 7 days.
 
 ### Why

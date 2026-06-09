@@ -2,10 +2,16 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.6.2';
+  const EXTENSION_VERSION = '3.7.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
+  // During the first seconds after load, #lastCheckin mutations are treated as
+  // the SPA populating pre-existing state (a fresh tab would otherwise reprint
+  // the previous night's last check-in) — they prime lastPrintedName instead
+  // of printing. A real check-in landing inside the grace window is still
+  // caught by the roster-diff backstop, since printedNames was never set.
+  const WATCH_GRACE_MS = 3000;
   const STATUS_TIMEOUT = 3000;
   const PRINT_SERVER = 'http://localhost:3456';
   const STORAGE_KEY = 'awana_selectedPrinterId';
@@ -42,7 +48,7 @@
   // roster-diff path is allowed to print their label. This defends against
   // transient disappearances (search filter, scroll virtualization, page
   // re-render) that are NOT real check-ins.
-  var PENDING_MISS_THRESHOLD = 2;
+  var PENDING_MISS_THRESHOLD = 3;
   // Map<nameKey, consecutiveMissCount>
   var pendingMissing  = new Map();
   // If >= this fraction of the known roster disappears in a single scan, treat
@@ -63,6 +69,20 @@
   var REMOTE_STALE_MS     = 4 * 60 * 60 * 1000; // 4h idle resets dedup (new event night)
   var SCAN_INTERVAL_MS    = 5000;
   var AUTO_REFRESH_INTERVAL_MS = 30000;
+  // Roster-diff suppression window after page load and after the tab regains
+  // visibility. Chrome throttles hidden-tab timers, and the first scans after
+  // a refocus/reload can diff a mid-re-render DOM — a classic phantom-print
+  // source. Suppressed scans keep ROSTER_CACHE fresh but never diff or print;
+  // knownClubbers is left untouched, so a real check-in that lands inside the
+  // window is still diffed (and printed) once scans resume.
+  var SCAN_SUPPRESS_MS    = 7000;
+  var scanSuppressedUntil = Date.now() + SCAN_SUPPRESS_MS;
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) {
+      scanSuppressedUntil = Date.now() + SCAN_SUPPRESS_MS;
+      pendingMissing.clear();
+    }
+  });
 
   function loadPrintedState() {
     try {
@@ -283,6 +303,11 @@
     }).then(function(r) {
       if (r.ok) {
         if (dedupKey) markPrinted(item.name);
+        r.json().then(function(body) {
+          if (body && body.skipped) {
+            console.log('[Awana] Server skipped duplicate queued print:', item.name);
+          }
+        }).catch(function() {});
         playSuccess();
         console.log('[Awana] Flushed queued print: ' + item.name);
         if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
@@ -544,14 +569,31 @@
     });
   }
 
+  // Print a sibling's label only after their check-in is CONFIRMED (row gone
+  // from the roster). Guarded so whichever confirmation path fires first —
+  // this one or onCheckin via #lastCheckin — prints exactly once.
+  function printConfirmedSibling(sib) {
+    var key = sib.name.toLowerCase().trim();
+    if (printedNames.has(key) || batchPrintedNames.has(key)) return;
+    batchPrintedNames.add(key);
+    setTimeout(function() { batchPrintedNames.delete(key); }, 8000);
+    lastPrintTime = Date.now();
+    markPrinted(sib.name); // record in session dedup so remote scan won't reprint
+    var club = sib.club || lookupClub(sib.name);
+    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
+  }
+
   // After clicking the modal's check-in button, wait for the kid's row to
   // disappear from the .clubber roster — that's the only signal that
-  // TwoTimTwo actually accepted the check-in. If the row is still there
-  // after the verify window, re-click the row once before giving up. This
-  // protects against modal races where the click landed but TwoTimTwo
-  // dismissed the modal without recording the check-in.
+  // TwoTimTwo actually accepted the check-in. The sibling's label prints
+  // HERE, on that confirmation — never before — so a cancelled or dropped
+  // check-in produces no label. If the row is still there after the verify
+  // window, re-click the row once before giving up. This protects against
+  // modal races where the click landed but TwoTimTwo dismissed the modal
+  // without recording the check-in.
   function verifyBatchCheckin(sib, remaining, options, pollAttempt, retriesLeft) {
     if (!findClubberElByName(sib.name)) {
+      printConfirmedSibling(sib);
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -574,12 +616,18 @@
         return;
       }
       // Race: row vanished between attempts → success
+      printConfirmedSibling(sib);
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
       return;
     }
-    console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted)');
+    // Check-in failed: the kid got neither a check-in nor a label. Make it
+    // visible — a silent console line means a volunteer finds out at pickup.
+    console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted) — NO label printed');
+    setStatus('⚠');
+    playError();
+    clearStatus();
     if (remaining.length > 0) {
       setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
     }
@@ -601,6 +649,11 @@
         }
       }
       console.log('[Awana] Timed out waiting for check-in button for ' + sib.name);
+      // Modal never opened → no check-in and (for batch siblings) no label.
+      // Alert the volunteer instead of failing silently.
+      setStatus('⚠');
+      playError();
+      clearStatus();
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -681,24 +734,22 @@
     console.log('[Awana] Batch check-in: clicking ' + sib.name);
     setStatus('\u23F3');
 
-    // Fire print in background immediately — don't wait for check-in to complete.
-    // Guard against onCheckin double-printing via two layers:
-    //   1. batchPrintedNames Set (8 s window) — primary guard
-    //   2. lastPrintTime reset — secondary cooldown guard
-    var club = lookupClub(sib.name);
-    var sibKey = sib.name.toLowerCase().trim();
-    batchPrintedNames.add(sibKey);
-    setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
-    lastPrintTime = Date.now(); // also arm the cooldown guard
-    markPrinted(sib.name); // record in session dedup so remote scan won't reprint
-    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
+    // Capture club info while the row is still visible — the row vanishes
+    // from the DOM once the check-in commits, and the confirmed print in
+    // verifyBatchCheckin() needs it. The print itself is DEFERRED until the
+    // check-in is verified (printConfirmedSibling), so a cancelled or failed
+    // check-in prints nothing.
+    sib.club = lookupClub(sib.name);
 
     // Re-query the clubber element by name. The reference captured at
     // findSiblings() time goes stale after the previous sibling's check-in
     // re-renders the roster — clicking a detached node is a silent no-op.
     var freshEl = findClubberElByName(sib.name);
     if (!freshEl || !freshEl.isConnected) {
-      console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
+      // Row already gone = the check-in is already committed (other device
+      // or an earlier pass), so print now.
+      printConfirmedSibling(sib);
+      console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — already checked in, printing');
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -881,7 +932,7 @@
     testBtn.addEventListener('mouseleave', function() { testBtn.style.background = '#f1f5f9'; });
     testBtn.addEventListener('click', function() {
       console.log('[Awana] Test button clicked');
-      doPrint('Test Child', 'Sparks', null);
+      doPrint('Test Child', 'Sparks', null, { force: true });
     });
 
     controls.append(modeSelect, statusEl, testBtn);
@@ -1017,7 +1068,10 @@
       var payload = {
         name: name, clubName: club, clubImageData: null,
         printerName: selectedPrinterName || '',
-        stepUpNight: isStepUpNight()
+        stepUpNight: isStepUpNight(),
+        // A volunteer typing a walk-in name and clicking Print is always
+        // deliberate — bypass the server's duplicate-suppression window.
+        force: true
       };
       if (isVisitor) payload.visitor = true;
       if (isAwanaStoreNight()) {
@@ -1594,23 +1648,33 @@
 
   function watchCheckins() {
     var debounceTimer = null;
+    var watchStartedAt = Date.now();
+
+    function readCheckinText() {
+      const lastCheckinEl = document.querySelector('#lastCheckin div');
+      if (!lastCheckinEl) return null;
+      const clone = lastCheckinEl.cloneNode(true);
+      const undoLink = clone.querySelector('a');
+      if (undoLink) undoLink.remove();
+      return clone.textContent.trim();
+    }
 
     function checkForChange() {
-      const lastCheckinEl = document.querySelector('#lastCheckin div');
-      if (!lastCheckinEl) {
+      const text = readCheckinText();
+      if (text === null) {
         lastPrintedName = null;
         return;
       }
 
-      const clone = lastCheckinEl.cloneNode(true);
-      const undoLink = clone.querySelector('a');
-      if (undoLink) undoLink.remove();
-
-      const text = clone.textContent.trim();
-
       if (isUndo(text)) {
         lastPrintedName = text;
       } else if (text && text !== lastPrintedName) {
+        if (Date.now() - watchStartedAt < WATCH_GRACE_MS) {
+          // SPA populating pre-existing state, not a live check-in.
+          lastPrintedName = text;
+          console.log('[Awana] Startup grace: priming #lastCheckin, not printing:', text);
+          return;
+        }
         lastPrintedName = text;
         console.log('[Awana] Check-in detected:', text);
         onCheckin(text);
@@ -1618,6 +1682,11 @@
         lastPrintedName = null;
       }
     }
+
+    // Prime from whatever is already in the DOM so a fresh tab never treats
+    // the previous check-in (still rendered from an earlier session) as new.
+    var initialText = readCheckinText();
+    if (initialText) lastPrintedName = initialText;
 
     const observer = new MutationObserver(function() {
       clearTimeout(debounceTimer);
@@ -1659,6 +1728,12 @@
   }
 
   function scanClubberList() {
+    // Hidden tabs get throttled timers and half-rendered DOM — any diff taken
+    // now is garbage. Discard accumulated misses too.
+    if (document.hidden) {
+      if (pendingMissing.size > 0) pendingMissing.clear();
+      return;
+    }
     if (isSearchActive()) {
       if (pendingMissing.size > 0) pendingMissing.clear();
       return;
@@ -1688,6 +1763,15 @@
       } else {
         ROSTER_CACHE[key].element = clubberEls[i]; // keep element fresh
       }
+    }
+
+    // Inside the post-load/refocus suppression window: cache is updated above,
+    // but skip baseline + diff entirely. knownClubbers is deliberately NOT
+    // reassigned, so a check-in that happened during the window still shows up
+    // as a diff on the first un-suppressed scan.
+    if (Date.now() < scanSuppressedUntil) {
+      if (pendingMissing.size > 0) pendingMissing.clear();
+      return;
     }
 
     if (!baselineScanned) {
@@ -1836,7 +1920,7 @@
     }, 500);
   }
 
-  function doPrint(fullName, clubName, imageData) {
+  function doPrint(fullName, clubName, imageData, opts) {
     setStatus('\u23F3');
 
     var parts = fullName.split(' ');
@@ -1858,6 +1942,9 @@
       var bal = getShareBalance(firstName, lastName);
       if (bal !== null) payload.awanaShares = bal + 1;
     }
+    // Deliberate manual prints (Test button, walk-ins) bypass the server's
+    // duplicate-suppression window.
+    if (opts && opts.force) payload.force = true;
 
     console.log('[Awana] POST /print:', fullName, '|', clubName || '(no club)');
 
@@ -1868,8 +1955,10 @@
         body: JSON.stringify(p),
         signal: AbortSignal.timeout(5000)
       }).then(function(response) {
-        if (response.ok) return true;
-        throw new Error('HTTP ' + response.status);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        // Surface the server's duplicate-suppression verdict. A body parse
+        // failure is still a delivered print — never retry on it.
+        return response.json().catch(function() { return {}; });
       }).catch(function(err) {
         if (retriesLeft > 0) {
           console.log('[Awana] Print failed, retrying in 3s (' + retriesLeft + ' left):', err.message);
@@ -1883,7 +1972,17 @@
 
     var printPromise;
     if (selectedMode !== 'dialog') {
-      printPromise = attemptPrint(payload, 1).then(function() {
+      printPromise = attemptPrint(payload, 1).then(function(body) {
+        if (body && body.skipped) {
+          // Server suppressed a duplicate (the label already printed within
+          // the dedup window). Delivered, but no success chime.
+          console.log('[Awana] Server skipped duplicate print:', fullName,
+                      '(last printed ' + (body.lastPrintedAt || 'recently') + ')');
+          setStatus('\u23ed');
+          clearStatus();
+          flushQueue();
+          return true;
+        }
         setStatus('\u2705');
         playSuccess();
         clearStatus();

@@ -354,6 +354,13 @@ export const PrintServerInfo: React.FC = () => {
               <span className="text-gray-600">Club selector and visitor badge for walk-in guests</span>
             </div>
           </div>
+          <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
+            <i className="fa fa-shield-alt text-purple-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <strong className="text-purple-700 block mb-0.5">Duplicate protection (v3.7)</strong>
+              <span className="text-gray-600">The server suppresses a repeat print of the same child within 2 minutes, and sibling labels print only after the check-in is confirmed — phantom and double labels are blocked. Test, walk-in, and dashboard reprints always print</span>
+            </div>
+          </div>
         </div>
       </div>
 
