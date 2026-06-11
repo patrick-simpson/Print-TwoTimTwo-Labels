@@ -171,7 +171,9 @@ export const PrintServerInfo: React.FC = () => {
           Labels are designed for monochrome thermal printers — solid black ink only, no colors
           or grays that dither into noise. Each club gets its own identity pattern on the left
           edge of the label plus a matching font personality, so volunteers can tell clubs apart
-          at arm's length.
+          at arm's length. The club logo from the check-in page still prints in the left icon
+          panel; if no logo is available, the label falls back to a bold club monogram badge
+          (P, C, S, T&amp;T, TR, J) so the icon zone never disappears.
         </p>
         <div className="flex flex-wrap gap-2 text-xs">
           {([

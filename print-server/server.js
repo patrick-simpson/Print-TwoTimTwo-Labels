@@ -584,6 +584,19 @@ function getClubPattern(clubName) {
   return (k && CLUB_PATTERNS[k]) || 'none';
 }
 
+// Monogram fallback for the icon panel: when the client doesn't supply a
+// club logo (page layout changed, image failed to scrape), the label still
+// gets a club emblem — a solid badge with the club's monogram, drawn in the
+// club's font. TR (not T) for Trek so it can't be confused with T&T.
+const CLUB_MONOGRAM = {
+  puggle:  'P',
+  cubbie:  'C',
+  spark:   'S',
+  't&t':   'T&T',
+  trek:    'TR',
+  journey: 'J',
+};
+
 // Draw one club pattern in the vertical stripe (x, y, w, h). The caller has
 // already clipped to the badge's rounded corners. `ink` is black on normal
 // labels and white on inverted step-up labels — never a mid-tone.
@@ -773,8 +786,13 @@ async function generateLabel(
 
   // On step-up labels, drop the club icon entirely — the kid is leaving
   // that club, and the wider text area makes the message more obvious.
+  // The icon panel shows the real club logo when the client supplied one,
+  // and falls back to a monogram badge for any recognized club so the icon
+  // zone never silently disappears.
   const STRIPE_W = 7;
-  const hasIcon = !stepUp && !!clubImageBuffer;
+  const hasLogo     = !stepUp && !!clubImageBuffer;
+  const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)];
+  const hasIcon     = hasLogo || hasMonogram;
   const textX   = hasIcon ? TEXT_X : BX + STRIPE_W + 6;
   const textW   = hasIcon ? TEXT_W : BW - STRIPE_W - 14;
 
@@ -802,23 +820,41 @@ async function generateLabel(
     const iconSize = 76;
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
-    try {
-      const img = await loadImage(clubImageBuffer);
-      // Preserve aspect ratio
-      const aspect = img.width / img.height;
-      let drawW = iconSize, drawH = iconSize;
-      if (aspect > 1) { drawH = iconSize / aspect; }
-      else { drawW = iconSize * aspect; }
-      const dx = iconX + (iconSize - drawW) / 2;
-      const dy = iconY + (iconSize - drawH) / 2;
-      ctx.drawImage(img, dx, dy, drawW, drawH);
-    } catch {
-      // Image decode failed — draw a placeholder circle
+    let logoDrawn = false;
+    if (hasLogo) {
+      try {
+        const img = await loadImage(clubImageBuffer);
+        // Preserve aspect ratio
+        const aspect = img.width / img.height;
+        let drawW = iconSize, drawH = iconSize;
+        if (aspect > 1) { drawH = iconSize / aspect; }
+        else { drawW = iconSize * aspect; }
+        const dx = iconX + (iconSize - drawW) / 2;
+        const dy = iconY + (iconSize - drawH) / 2;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+        logoDrawn = true;
+      } catch { /* decode failed — fall through to the monogram badge */ }
+    }
+    if (!logoDrawn) {
+      // Monogram badge: solid disc + club initials in the club's own font.
+      // Solid ink stays crisp on thermal output where a grayscale logo
+      // placeholder would just dither away.
+      const monogram = CLUB_MONOGRAM[clubKey(clubName)] || '?';
+      const cx = BX + ICON_COL_W / 2;
+      const cy = BY + BH / 2;
+      const radius = 28;
       ctx.beginPath();
-      ctx.arc(BX + ICON_COL_W / 2, BY + BH / 2, 20, 0, Math.PI * 2);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = COLOR.iconPlaceholder;
-      ctx.stroke();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = COLOR.stripe;
+      ctx.fill();
+      const mFont = getClubFontFamily(clubName);
+      const mSize = fitFontSize(ctx, monogram, 'bold', radius * 1.5, 30, 12, mFont);
+      ctx.font = `bold ${mSize}px ${mFont}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = COLOR.bg;
+      ctx.fillText(monogram, cx, cy + 1);
+      ctx.textBaseline = 'top';  // restore default used by the text area
     }
   }
 
@@ -842,7 +878,9 @@ async function generateLabel(
   // "Stepping up to <next club>" callout — always show that line.
   const stepUpGroupText = stepUp ? ('Stepping up to ' + (stepUpNextClub || 'next club')) : '';
   const hasLast  = lastName.trim().length > 0;
-  const hasClub  = clubName.trim().length > 0 && !hasIcon;
+  // A real logo self-identifies the club, so the text line is redundant;
+  // a monogram badge is only initials, so keep the club name printed too.
+  const hasClub  = clubName.trim().length > 0 && !hasLogo;
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 

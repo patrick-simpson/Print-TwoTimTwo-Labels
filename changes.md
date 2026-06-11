@@ -1,4 +1,20 @@
-﻿## [3.7.1] - 2026-06-11
+﻿## [3.7.2] - 2026-06-11
+Club logos guaranteed: monogram badge fallback when the client doesn't supply a logo image.
+
+### Why
+The icon panel only rendered when the browser extension successfully scraped the club logo `<img>` from the check-in page and POSTed it as `clubImageData`. If the page layout changed, the image failed to load, or a caller hit the API without an image, the label silently lost its entire icon zone. Club identity on the label shouldn't depend on client-side scraping succeeding.
+
+### Fix (print-server/server.js)
+- New `CLUB_MONOGRAM` map (P, C, S, T&T, TR, J — TR so Trek can't be confused with T&T).
+- The icon panel now always renders for any recognized club: the real logo when `clubImageData` is supplied (unchanged), otherwise a solid-ink monogram badge drawn in the club's own font — crisp on 1-bit thermal output, where the old "decode failed" gray placeholder circle would just dither away.
+- A failed logo decode also falls back to the monogram badge instead of the placeholder circle.
+- The club-name text line is now hidden only when a *real logo* is shown (a logo self-identifies the club); monogram labels keep the printed club name since initials alone are ambiguous to new volunteers.
+
+### Behavior change
+- **Before:** no `clubImageData` → no icon panel at all; failed decode → empty gray circle.
+- **After:** recognized club always gets an icon — real logo preferred, monogram badge otherwise. Unknown club names without an image keep the previous full-width text layout.
+
+## [3.7.1] - 2026-06-11
 Rework the 3.7.0 per-club design for monochrome thermal printers; harden allergy visibility; fix birthday-cake week bug.
 
 ### Why
