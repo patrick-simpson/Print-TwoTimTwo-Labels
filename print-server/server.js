@@ -126,13 +126,6 @@ const HEADER_MAP = {
   'home address':    'Address',
 };
 
-const ALLERGY_EMOJI = {
-  'NUTS':   '\uD83E\uDD5C',  // 🥜
-  'DAIRY':  '\uD83E\uDD5B',  // 🥛
-  'GLUTEN': '\uD83C\uDF3E',  // 🌾
-  'EGG':    '\uD83E\uDD5A',  // 🥚
-  'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
-};
 
 function normalizeHeader(raw) {
   const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').trim();
@@ -439,14 +432,6 @@ function isBirthdayWeek(birthdateStr) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Build the birthday in the current calendar year
-    let next = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());
-
-    // year-wrap: if this year's birthday has already passed, look at next year
-    if (next < today) {
-      next = new Date(today.getFullYear() + 1, bday.getMonth(), bday.getDate());
-    }
-
     // Check if birthday is in the same ISO week as today
     const getWeekNumber = (date) => {
       const d = new Date(date);
@@ -458,9 +443,19 @@ function isBirthdayWeek(birthdateStr) {
     };
 
     const todayWeek = getWeekNumber(today);
-    const birthdayWeek = getWeekNumber(next);
 
-    return todayWeek.year === birthdayWeek.year && todayWeek.week === birthdayWeek.week;
+    // Test the birthday in both this calendar year and the next. The old
+    // code rolled an already-passed birthday forward a year before comparing,
+    // so the cake vanished the day after the birthday even though the
+    // documented behavior is "the whole calendar week containing it".
+    // Checking next year as well keeps the Dec→Jan ISO-week wrap working
+    // (e.g. today Dec 29 in ISO week 1, birthday Jan 2).
+    for (const yr of [today.getFullYear(), today.getFullYear() + 1]) {
+      const candidate = new Date(yr, bday.getMonth(), bday.getDate());
+      const w = getWeekNumber(candidate);
+      if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
+    }
+    return false;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
     return false;
@@ -570,33 +565,86 @@ async function resolveImageBuffer(clubImageData) {
 }
 
 // ── Per-club design system ────────────────────────────────────────────────────
-// Each Awana club gets its own accent palette (official club colors) in
-// addition to its font personality below. Accents drive the left identity
-// stripe, the icon panel tint, the club-name color, and the visitor pill —
-// so volunteers can tell clubs apart at arm's length. All primaries are
-// mid-dark tones that stay legible if a monochrome printer flattens them
-// to gray.
-const CLUB_THEMES = {
-  puggle:  { primary: '#5DA53C', secondary: '#00A79D' },  // leaf green / teal
-  cubbie:  { primary: '#0094D4', secondary: '#FDB813' },  // sky blue / honey yellow
-  spark:   { primary: '#DA291C', secondary: '#FDB813' },  // flame red / spark yellow
-  't&t':   { primary: '#00843D', secondary: '#231F20' },  // T&T green / black
-  trek:    { primary: '#E87722', secondary: '#414042' },  // trek orange / charcoal
-  journey: { primary: '#1D5DA8', secondary: '#414042' },  // journey blue / charcoal
+// The target printer is a monochrome thermal printer: hues flatten to mushy,
+// dithered grays, so color can't carry club identity. Solid-black shapes at
+// 300 dpi stay crisp — each club therefore gets a distinct PATTERN drawn in
+// pure ink inside the left identity stripe, alongside its font personality
+// below. Patterns are distinguishable at arm's length without reading text.
+const CLUB_PATTERNS = {
+  puggle:  'dots',      // playful dots for the littlest kids
+  cubbie:  'solid',     // one solid bar
+  spark:   'zigzag',    // lightning bolt echoes the Sparky flame
+  't&t':   'rungs',     // ladder rungs — Truth & Training handbook steps
+  trek:    'hatch',     // diagonal trail hatching
+  journey: 'chevrons',  // upward chevrons
 };
-const DEFAULT_CLUB_THEME = { primary: '#444444', secondary: '#888888' };
 
-function getClubTheme(clubName) {
+function getClubPattern(clubName) {
   const k = clubKey(clubName);
-  return (k && CLUB_THEMES[k]) || DEFAULT_CLUB_THEME;
+  return (k && CLUB_PATTERNS[k]) || 'none';
 }
 
-// Mix a hex color toward white — derives the light icon-panel tint and the
-// soft divider shade from the club primary so the palette stays coherent.
-function tint(hex, ratio) {
-  const n = parseInt(hex.slice(1), 16);
-  const mix = c => Math.round(c + (255 - c) * ratio);
-  return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
+// Draw one club pattern in the vertical stripe (x, y, w, h). The caller has
+// already clipped to the badge's rounded corners. `ink` is black on normal
+// labels and white on inverted step-up labels — never a mid-tone.
+function drawClubStripe(ctx, pattern, x, y, w, h, ink) {
+  ctx.save();
+  ctx.fillStyle = ink;
+  ctx.strokeStyle = ink;
+  switch (pattern) {
+    case 'solid':
+      ctx.fillRect(x, y, w, h);
+      break;
+    case 'dots': {
+      const r = w * 0.28;
+      for (let cy = y + 7; cy <= y + h - 5; cy += 11) {
+        ctx.beginPath();
+        ctx.arc(x + w / 2, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'zigzag': {
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + w - 1.5, y + 2);
+      let left = true;
+      for (let cy = y + 9; cy <= y + h; cy += 7) {
+        ctx.lineTo(left ? x + 1.5 : x + w - 1.5, cy);
+        left = !left;
+      }
+      ctx.stroke();
+      break;
+    }
+    case 'rungs':
+      for (let cy = y + 4; cy <= y + h - 3; cy += 9) {
+        ctx.fillRect(x, cy, w, 3);
+      }
+      break;
+    case 'hatch': {
+      ctx.lineWidth = 2;
+      for (let cy = y; cy <= y + h + w; cy += 8) {
+        ctx.beginPath();
+        ctx.moveTo(x, cy);
+        ctx.lineTo(x + w, cy - w);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'chevrons': {
+      ctx.lineWidth = 2;
+      for (let cy = y + 9; cy <= y + h - 2; cy += 10) {
+        ctx.beginPath();
+        ctx.moveTo(x + 1, cy);
+        ctx.lineTo(x + w / 2, cy - 5);
+        ctx.lineTo(x + w - 1, cy);
+        ctx.stroke();
+      }
+      break;
+    }
+    // 'none' — unknown club, no stripe
+  }
+  ctx.restore();
 }
 
 // ── Club-specific font selection ──────────────────────────────────────────────
@@ -676,37 +724,39 @@ async function generateLabel(
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
   // and parents can spot graduating kids at a glance.
-  // Normal labels carry the club's accent palette: identity stripe, tinted
-  // icon panel, colored club name and separator, themed visitor pill.
-  const theme = getClubTheme(clubName);
+  // Both palettes are thermal-first: a 1-bit printer collapses everything to
+  // black or white, so every tone here is either near-black or near-white —
+  // no mid-grays that would dither into speckle.
   const COLOR = stepUp ? {
     bg: '#000000',
     name: '#ffffff',
     last: '#e5e7eb',
     club: '#cbd5e1',
     group: '#fbbf24',                // amber draws the eye on black
-    sep: '#52525b',
+    sep: '#e5e7eb',
     iconBg: '#1f2937',
     iconDivider: '#3f3f46',
     iconPlaceholder: '#d4d4d8',
     visitorBg: '#ffffff',
     visitorText: '#000000',
-    accent: '#fbbf24',               // stripe matches the amber callout
-    accent2: '#fbbf24'
+    stripe: '#ffffff',
+    chipBg: '#ffffff',
+    chipText: '#000000'
   } : {
     bg: '#ffffff',
     name: '#000000',
-    last: '#222222',
-    club: theme.primary,
-    group: '#666666',
-    sep: theme.primary,
-    iconBg: tint(theme.primary, 0.92),
-    iconDivider: tint(theme.primary, 0.55),
-    iconPlaceholder: tint(theme.primary, 0.4),
-    visitorBg: theme.primary,
+    last: '#111111',
+    club: '#000000',
+    group: '#333333',
+    sep: '#333333',
+    iconBg: '#f4f4f4',
+    iconDivider: '#bbbbbb',
+    iconPlaceholder: '#888888',
+    visitorBg: '#000000',
     visitorText: '#ffffff',
-    accent: theme.primary,
-    accent2: theme.secondary
+    stripe: '#000000',
+    chipBg: '#000000',
+    chipText: '#ffffff'
   };
 
   const pngPath = tmpFilePath('awana', 'png');
@@ -773,17 +823,19 @@ async function generateLabel(
   }
 
   // ── Club identity stripe ──────────────────────────────────────────────────
-  // Two-tone bar hugging the left edge in the club's official colors — the
-  // fastest "which club is this kid in" cue when sorting at the door.
-  // Drawn after the icon panel so it sits on top of the panel tint.
-  ctx.save();
-  roundedRect(ctx, BX, BY, BW, BH, CORNER);
-  ctx.clip();
-  ctx.fillStyle = COLOR.accent;
-  ctx.fillRect(BX, BY, STRIPE_W, BH * 0.62);
-  ctx.fillStyle = COLOR.accent2;
-  ctx.fillRect(BX, BY + BH * 0.62, STRIPE_W, BH * 0.38);
-  ctx.restore();
+  // Per-club pattern in solid ink, hugging the left edge — the fastest
+  // "which club is this kid in" cue when sorting at the door, and it stays
+  // crisp on a 1-bit thermal printer where hues would all flatten to gray:
+  // dots = Puggles, solid = Cubbies, zigzag = Sparks, rungs = T&T,
+  // hatch = Trek, chevrons = Journey.
+  const stripePattern = getClubPattern(clubName);
+  if (stripePattern !== 'none') {
+    ctx.save();
+    roundedRect(ctx, BX, BY, BW, BH, CORNER);
+    ctx.clip();
+    drawClubStripe(ctx, stripePattern, BX, BY, STRIPE_W, BH, COLOR.stripe);
+    ctx.restore();
+  }
 
   // ── Text area ─────────────────────────────────────────────────────────────
   // On step-up labels, the handbook group line is replaced with the
@@ -845,16 +897,13 @@ async function generateLabel(
   // ── Club name with separator ──────────────────────────────────────────────
   if (hasClub) {
     y += 4;
-    // Separator fades from primary to secondary club color, echoing the stripe
+    // Solid 1pt rule — gradients dither to noise on thermal output
     const sepMargin = textW * 0.1;
-    const sepGrad = ctx.createLinearGradient(textX + sepMargin, 0, textX + textW - sepMargin, 0);
-    sepGrad.addColorStop(0, COLOR.accent);
-    sepGrad.addColorStop(1, COLOR.accent2);
     ctx.beginPath();
     ctx.moveTo(textX + sepMargin, y + 0.5);
     ctx.lineTo(textX + textW - sepMargin, y + 0.5);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = sepGrad;
+    ctx.strokeStyle = COLOR.sep;
     ctx.stroke();
     y += 5;
     const clubFont = `italic bold ${fs3}px ${fontFamily}`;
@@ -902,46 +951,67 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
-  // ── Bottom-right icon row: 🍰 birthday (larger) + allergy emojis ─────────
+  // ── Bottom-right row: coin shares · cake birthday · allergy chips ─────────
+  // Allergies are safety-critical: tiny grayscale emojis turn to mud on a
+  // monochrome thermal printer, so allergens print as solid-ink chips with
+  // bold inverted text (e.g. [NUTS] [DAIRY]) — unmissable at a glance.
   if (hasAllergy || isBirthday || awanaShares != null) {
-    const ALLERGY_EMOJI_SIZE = 16;
-    const BDAY_EMOJI_SIZE    = 26;
-    const EMOJI_FONT_STACK   = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    const EMOJI_SIZE      = 16;
+    const BDAY_EMOJI_SIZE = 26;
+    const EMOJI_FONT_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    const CHIP_FONT   = 'bold 8px Arial, sans-serif';
+    const CHIP_PAD_X  = 3;
+    const CHIP_H      = 12;
     const PAD     = 6;
-    const SPACING = 2;
+    const SPACING = 3;
 
-    // Build ordered glyph list, leftmost first:
-    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy emojis
-    const glyphs = [];
+    // Build ordered item list, leftmost first:
+    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy chips
+    const items = [];
     if (awanaShares != null) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
-      glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: ALLERGY_EMOJI_SIZE });
+      items.push({ kind: 'emoji', ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
     }
     if (isBirthday) {
-      glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      items.push({ kind: 'emoji', ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
     }
     allergyTokens.forEach(function(t) {
-      glyphs.push({ ch: ALLERGY_EMOJI[t] || t.charAt(0), size: ALLERGY_EMOJI_SIZE });
+      items.push({ kind: 'chip', text: t });
     });
 
-    // Measure each glyph under its own font so we can right-anchor the row.
+    // Measure each item under its own font so we can right-anchor the row.
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     let totalW = 0;
-    glyphs.forEach(function(g, i) {
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
-      g.w = ctx.measureText(g.ch).width;
-      totalW += g.w;
-      if (i < glyphs.length - 1) totalW += SPACING;
+    items.forEach(function(it, i) {
+      if (it.kind === 'emoji') {
+        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
+        it.w = ctx.measureText(it.ch).width;
+      } else {
+        ctx.font = CHIP_FONT;
+        it.w = ctx.measureText(it.text).width + CHIP_PAD_X * 2;
+      }
+      totalW += it.w;
+      if (i < items.length - 1) totalW += SPACING;
     });
 
     let ex = BX + BW - PAD - totalW;
-    const ey = BY + BH - PAD;  // baseline anchored to bottom padding line
-    glyphs.forEach(function(g) {
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
-      ctx.fillText(g.ch, ex, ey);
-      ex += g.w + SPACING;
+    const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
+    items.forEach(function(it) {
+      if (it.kind === 'emoji') {
+        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
+        ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
+        ctx.fillText(it.ch, ex, ey);
+      } else {
+        ctx.fillStyle = COLOR.chipBg;
+        roundedRect(ctx, ex, ey - CHIP_H + 2, it.w, CHIP_H, 3);
+        ctx.fill();
+        ctx.font = CHIP_FONT;
+        ctx.fillStyle = COLOR.chipText;
+        ctx.fillText(it.text, ex + CHIP_PAD_X, ey - 2);
+      }
+      ex += it.w + SPACING;
     });
 
     // Reset text state for any subsequent drawing

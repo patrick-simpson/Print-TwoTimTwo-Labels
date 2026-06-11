@@ -168,22 +168,24 @@ export const PrintServerInfo: React.FC = () => {
           Per-club label design
         </h3>
         <p className="text-sm text-gray-500 mb-3">
-          Every label is styled in its club's official colors — a two-tone identity stripe on the
-          left edge, the club name printed in club color, and a matching font personality — so
-          volunteers can tell clubs apart at arm's length.
+          Labels are designed for monochrome thermal printers — solid black ink only, no colors
+          or grays that dither into noise. Each club gets its own identity pattern on the left
+          edge of the label plus a matching font personality, so volunteers can tell clubs apart
+          at arm's length.
         </p>
         <div className="flex flex-wrap gap-2 text-xs">
           {([
-            ['Puggles', '#5DA53C', '#00A79D'],
-            ['Cubbies', '#0094D4', '#FDB813'],
-            ['Sparks',  '#DA291C', '#FDB813'],
-            ['T&T',     '#00843D', '#231F20'],
-            ['Trek',    '#E87722', '#414042'],
-            ['Journey', '#1D5DA8', '#414042'],
-          ] as [string, string, string][]).map(([club, c1, c2]) => (
+            ['Puggles', 'dots',     '⠿'],
+            ['Cubbies', 'solid bar', '▮'],
+            ['Sparks',  'zigzag',   '〿'],
+            ['T&T',     'rungs',    '☰'],
+            ['Trek',    'hatch',    '⫽'],
+            ['Journey', 'chevrons', '⌃'],
+          ] as [string, string, string][]).map(([club, pattern, glyph]) => (
             <span key={club} className="inline-flex items-center gap-1.5 border border-gray-200 rounded px-2 py-1 bg-white">
-              <span className="w-2 h-4 rounded-sm" style={{ background: `linear-gradient(${c1} 60%, ${c2} 60%)` }}></span>
+              <span className="font-mono text-gray-900">{glyph}</span>
               <span className="font-semibold text-gray-700">{club}</span>
+              <span className="text-gray-400">{pattern}</span>
             </span>
           ))}
         </div>
@@ -206,8 +208,8 @@ export const PrintServerInfo: React.FC = () => {
           <div className="bg-red-50 border border-red-200 rounded p-2 flex items-start gap-2">
             <i className="fa fa-exclamation-triangle text-red-500 mt-0.5 flex-shrink-0"></i>
             <div>
-              <strong className="text-red-700 block mb-0.5">Allergy strip</strong>
-              <span className="text-gray-600">Red bar at bottom of label — NUTS, DAIRY, GLUTEN, EGG, SHELLFISH detected automatically</span>
+              <strong className="text-red-700 block mb-0.5">Allergy chips</strong>
+              <span className="text-gray-600">Bold black chips in the bottom-right corner — NUTS, DAIRY, GLUTEN, EGG, DYE detected automatically</span>
             </div>
           </div>
           <div className="bg-yellow-50 border border-yellow-200 rounded p-2 flex items-start gap-2">
