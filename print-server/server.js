@@ -273,7 +273,13 @@ function loadClubbers() {
     } else {
       console.warn('[csv] Failed to read/parse clubbers.csv:', e.message);
     }
-    return [];
+    // Last-known-good fallback: a transient read failure mid-event must not
+    // wipe the in-memory roster — that would silently downgrade every label
+    // to "basic" (no allergies, no groups) until the file becomes readable.
+    if (clubbers.length > 0) {
+      console.warn(`[csv] Keeping last good roster in memory (${clubbers.length} clubber(s))`);
+    }
+    return clubbers;
   }
 }
 
@@ -480,6 +486,35 @@ function parseAllergies(allergiesStr) {
 // Returns text trimmed and suffixed with '…' if it exceeds maxWidth at the
 // given font/size. Prevents pdfkit text from printing off the edge of the label.
 
+// ── Unique temp file path ─────────────────────────────────────────────────────
+// Date.now() alone can collide when two prints land in the same millisecond
+// (double-tap on the check-in screen) — one request would then delete the
+// other's file mid-print. A random suffix makes names collision-proof.
+function tmpFilePath(prefix, ext) {
+  return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
+}
+
+// ── Orphaned temp file sweep ──────────────────────────────────────────────────
+// If a previous run crashed between writing a temp PNG/PS1 and unlinking it,
+// the file stays behind forever. Sweep anything matching our prefixes that is
+// older than an hour (never touches files a live request might still need).
+// Runs once at startup; never throws.
+function sweepOrphanedTempFiles() {
+  try {
+    const dir = os.tmpdir();
+    const cutoff = Date.now() - 3600000;
+    let removed = 0;
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^awana-(print-)?\d+.*\.(png|ps1)$/.test(f)) continue;
+      const full = path.join(dir, f);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+      } catch { /* vanished or locked — skip */ }
+    }
+    if (removed) console.log(`[cleanup] Removed ${removed} orphaned temp file(s) from previous runs`);
+  } catch { /* tmpdir unreadable — non-critical */ }
+}
+
 // ── Download a remote image into a Buffer ─────────────────────────────────────
 function downloadImage(url) {
   return new Promise((resolve, reject) => {
@@ -495,6 +530,13 @@ function downloadImage(url) {
   });
 }
 
+// ── Club icon cache ───────────────────────────────────────────────────────────
+// Remote club logos are downloaded once per URL and kept in memory, so every
+// print doesn't re-fetch the same PNG and a mid-event network blip doesn't
+// cost the label its icon. Bounded so a misbehaving client can't grow it.
+const iconCache = new Map();  // url → Buffer
+const ICON_CACHE_MAX = 20;
+
 // ── Resolve clubImageData → Buffer (or null) ──────────────────────────────────
 async function resolveImageBuffer(clubImageData) {
   if (!clubImageData) return null;
@@ -505,12 +547,56 @@ async function resolveImageBuffer(clubImageData) {
       return Buffer.from(b64, 'base64');
     }
     if (/^https?:\/\//.test(clubImageData)) {
-      return await downloadImage(clubImageData);
+      if (iconCache.has(clubImageData)) return iconCache.get(clubImageData);
+      // One retry — venue Wi-Fi hiccups are routine, a second attempt 400ms
+      // later usually succeeds and the result is cached for the whole event.
+      let buf;
+      try {
+        buf = await downloadImage(clubImageData);
+      } catch (firstErr) {
+        await new Promise(r => setTimeout(r, 400));
+        buf = await downloadImage(clubImageData);
+      }
+      if (iconCache.size >= ICON_CACHE_MAX) {
+        iconCache.delete(iconCache.keys().next().value);  // evict oldest entry
+      }
+      iconCache.set(clubImageData, buf);
+      return buf;
     }
   } catch (e) {
     console.log(`[icon] Could not load club image: ${e.message}`);
   }
   return null;
+}
+
+// ── Per-club design system ────────────────────────────────────────────────────
+// Each Awana club gets its own accent palette (official club colors) in
+// addition to its font personality below. Accents drive the left identity
+// stripe, the icon panel tint, the club-name color, and the visitor pill —
+// so volunteers can tell clubs apart at arm's length. All primaries are
+// mid-dark tones that stay legible if a monochrome printer flattens them
+// to gray.
+const CLUB_THEMES = {
+  puggle:  { primary: '#5DA53C', secondary: '#00A79D' },  // leaf green / teal
+  cubbie:  { primary: '#0094D4', secondary: '#FDB813' },  // sky blue / honey yellow
+  spark:   { primary: '#DA291C', secondary: '#FDB813' },  // flame red / spark yellow
+  't&t':   { primary: '#00843D', secondary: '#231F20' },  // T&T green / black
+  trek:    { primary: '#E87722', secondary: '#414042' },  // trek orange / charcoal
+  journey: { primary: '#1D5DA8', secondary: '#414042' },  // journey blue / charcoal
+};
+const DEFAULT_CLUB_THEME = { primary: '#444444', secondary: '#888888' };
+
+function getClubTheme(clubName) {
+  const k = clubKey(clubName);
+  return (k && CLUB_THEMES[k]) || DEFAULT_CLUB_THEME;
+}
+
+// Mix a hex color toward white — derives the light icon-panel tint and the
+// soft divider shade from the club primary so the palette stays coherent.
+function tint(hex, ratio) {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = c => Math.round(c + (255 - c) * ratio);
+  return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
 }
 
 // ── Club-specific font selection ──────────────────────────────────────────────
@@ -590,6 +676,9 @@ async function generateLabel(
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
   // and parents can spot graduating kids at a glance.
+  // Normal labels carry the club's accent palette: identity stripe, tinted
+  // icon panel, colored club name and separator, themed visitor pill.
+  const theme = getClubTheme(clubName);
   const COLOR = stepUp ? {
     bg: '#000000',
     name: '#ffffff',
@@ -601,22 +690,26 @@ async function generateLabel(
     iconDivider: '#3f3f46',
     iconPlaceholder: '#d4d4d8',
     visitorBg: '#ffffff',
-    visitorText: '#000000'
+    visitorText: '#000000',
+    accent: '#fbbf24',               // stripe matches the amber callout
+    accent2: '#fbbf24'
   } : {
     bg: '#ffffff',
     name: '#000000',
     last: '#222222',
-    club: '#444444',
+    club: theme.primary,
     group: '#666666',
-    sep: '#cccccc',
-    iconBg: '#f4f4f4',
-    iconDivider: '#d0d0d0',
-    iconPlaceholder: '#aaaaaa',
-    visitorBg: '#000000',
-    visitorText: '#ffffff'
+    sep: theme.primary,
+    iconBg: tint(theme.primary, 0.92),
+    iconDivider: tint(theme.primary, 0.55),
+    iconPlaceholder: tint(theme.primary, 0.4),
+    visitorBg: theme.primary,
+    visitorText: '#ffffff',
+    accent: theme.primary,
+    accent2: theme.secondary
   };
 
-  const pngPath = path.join(os.tmpdir(), `awana-${Date.now()}.png`);
+  const pngPath = tmpFilePath('awana', 'png');
 
   const canvas = createCanvas(PX_W, PX_H);
   const ctx = canvas.getContext('2d');
@@ -630,9 +723,10 @@ async function generateLabel(
 
   // On step-up labels, drop the club icon entirely — the kid is leaving
   // that club, and the wider text area makes the message more obvious.
+  const STRIPE_W = 7;
   const hasIcon = !stepUp && !!clubImageBuffer;
-  const textX   = hasIcon ? TEXT_X : BX + 8;
-  const textW   = hasIcon ? TEXT_W : BW - 16;
+  const textX   = hasIcon ? TEXT_X : BX + STRIPE_W + 6;
+  const textW   = hasIcon ? TEXT_W : BW - STRIPE_W - 14;
 
   // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
@@ -677,6 +771,19 @@ async function generateLabel(
       ctx.stroke();
     }
   }
+
+  // ── Club identity stripe ──────────────────────────────────────────────────
+  // Two-tone bar hugging the left edge in the club's official colors — the
+  // fastest "which club is this kid in" cue when sorting at the door.
+  // Drawn after the icon panel so it sits on top of the panel tint.
+  ctx.save();
+  roundedRect(ctx, BX, BY, BW, BH, CORNER);
+  ctx.clip();
+  ctx.fillStyle = COLOR.accent;
+  ctx.fillRect(BX, BY, STRIPE_W, BH * 0.62);
+  ctx.fillStyle = COLOR.accent2;
+  ctx.fillRect(BX, BY + BH * 0.62, STRIPE_W, BH * 0.38);
+  ctx.restore();
 
   // ── Text area ─────────────────────────────────────────────────────────────
   // On step-up labels, the handbook group line is replaced with the
@@ -738,15 +845,19 @@ async function generateLabel(
   // ── Club name with separator ──────────────────────────────────────────────
   if (hasClub) {
     y += 4;
+    // Separator fades from primary to secondary club color, echoing the stripe
     const sepMargin = textW * 0.1;
+    const sepGrad = ctx.createLinearGradient(textX + sepMargin, 0, textX + textW - sepMargin, 0);
+    sepGrad.addColorStop(0, COLOR.accent);
+    sepGrad.addColorStop(1, COLOR.accent2);
     ctx.beginPath();
     ctx.moveTo(textX + sepMargin, y + 0.5);
     ctx.lineTo(textX + textW - sepMargin, y + 0.5);
-    ctx.lineWidth = 0.5;
-    ctx.strokeStyle = COLOR.sep;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = sepGrad;
     ctx.stroke();
     y += 5;
-    const clubFont = `italic ${fs3}px ${fontFamily}`;
+    const clubFont = `italic bold ${fs3}px ${fontFamily}`;
     ctx.font = clubFont;
     const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
     ctx.fillStyle = COLOR.club;
@@ -873,15 +984,32 @@ $pd.Print()
 $pd.Dispose()
 `.trim();
 
-  const psPath = path.join(os.tmpdir(), `awana-print-${Date.now()}.ps1`);
+  const psPath = tmpFilePath('awana-print', 'ps1');
   try {
     fs.writeFileSync(psPath, ps, 'utf8');
-    const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
-      timeout: 15000,
-      windowsHide: true,
-      encoding: 'utf8'
-    });
-    if (result) console.log('[print] PowerShell:', result.trim());
+    // One retry on failure: transient spooler errors (printer waking from
+    // sleep, USB renegotiation) routinely succeed on a second attempt. The
+    // child must not be sent away label-less over a hiccup.
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+          timeout: 15000,
+          windowsHide: true,
+          encoding: 'utf8'
+        });
+        if (result) console.log('[print] PowerShell:', result.trim());
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 2) {
+          console.warn(`[print] Attempt ${attempt} failed (${e.message.split('\n')[0]}) — retrying in 750ms`);
+          // Synchronous wait keeps the existing blocking print contract
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
+        }
+      }
+    }
+    throw lastErr;
   } finally {
     fs.unlink(psPath, () => {});
   }
@@ -960,14 +1088,19 @@ app.post('/update-csv', (req, res) => {
     return res.status(400).json({ error: 'csv field is required (string)' });
   }
   const csvPath = path.join(__dirname, 'clubbers.csv');
+  const tmpPath = csvPath + '.tmp';
   try {
-    fs.writeFileSync(csvPath, csv, 'utf8');
+    // Atomic write: write to a temp file then rename over the target, so a
+    // crash or concurrent reader mid-write can never observe a truncated CSV.
+    fs.writeFileSync(tmpPath, csv, 'utf8');
+    fs.renameSync(tmpPath, csvPath);
     const rows = parseCSV(csv);
     clubbers = rows;
     console.log(`[csv] Updated clubbers.csv from browser (${rows.length} clubber(s))`);
     res.json({ ok: true, count: rows.length });
   } catch (e) {
     console.error('[csv] Failed to write clubbers.csv:', e.message);
+    fs.unlink(tmpPath, () => {});
     res.status(500).json({ error: 'Failed to write CSV' });
   }
 });
@@ -1160,7 +1293,11 @@ function loadHistory() {
 
 function saveHistory(entries) {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(entries, null, 2), 'utf8');
+    // Atomic write — a crash mid-save must not corrupt the history JSON,
+    // which would break /history and reprints until manually deleted.
+    const tmpPath = HISTORY_FILE + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(entries, null, 2), 'utf8');
+    fs.renameSync(tmpPath, HISTORY_FILE);
   } catch (e) {
     console.warn('[history] Failed to save print history:', e.message);
   }
@@ -1464,16 +1601,49 @@ app.get('/diagnostics', async (req, res) => {
   res.json(results);
 });
 
+// ── Error handling middleware ─────────────────────────────────────────────────
+// Registered after all routes. Malformed JSON bodies used to surface as the
+// default Express HTML stack trace; return clean JSON the clients can parse.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.parse.failed' || err.type === 'entity.too.large')) {
+    return res.status(400).json({ error: 'Invalid or oversized JSON body' });
+  }
+  console.error('[http] Unhandled route error:', err && err.message);
+  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+});
+
 // ── Start up ──────────────────────────────────────────────────────────────────
+// Clean up any temp files a crashed previous run left behind
+sweepOrphanedTempFiles();
+
 // Load clubbers before accepting requests so the first print has data ready
 clubbers = loadClubbers();
 
-app.listen(PORT, () => {
-  console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
-  console.log(`  Dashboard : http://localhost:${PORT}/`);
-  console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
-  console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
-});
+// Bind the port with retry: during updates, install-and-run.ps1 (or a
+// just-killed previous instance) can hold port 3456 for a few seconds.
+// Previously an EADDRINUSE here killed the process with no usable message.
+const LISTEN_MAX_ATTEMPTS = 5;
+function startListening(attempt = 1) {
+  const server = app.listen(PORT, () => {
+    console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
+    console.log(`  Dashboard : http://localhost:${PORT}/`);
+    console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
+    console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && attempt < LISTEN_MAX_ATTEMPTS) {
+      const delay = 2000 * attempt;
+      console.warn(`[startup] Port ${PORT} is in use — retrying in ${delay / 1000}s (attempt ${attempt}/${LISTEN_MAX_ATTEMPTS})`);
+      setTimeout(() => startListening(attempt + 1), delay);
+    } else if (err.code === 'EADDRINUSE') {
+      console.error(`[startup] Port ${PORT} is still in use after ${LISTEN_MAX_ATTEMPTS} attempts.`);
+      console.error('[startup] Another print server is likely running — close it and restart, or reboot the machine.');
+    } else {
+      console.error('[startup] Server error:', err.message);
+    }
+  });
+}
+startListening();
 
 // Check for updates on startup and periodically
 checkForUpdates();

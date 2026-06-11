@@ -1,4 +1,33 @@
-﻿## [3.6.2] - 2026-05-05
+﻿## [3.7.0] - 2026-06-11
+Feature: per-club label design system (official Awana club colors) + a broad reliability hardening pass on the print server.
+
+### Why
+All clubs printed visually identical labels — only the font differed — so volunteers sorting kids at the door had to read the small club line on every label. And several long-standing reliability gaps could degrade or kill the server mid-event: a port collision during update killed the process silently, a locked CSV wiped enrichment data for the rest of the night, and a single spooler hiccup sent a child away without a label.
+
+### Per-club design (print-server/server.js)
+Each club now has an accent palette in `CLUB_THEMES`, alongside its existing font personality:
+- **Puggles** leaf green / teal · **Cubbies** sky blue / yellow · **Sparks** flame red / yellow · **T&T** green / black · **Trek** orange / charcoal · **Journey** blue / charcoal
+- New club identity stripe: a two-tone color bar on the left edge of every label — the at-a-glance "which club" cue.
+- Icon panel background and divider are now a light tint of the club primary (derived via a `tint()` helper, no second hardcoded palette).
+- Club name prints bold italic in the club primary; the separator rule is a primary→secondary gradient.
+- Visitor pill now uses the club primary instead of plain black.
+- Step-up labels are unchanged (black/amber) except the stripe, which matches the amber callout. All primaries are mid-dark so monochrome thermal printers flatten them to legible grays.
+
+### Reliability (print-server/server.js)
+- **Port bind retry:** `EADDRINUSE` on startup now retries 5× with backoff (the installer can hold port 3456 for a few seconds during updates) and prints an actionable message instead of dying silently.
+- **Last-known-good roster:** if `clubbers.csv` becomes unreadable mid-event (EBUSY/deleted/corrupt), the server keeps serving the previous in-memory roster instead of wiping it — labels keep their allergies and groups.
+- **Print retry:** one automatic retry (750 ms) on PowerShell print failure — transient spooler errors (printer waking, USB renegotiation) routinely succeed on the second attempt.
+- **Atomic writes:** `clubbers.csv` (from /update-csv) and `print-history.json` are written to a temp file and renamed, so a crash mid-write can never leave a truncated file.
+- **Club icon cache:** remote club logos are downloaded once (with one retry) and cached in memory, so a Wi-Fi blip no longer costs the label its icon.
+- **Collision-proof temp files:** temp PNG/PS1 names now include a random suffix — two prints in the same millisecond no longer delete each other's files.
+- **Orphan sweep:** leftover `awana-*.png`/`awana-print-*.ps1` files older than 1 h are removed at startup.
+- **Clean JSON errors:** malformed request bodies return `400 {"error": ...}` instead of the default Express HTML stack trace.
+
+### Behavior change
+- **Before:** all labels white with gray text; server died silently on port conflict; locked CSV = basic labels for the rest of the night; one spooler error = no label.
+- **After:** each club's label carries its official colors; the server survives port conflicts, CSV lock-outs, spooler hiccups, and network blips without losing a print.
+
+## [3.6.2] - 2026-05-05
 Fix: birthday cake emoji now displays during the calendar week containing the birthday, not for any birthday within the next 7 days.
 
 ### Why

@@ -161,6 +161,34 @@ export const PrintServerInfo: React.FC = () => {
 
       </ol>
 
+      {/* ── Per-club label design ─────────────────────────────────────────── */}
+      <div className="mt-8 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-bold text-gray-700 mb-1 flex items-center gap-2">
+          <i className="fa fa-paint-brush text-purple-500"></i>
+          Per-club label design
+        </h3>
+        <p className="text-sm text-gray-500 mb-3">
+          Every label is styled in its club's official colors — a two-tone identity stripe on the
+          left edge, the club name printed in club color, and a matching font personality — so
+          volunteers can tell clubs apart at arm's length.
+        </p>
+        <div className="flex flex-wrap gap-2 text-xs">
+          {([
+            ['Puggles', '#5DA53C', '#00A79D'],
+            ['Cubbies', '#0094D4', '#FDB813'],
+            ['Sparks',  '#DA291C', '#FDB813'],
+            ['T&T',     '#00843D', '#231F20'],
+            ['Trek',    '#E87722', '#414042'],
+            ['Journey', '#1D5DA8', '#414042'],
+          ] as [string, string, string][]).map(([club, c1, c2]) => (
+            <span key={club} className="inline-flex items-center gap-1.5 border border-gray-200 rounded px-2 py-1 bg-white">
+              <span className="w-2 h-4 rounded-sm" style={{ background: `linear-gradient(${c1} 60%, ${c2} 60%)` }}></span>
+              <span className="font-semibold text-gray-700">{club}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
       {/* ── Optional: CSV enrichment ──────────────────────────────────────── */}
       <div className="mt-8 border-t border-gray-200 pt-6">
         <h3 className="text-base font-bold text-gray-700 mb-1 flex items-center gap-2">
