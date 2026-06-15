@@ -1,4 +1,71 @@
-﻿## [3.6.2] - 2026-05-05
+﻿## [3.7.2] - 2026-06-11
+Club logos guaranteed: monogram badge fallback when the client doesn't supply a logo image.
+
+### Why
+The icon panel only rendered when the browser extension successfully scraped the club logo `<img>` from the check-in page and POSTed it as `clubImageData`. If the page layout changed, the image failed to load, or a caller hit the API without an image, the label silently lost its entire icon zone. Club identity on the label shouldn't depend on client-side scraping succeeding.
+
+### Fix (print-server/server.js)
+- New `CLUB_MONOGRAM` map (P, C, S, T&T, TR, J — TR so Trek can't be confused with T&T).
+- The icon panel now always renders for any recognized club: the real logo when `clubImageData` is supplied (unchanged), otherwise a solid-ink monogram badge drawn in the club's own font — crisp on 1-bit thermal output, where the old "decode failed" gray placeholder circle would just dither away.
+- A failed logo decode also falls back to the monogram badge instead of the placeholder circle.
+- The club-name text line is now hidden only when a *real logo* is shown (a logo self-identifies the club); monogram labels keep the printed club name since initials alone are ambiguous to new volunteers.
+
+### Behavior change
+- **Before:** no `clubImageData` → no icon panel at all; failed decode → empty gray circle.
+- **After:** recognized club always gets an icon — real logo preferred, monogram badge otherwise. Unknown club names without an image keep the previous full-width text layout.
+
+## [3.7.1] - 2026-06-11
+Rework the 3.7.0 per-club design for monochrome thermal printers; harden allergy visibility; fix birthday-cake week bug.
+
+### Why
+The 3.7.0 design used official Awana club hues, but the target printer is a 1-bit thermal printer: mid-tone colors dither into mushy, indistinguishable grays. The colored stripe lost its "which club" value, the colored club name and visitor pill *lost* contrast, and the existing tiny allergy emojis were already marginal in grayscale — unacceptable for safety-critical information.
+
+### Per-club design, thermal-first (print-server/server.js)
+- `CLUB_THEMES` color palettes replaced with `CLUB_PATTERNS`: each club's identity stripe is now a distinct solid-ink pattern that stays crisp at 300 dpi in pure black and white — **Puggles** dots · **Cubbies** solid bar · **Sparks** zigzag · **T&T** ladder rungs · **Trek** diagonal hatch · **Journey** chevrons. Unknown clubs print no stripe.
+- All label text back to full-contrast near-black (club name bold italic black, group #333); separator is a solid 1 pt rule (gradients dither to noise); visitor pill back to black/white; icon panel back to neutral light gray. Step-up labels keep black/amber, stripe pattern drawn in white ink.
+- **Allergy chips:** allergens now print as solid-black rounded chips with bold white text (e.g. [NUTS] [DAIRY]) in the bottom-right corner instead of 16 pt emojis — unmissable on thermal output. Cake 🍰 and share-coin glyphs unchanged. Unused `ALLERGY_EMOJI` map removed.
+- Verified end-to-end with a test roster (allergies, handbook groups, birthday) and a 1-bit threshold simulation of thermal output: all six patterns distinguishable, chips and groups fully legible.
+
+### Bug fix: birthday cake disappeared after the birthday passed
+`isBirthdayWeek()` rolled an already-passed birthday forward to *next year* before the ISO-week comparison, so the cake vanished the day after the birthday — contradicting the 3.6.2 documented behavior ("the whole calendar week containing the birthday"). Now the birthday is tested in both the current and next calendar year against today's ISO week, which restores the full-week behavior and still handles the Dec→Jan ISO-week wrap.
+
+### Website
+"Per-club label design" section rewritten for the pattern system; allergy tile corrected ("Bold black chips… NUTS, DAIRY, GLUTEN, EGG, DYE" — the old text described a removed red bar and a SHELLFISH token that never existed in the parser).
+
+### Behavior change
+- **Before (3.7.0):** colored stripes/club names that flatten to similar grays on thermal; allergy emojis hard to read; cake only until the birthday itself.
+- **After:** black pattern stripes distinguishable in pure 1-bit output; bold inverted allergy chips; cake for the entire calendar week containing the birthday.
+
+## [3.7.0] - 2026-06-11
+Feature: per-club label design system (official Awana club colors) + a broad reliability hardening pass on the print server.
+
+### Why
+All clubs printed visually identical labels — only the font differed — so volunteers sorting kids at the door had to read the small club line on every label. And several long-standing reliability gaps could degrade or kill the server mid-event: a port collision during update killed the process silently, a locked CSV wiped enrichment data for the rest of the night, and a single spooler hiccup sent a child away without a label.
+
+### Per-club design (print-server/server.js)
+Each club now has an accent palette in `CLUB_THEMES`, alongside its existing font personality:
+- **Puggles** leaf green / teal · **Cubbies** sky blue / yellow · **Sparks** flame red / yellow · **T&T** green / black · **Trek** orange / charcoal · **Journey** blue / charcoal
+- New club identity stripe: a two-tone color bar on the left edge of every label — the at-a-glance "which club" cue.
+- Icon panel background and divider are now a light tint of the club primary (derived via a `tint()` helper, no second hardcoded palette).
+- Club name prints bold italic in the club primary; the separator rule is a primary→secondary gradient.
+- Visitor pill now uses the club primary instead of plain black.
+- Step-up labels are unchanged (black/amber) except the stripe, which matches the amber callout. All primaries are mid-dark so monochrome thermal printers flatten them to legible grays.
+
+### Reliability (print-server/server.js)
+- **Port bind retry:** `EADDRINUSE` on startup now retries 5× with backoff (the installer can hold port 3456 for a few seconds during updates) and prints an actionable message instead of dying silently.
+- **Last-known-good roster:** if `clubbers.csv` becomes unreadable mid-event (EBUSY/deleted/corrupt), the server keeps serving the previous in-memory roster instead of wiping it — labels keep their allergies and groups.
+- **Print retry:** one automatic retry (750 ms) on PowerShell print failure — transient spooler errors (printer waking, USB renegotiation) routinely succeed on the second attempt.
+- **Atomic writes:** `clubbers.csv` (from /update-csv) and `print-history.json` are written to a temp file and renamed, so a crash mid-write can never leave a truncated file.
+- **Club icon cache:** remote club logos are downloaded once (with one retry) and cached in memory, so a Wi-Fi blip no longer costs the label its icon.
+- **Collision-proof temp files:** temp PNG/PS1 names now include a random suffix — two prints in the same millisecond no longer delete each other's files.
+- **Orphan sweep:** leftover `awana-*.png`/`awana-print-*.ps1` files older than 1 h are removed at startup.
+- **Clean JSON errors:** malformed request bodies return `400 {"error": ...}` instead of the default Express HTML stack trace.
+
+### Behavior change
+- **Before:** all labels white with gray text; server died silently on port conflict; locked CSV = basic labels for the rest of the night; one spooler error = no label.
+- **After:** each club's label carries its official colors; the server survives port conflicts, CSV lock-outs, spooler hiccups, and network blips without losing a print.
+
+## [3.6.2] - 2026-05-05
 Fix: birthday cake emoji now displays during the calendar week containing the birthday, not for any birthday within the next 7 days.
 
 ### Why

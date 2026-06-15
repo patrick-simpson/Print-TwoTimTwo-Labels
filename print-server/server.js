@@ -126,13 +126,6 @@ const HEADER_MAP = {
   'home address':    'Address',
 };
 
-const ALLERGY_EMOJI = {
-  'NUTS':   '\uD83E\uDD5C',  // 🥜
-  'DAIRY':  '\uD83E\uDD5B',  // 🥛
-  'GLUTEN': '\uD83C\uDF3E',  // 🌾
-  'EGG':    '\uD83E\uDD5A',  // 🥚
-  'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
-};
 
 function normalizeHeader(raw) {
   const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').trim();
@@ -273,7 +266,13 @@ function loadClubbers() {
     } else {
       console.warn('[csv] Failed to read/parse clubbers.csv:', e.message);
     }
-    return [];
+    // Last-known-good fallback: a transient read failure mid-event must not
+    // wipe the in-memory roster — that would silently downgrade every label
+    // to "basic" (no allergies, no groups) until the file becomes readable.
+    if (clubbers.length > 0) {
+      console.warn(`[csv] Keeping last good roster in memory (${clubbers.length} clubber(s))`);
+    }
+    return clubbers;
   }
 }
 
@@ -433,14 +432,6 @@ function isBirthdayWeek(birthdateStr) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Build the birthday in the current calendar year
-    let next = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());
-
-    // year-wrap: if this year's birthday has already passed, look at next year
-    if (next < today) {
-      next = new Date(today.getFullYear() + 1, bday.getMonth(), bday.getDate());
-    }
-
     // Check if birthday is in the same ISO week as today
     const getWeekNumber = (date) => {
       const d = new Date(date);
@@ -452,9 +443,19 @@ function isBirthdayWeek(birthdateStr) {
     };
 
     const todayWeek = getWeekNumber(today);
-    const birthdayWeek = getWeekNumber(next);
 
-    return todayWeek.year === birthdayWeek.year && todayWeek.week === birthdayWeek.week;
+    // Test the birthday in both this calendar year and the next. The old
+    // code rolled an already-passed birthday forward a year before comparing,
+    // so the cake vanished the day after the birthday even though the
+    // documented behavior is "the whole calendar week containing it".
+    // Checking next year as well keeps the Dec→Jan ISO-week wrap working
+    // (e.g. today Dec 29 in ISO week 1, birthday Jan 2).
+    for (const yr of [today.getFullYear(), today.getFullYear() + 1]) {
+      const candidate = new Date(yr, bday.getMonth(), bday.getDate());
+      const w = getWeekNumber(candidate);
+      if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
+    }
+    return false;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
     return false;
@@ -480,6 +481,35 @@ function parseAllergies(allergiesStr) {
 // Returns text trimmed and suffixed with '…' if it exceeds maxWidth at the
 // given font/size. Prevents pdfkit text from printing off the edge of the label.
 
+// ── Unique temp file path ─────────────────────────────────────────────────────
+// Date.now() alone can collide when two prints land in the same millisecond
+// (double-tap on the check-in screen) — one request would then delete the
+// other's file mid-print. A random suffix makes names collision-proof.
+function tmpFilePath(prefix, ext) {
+  return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`);
+}
+
+// ── Orphaned temp file sweep ──────────────────────────────────────────────────
+// If a previous run crashed between writing a temp PNG/PS1 and unlinking it,
+// the file stays behind forever. Sweep anything matching our prefixes that is
+// older than an hour (never touches files a live request might still need).
+// Runs once at startup; never throws.
+function sweepOrphanedTempFiles() {
+  try {
+    const dir = os.tmpdir();
+    const cutoff = Date.now() - 3600000;
+    let removed = 0;
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^awana-(print-)?\d+.*\.(png|ps1)$/.test(f)) continue;
+      const full = path.join(dir, f);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) { fs.unlinkSync(full); removed++; }
+      } catch { /* vanished or locked — skip */ }
+    }
+    if (removed) console.log(`[cleanup] Removed ${removed} orphaned temp file(s) from previous runs`);
+  } catch { /* tmpdir unreadable — non-critical */ }
+}
+
 // ── Download a remote image into a Buffer ─────────────────────────────────────
 function downloadImage(url) {
   return new Promise((resolve, reject) => {
@@ -495,6 +525,13 @@ function downloadImage(url) {
   });
 }
 
+// ── Club icon cache ───────────────────────────────────────────────────────────
+// Remote club logos are downloaded once per URL and kept in memory, so every
+// print doesn't re-fetch the same PNG and a mid-event network blip doesn't
+// cost the label its icon. Bounded so a misbehaving client can't grow it.
+const iconCache = new Map();  // url → Buffer
+const ICON_CACHE_MAX = 20;
+
 // ── Resolve clubImageData → Buffer (or null) ──────────────────────────────────
 async function resolveImageBuffer(clubImageData) {
   if (!clubImageData) return null;
@@ -505,12 +542,122 @@ async function resolveImageBuffer(clubImageData) {
       return Buffer.from(b64, 'base64');
     }
     if (/^https?:\/\//.test(clubImageData)) {
-      return await downloadImage(clubImageData);
+      if (iconCache.has(clubImageData)) return iconCache.get(clubImageData);
+      // One retry — venue Wi-Fi hiccups are routine, a second attempt 400ms
+      // later usually succeeds and the result is cached for the whole event.
+      let buf;
+      try {
+        buf = await downloadImage(clubImageData);
+      } catch (firstErr) {
+        await new Promise(r => setTimeout(r, 400));
+        buf = await downloadImage(clubImageData);
+      }
+      if (iconCache.size >= ICON_CACHE_MAX) {
+        iconCache.delete(iconCache.keys().next().value);  // evict oldest entry
+      }
+      iconCache.set(clubImageData, buf);
+      return buf;
     }
   } catch (e) {
     console.log(`[icon] Could not load club image: ${e.message}`);
   }
   return null;
+}
+
+// ── Per-club design system ────────────────────────────────────────────────────
+// The target printer is a monochrome thermal printer: hues flatten to mushy,
+// dithered grays, so color can't carry club identity. Solid-black shapes at
+// 300 dpi stay crisp — each club therefore gets a distinct PATTERN drawn in
+// pure ink inside the left identity stripe, alongside its font personality
+// below. Patterns are distinguishable at arm's length without reading text.
+const CLUB_PATTERNS = {
+  puggle:  'dots',      // playful dots for the littlest kids
+  cubbie:  'solid',     // one solid bar
+  spark:   'zigzag',    // lightning bolt echoes the Sparky flame
+  't&t':   'rungs',     // ladder rungs — Truth & Training handbook steps
+  trek:    'hatch',     // diagonal trail hatching
+  journey: 'chevrons',  // upward chevrons
+};
+
+function getClubPattern(clubName) {
+  const k = clubKey(clubName);
+  return (k && CLUB_PATTERNS[k]) || 'none';
+}
+
+// Monogram fallback for the icon panel: when the client doesn't supply a
+// club logo (page layout changed, image failed to scrape), the label still
+// gets a club emblem — a solid badge with the club's monogram, drawn in the
+// club's font. TR (not T) for Trek so it can't be confused with T&T.
+const CLUB_MONOGRAM = {
+  puggle:  'P',
+  cubbie:  'C',
+  spark:   'S',
+  't&t':   'T&T',
+  trek:    'TR',
+  journey: 'J',
+};
+
+// Draw one club pattern in the vertical stripe (x, y, w, h). The caller has
+// already clipped to the badge's rounded corners. `ink` is black on normal
+// labels and white on inverted step-up labels — never a mid-tone.
+function drawClubStripe(ctx, pattern, x, y, w, h, ink) {
+  ctx.save();
+  ctx.fillStyle = ink;
+  ctx.strokeStyle = ink;
+  switch (pattern) {
+    case 'solid':
+      ctx.fillRect(x, y, w, h);
+      break;
+    case 'dots': {
+      const r = w * 0.28;
+      for (let cy = y + 7; cy <= y + h - 5; cy += 11) {
+        ctx.beginPath();
+        ctx.arc(x + w / 2, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'zigzag': {
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + w - 1.5, y + 2);
+      let left = true;
+      for (let cy = y + 9; cy <= y + h; cy += 7) {
+        ctx.lineTo(left ? x + 1.5 : x + w - 1.5, cy);
+        left = !left;
+      }
+      ctx.stroke();
+      break;
+    }
+    case 'rungs':
+      for (let cy = y + 4; cy <= y + h - 3; cy += 9) {
+        ctx.fillRect(x, cy, w, 3);
+      }
+      break;
+    case 'hatch': {
+      ctx.lineWidth = 2;
+      for (let cy = y; cy <= y + h + w; cy += 8) {
+        ctx.beginPath();
+        ctx.moveTo(x, cy);
+        ctx.lineTo(x + w, cy - w);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'chevrons': {
+      ctx.lineWidth = 2;
+      for (let cy = y + 9; cy <= y + h - 2; cy += 10) {
+        ctx.beginPath();
+        ctx.moveTo(x + 1, cy);
+        ctx.lineTo(x + w / 2, cy - 5);
+        ctx.lineTo(x + w - 1, cy);
+        ctx.stroke();
+      }
+      break;
+    }
+    // 'none' — unknown club, no stripe
+  }
+  ctx.restore();
 }
 
 // ── Club-specific font selection ──────────────────────────────────────────────
@@ -590,33 +737,42 @@ async function generateLabel(
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
   // and parents can spot graduating kids at a glance.
+  // Both palettes are thermal-first: a 1-bit printer collapses everything to
+  // black or white, so every tone here is either near-black or near-white —
+  // no mid-grays that would dither into speckle.
   const COLOR = stepUp ? {
     bg: '#000000',
     name: '#ffffff',
     last: '#e5e7eb',
     club: '#cbd5e1',
     group: '#fbbf24',                // amber draws the eye on black
-    sep: '#52525b',
+    sep: '#e5e7eb',
     iconBg: '#1f2937',
     iconDivider: '#3f3f46',
     iconPlaceholder: '#d4d4d8',
     visitorBg: '#ffffff',
-    visitorText: '#000000'
+    visitorText: '#000000',
+    stripe: '#ffffff',
+    chipBg: '#ffffff',
+    chipText: '#000000'
   } : {
     bg: '#ffffff',
     name: '#000000',
-    last: '#222222',
-    club: '#444444',
-    group: '#666666',
-    sep: '#cccccc',
+    last: '#111111',
+    club: '#000000',
+    group: '#333333',
+    sep: '#333333',
     iconBg: '#f4f4f4',
-    iconDivider: '#d0d0d0',
-    iconPlaceholder: '#aaaaaa',
+    iconDivider: '#bbbbbb',
+    iconPlaceholder: '#888888',
     visitorBg: '#000000',
-    visitorText: '#ffffff'
+    visitorText: '#ffffff',
+    stripe: '#000000',
+    chipBg: '#000000',
+    chipText: '#ffffff'
   };
 
-  const pngPath = path.join(os.tmpdir(), `awana-${Date.now()}.png`);
+  const pngPath = tmpFilePath('awana', 'png');
 
   const canvas = createCanvas(PX_W, PX_H);
   const ctx = canvas.getContext('2d');
@@ -630,9 +786,15 @@ async function generateLabel(
 
   // On step-up labels, drop the club icon entirely — the kid is leaving
   // that club, and the wider text area makes the message more obvious.
-  const hasIcon = !stepUp && !!clubImageBuffer;
-  const textX   = hasIcon ? TEXT_X : BX + 8;
-  const textW   = hasIcon ? TEXT_W : BW - 16;
+  // The icon panel shows the real club logo when the client supplied one,
+  // and falls back to a monogram badge for any recognized club so the icon
+  // zone never silently disappears.
+  const STRIPE_W = 7;
+  const hasLogo     = !stepUp && !!clubImageBuffer;
+  const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)];
+  const hasIcon     = hasLogo || hasMonogram;
+  const textX   = hasIcon ? TEXT_X : BX + STRIPE_W + 6;
+  const textW   = hasIcon ? TEXT_W : BW - STRIPE_W - 14;
 
   // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
@@ -658,24 +820,57 @@ async function generateLabel(
     const iconSize = 76;
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
-    try {
-      const img = await loadImage(clubImageBuffer);
-      // Preserve aspect ratio
-      const aspect = img.width / img.height;
-      let drawW = iconSize, drawH = iconSize;
-      if (aspect > 1) { drawH = iconSize / aspect; }
-      else { drawW = iconSize * aspect; }
-      const dx = iconX + (iconSize - drawW) / 2;
-      const dy = iconY + (iconSize - drawH) / 2;
-      ctx.drawImage(img, dx, dy, drawW, drawH);
-    } catch {
-      // Image decode failed — draw a placeholder circle
-      ctx.beginPath();
-      ctx.arc(BX + ICON_COL_W / 2, BY + BH / 2, 20, 0, Math.PI * 2);
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = COLOR.iconPlaceholder;
-      ctx.stroke();
+    let logoDrawn = false;
+    if (hasLogo) {
+      try {
+        const img = await loadImage(clubImageBuffer);
+        // Preserve aspect ratio
+        const aspect = img.width / img.height;
+        let drawW = iconSize, drawH = iconSize;
+        if (aspect > 1) { drawH = iconSize / aspect; }
+        else { drawW = iconSize * aspect; }
+        const dx = iconX + (iconSize - drawW) / 2;
+        const dy = iconY + (iconSize - drawH) / 2;
+        ctx.drawImage(img, dx, dy, drawW, drawH);
+        logoDrawn = true;
+      } catch { /* decode failed — fall through to the monogram badge */ }
     }
+    if (!logoDrawn) {
+      // Monogram badge: solid disc + club initials in the club's own font.
+      // Solid ink stays crisp on thermal output where a grayscale logo
+      // placeholder would just dither away.
+      const monogram = CLUB_MONOGRAM[clubKey(clubName)] || '?';
+      const cx = BX + ICON_COL_W / 2;
+      const cy = BY + BH / 2;
+      const radius = 28;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = COLOR.stripe;
+      ctx.fill();
+      const mFont = getClubFontFamily(clubName);
+      const mSize = fitFontSize(ctx, monogram, 'bold', radius * 1.5, 30, 12, mFont);
+      ctx.font = `bold ${mSize}px ${mFont}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = COLOR.bg;
+      ctx.fillText(monogram, cx, cy + 1);
+      ctx.textBaseline = 'top';  // restore default used by the text area
+    }
+  }
+
+  // ── Club identity stripe ──────────────────────────────────────────────────
+  // Per-club pattern in solid ink, hugging the left edge — the fastest
+  // "which club is this kid in" cue when sorting at the door, and it stays
+  // crisp on a 1-bit thermal printer where hues would all flatten to gray:
+  // dots = Puggles, solid = Cubbies, zigzag = Sparks, rungs = T&T,
+  // hatch = Trek, chevrons = Journey.
+  const stripePattern = getClubPattern(clubName);
+  if (stripePattern !== 'none') {
+    ctx.save();
+    roundedRect(ctx, BX, BY, BW, BH, CORNER);
+    ctx.clip();
+    drawClubStripe(ctx, stripePattern, BX, BY, STRIPE_W, BH, COLOR.stripe);
+    ctx.restore();
   }
 
   // ── Text area ─────────────────────────────────────────────────────────────
@@ -683,7 +878,9 @@ async function generateLabel(
   // "Stepping up to <next club>" callout — always show that line.
   const stepUpGroupText = stepUp ? ('Stepping up to ' + (stepUpNextClub || 'next club')) : '';
   const hasLast  = lastName.trim().length > 0;
-  const hasClub  = clubName.trim().length > 0 && !hasIcon;
+  // A real logo self-identifies the club, so the text line is redundant;
+  // a monogram badge is only initials, so keep the club name printed too.
+  const hasClub  = clubName.trim().length > 0 && !hasLogo;
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 
@@ -738,15 +935,16 @@ async function generateLabel(
   // ── Club name with separator ──────────────────────────────────────────────
   if (hasClub) {
     y += 4;
+    // Solid 1pt rule — gradients dither to noise on thermal output
     const sepMargin = textW * 0.1;
     ctx.beginPath();
     ctx.moveTo(textX + sepMargin, y + 0.5);
     ctx.lineTo(textX + textW - sepMargin, y + 0.5);
-    ctx.lineWidth = 0.5;
+    ctx.lineWidth = 1;
     ctx.strokeStyle = COLOR.sep;
     ctx.stroke();
     y += 5;
-    const clubFont = `italic ${fs3}px ${fontFamily}`;
+    const clubFont = `italic bold ${fs3}px ${fontFamily}`;
     ctx.font = clubFont;
     const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
     ctx.fillStyle = COLOR.club;
@@ -791,46 +989,67 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
-  // ── Bottom-right icon row: 🍰 birthday (larger) + allergy emojis ─────────
+  // ── Bottom-right row: coin shares · cake birthday · allergy chips ─────────
+  // Allergies are safety-critical: tiny grayscale emojis turn to mud on a
+  // monochrome thermal printer, so allergens print as solid-ink chips with
+  // bold inverted text (e.g. [NUTS] [DAIRY]) — unmissable at a glance.
   if (hasAllergy || isBirthday || awanaShares != null) {
-    const ALLERGY_EMOJI_SIZE = 16;
-    const BDAY_EMOJI_SIZE    = 26;
-    const EMOJI_FONT_STACK   = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    const EMOJI_SIZE      = 16;
+    const BDAY_EMOJI_SIZE = 26;
+    const EMOJI_FONT_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    const CHIP_FONT   = 'bold 8px Arial, sans-serif';
+    const CHIP_PAD_X  = 3;
+    const CHIP_H      = 12;
     const PAD     = 6;
-    const SPACING = 2;
+    const SPACING = 3;
 
-    // Build ordered glyph list, leftmost first:
-    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy emojis
-    const glyphs = [];
+    // Build ordered item list, leftmost first:
+    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy chips
+    const items = [];
     if (awanaShares != null) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
-      glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: ALLERGY_EMOJI_SIZE });
+      items.push({ kind: 'emoji', ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
     }
     if (isBirthday) {
-      glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      items.push({ kind: 'emoji', ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
     }
     allergyTokens.forEach(function(t) {
-      glyphs.push({ ch: ALLERGY_EMOJI[t] || t.charAt(0), size: ALLERGY_EMOJI_SIZE });
+      items.push({ kind: 'chip', text: t });
     });
 
-    // Measure each glyph under its own font so we can right-anchor the row.
+    // Measure each item under its own font so we can right-anchor the row.
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     let totalW = 0;
-    glyphs.forEach(function(g, i) {
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
-      g.w = ctx.measureText(g.ch).width;
-      totalW += g.w;
-      if (i < glyphs.length - 1) totalW += SPACING;
+    items.forEach(function(it, i) {
+      if (it.kind === 'emoji') {
+        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
+        it.w = ctx.measureText(it.ch).width;
+      } else {
+        ctx.font = CHIP_FONT;
+        it.w = ctx.measureText(it.text).width + CHIP_PAD_X * 2;
+      }
+      totalW += it.w;
+      if (i < items.length - 1) totalW += SPACING;
     });
 
     let ex = BX + BW - PAD - totalW;
-    const ey = BY + BH - PAD;  // baseline anchored to bottom padding line
-    glyphs.forEach(function(g) {
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
-      ctx.fillText(g.ch, ex, ey);
-      ex += g.w + SPACING;
+    const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
+    items.forEach(function(it) {
+      if (it.kind === 'emoji') {
+        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
+        ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
+        ctx.fillText(it.ch, ex, ey);
+      } else {
+        ctx.fillStyle = COLOR.chipBg;
+        roundedRect(ctx, ex, ey - CHIP_H + 2, it.w, CHIP_H, 3);
+        ctx.fill();
+        ctx.font = CHIP_FONT;
+        ctx.fillStyle = COLOR.chipText;
+        ctx.fillText(it.text, ex + CHIP_PAD_X, ey - 2);
+      }
+      ex += it.w + SPACING;
     });
 
     // Reset text state for any subsequent drawing
@@ -873,15 +1092,32 @@ $pd.Print()
 $pd.Dispose()
 `.trim();
 
-  const psPath = path.join(os.tmpdir(), `awana-print-${Date.now()}.ps1`);
+  const psPath = tmpFilePath('awana-print', 'ps1');
   try {
     fs.writeFileSync(psPath, ps, 'utf8');
-    const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
-      timeout: 15000,
-      windowsHide: true,
-      encoding: 'utf8'
-    });
-    if (result) console.log('[print] PowerShell:', result.trim());
+    // One retry on failure: transient spooler errors (printer waking from
+    // sleep, USB renegotiation) routinely succeed on a second attempt. The
+    // child must not be sent away label-less over a hiccup.
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+          timeout: 15000,
+          windowsHide: true,
+          encoding: 'utf8'
+        });
+        if (result) console.log('[print] PowerShell:', result.trim());
+        return;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 2) {
+          console.warn(`[print] Attempt ${attempt} failed (${e.message.split('\n')[0]}) — retrying in 750ms`);
+          // Synchronous wait keeps the existing blocking print contract
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
+        }
+      }
+    }
+    throw lastErr;
   } finally {
     fs.unlink(psPath, () => {});
   }
@@ -960,14 +1196,19 @@ app.post('/update-csv', (req, res) => {
     return res.status(400).json({ error: 'csv field is required (string)' });
   }
   const csvPath = path.join(__dirname, 'clubbers.csv');
+  const tmpPath = csvPath + '.tmp';
   try {
-    fs.writeFileSync(csvPath, csv, 'utf8');
+    // Atomic write: write to a temp file then rename over the target, so a
+    // crash or concurrent reader mid-write can never observe a truncated CSV.
+    fs.writeFileSync(tmpPath, csv, 'utf8');
+    fs.renameSync(tmpPath, csvPath);
     const rows = parseCSV(csv);
     clubbers = rows;
     console.log(`[csv] Updated clubbers.csv from browser (${rows.length} clubber(s))`);
     res.json({ ok: true, count: rows.length });
   } catch (e) {
     console.error('[csv] Failed to write clubbers.csv:', e.message);
+    fs.unlink(tmpPath, () => {});
     res.status(500).json({ error: 'Failed to write CSV' });
   }
 });
@@ -1160,7 +1401,11 @@ function loadHistory() {
 
 function saveHistory(entries) {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(entries, null, 2), 'utf8');
+    // Atomic write — a crash mid-save must not corrupt the history JSON,
+    // which would break /history and reprints until manually deleted.
+    const tmpPath = HISTORY_FILE + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(entries, null, 2), 'utf8');
+    fs.renameSync(tmpPath, HISTORY_FILE);
   } catch (e) {
     console.warn('[history] Failed to save print history:', e.message);
   }
@@ -1464,16 +1709,49 @@ app.get('/diagnostics', async (req, res) => {
   res.json(results);
 });
 
+// ── Error handling middleware ─────────────────────────────────────────────────
+// Registered after all routes. Malformed JSON bodies used to surface as the
+// default Express HTML stack trace; return clean JSON the clients can parse.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.parse.failed' || err.type === 'entity.too.large')) {
+    return res.status(400).json({ error: 'Invalid or oversized JSON body' });
+  }
+  console.error('[http] Unhandled route error:', err && err.message);
+  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+});
+
 // ── Start up ──────────────────────────────────────────────────────────────────
+// Clean up any temp files a crashed previous run left behind
+sweepOrphanedTempFiles();
+
 // Load clubbers before accepting requests so the first print has data ready
 clubbers = loadClubbers();
 
-app.listen(PORT, () => {
-  console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
-  console.log(`  Dashboard : http://localhost:${PORT}/`);
-  console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
-  console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
-});
+// Bind the port with retry: during updates, install-and-run.ps1 (or a
+// just-killed previous instance) can hold port 3456 for a few seconds.
+// Previously an EADDRINUSE here killed the process with no usable message.
+const LISTEN_MAX_ATTEMPTS = 5;
+function startListening(attempt = 1) {
+  const server = app.listen(PORT, () => {
+    console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
+    console.log(`  Dashboard : http://localhost:${PORT}/`);
+    console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
+    console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
+  });
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && attempt < LISTEN_MAX_ATTEMPTS) {
+      const delay = 2000 * attempt;
+      console.warn(`[startup] Port ${PORT} is in use — retrying in ${delay / 1000}s (attempt ${attempt}/${LISTEN_MAX_ATTEMPTS})`);
+      setTimeout(() => startListening(attempt + 1), delay);
+    } else if (err.code === 'EADDRINUSE') {
+      console.error(`[startup] Port ${PORT} is still in use after ${LISTEN_MAX_ATTEMPTS} attempts.`);
+      console.error('[startup] Another print server is likely running — close it and restart, or reboot the machine.');
+    } else {
+      console.error('[startup] Server error:', err.message);
+    }
+  });
+}
+startListening();
 
 // Check for updates on startup and periodically
 checkForUpdates();
