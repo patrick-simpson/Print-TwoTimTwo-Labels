@@ -1181,9 +1181,22 @@ app.get('/bookmarklet.min.js', (req, res) => {
   res.status(404).send('bookmarklet.min.js not found');
 });
 app.get('/bookmarklet.js', (req, res) => {
-  const filePath = path.join(__dirname, 'public', 'bookmarklet.js');
-  if (fs.existsSync(filePath)) return res.type('js').sendFile(filePath);
+  // The loader bookmarklet injects this script. Serve a hand-written public
+  // copy if one exists; otherwise fall back to the extension content script so
+  // the bookmarklet runs the exact same, tested auto-print logic (single
+  // source of truth — no duplicated detection code to drift out of sync).
+  const publicCopy = path.join(__dirname, 'public', 'bookmarklet.js');
+  if (fs.existsSync(publicCopy)) return res.type('js').sendFile(publicCopy);
+  const contentScript = path.join(__dirname, '..', 'chrome-extension', 'content.js');
+  if (fs.existsSync(contentScript)) return res.type('js').sendFile(contentScript);
   res.status(404).send('bookmarklet.js not found');
+});
+
+// Zero-install, browser-only label printer (no thermal printer required).
+app.get('/print-labels.html', (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'print-labels.html');
+  if (fs.existsSync(filePath)) return res.sendFile(filePath);
+  res.status(404).send('print-labels.html not found');
 });
 
 // ── Receive CSV from the bookmarklet (authenticated browser session) ─────────

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Awana Label Printer — Zero-Install Browser Mode</title>
+<!--
+  Zero-install, browser-only 4×2" label printer.
+
+  This page needs NO server, NO Node.js, and NO thermal printer — it renders
+  labels with pure CSS and uses the browser's own print dialog, so any
+  volunteer can print to any printer (inkjet, laser, or label stock) on
+  Chrome, Firefox, or Safari. It complements the automatic server/thermal
+  flow rather than replacing it.
+
+  Data can arrive three ways:
+    1. ?data=<base64 JSON array>  (handed off by a bookmarklet / the extension)
+    2. Pasted into the textarea ("First Last, Club" — one child per line, or CSV)
+    3. The "Load sample" button, for testing alignment on your label stock.
+
+  LAYOUT ARCHITECTURE — CSS Grid (not Flexbox):
+  Each label is a fixed 4in × 2in box split into an optional icon column and a
+  text column. Grid is used deliberately: it pins the icon column to an exact
+  track width and lets the text column take the remaining space (`1fr`)
+  WITHOUT the content-driven width drift Flexbox shows when a name is very long
+  (flex items can overflow their basis and shove the icon column). A fixed Grid
+  track guarantees zero margin drift across a multi-page print run, which is
+  the property that matters most for label stock alignment.
+-->
+<style>
+  /* ── Screen UI (everything here is hidden when printing) ──────────────── */
+  :root {
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #4f46e5;
+    --accent-d: #4338ca;
+    --bg: #f1f5f9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .app { max-width: 1100px; margin: 0 auto; padding: 24px 20px 64px; }
+  header h1 { margin: 0 0 4px; font-size: 24px; }
+  header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+
+  .panel {
+    background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 22px; box-shadow: 0 1px 3px rgba(15,23,42,0.04);
+  }
+  .panel label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  textarea {
+    width: 100%; min-height: 120px; resize: vertical; padding: 12px;
+    border: 1px solid var(--line); border-radius: 8px; font: 14px/1.5 "SFMono-Regular", Menlo, Consolas, monospace;
+    color: var(--ink);
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  button {
+    border: 0; border-radius: 8px; padding: 10px 16px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: transform .08s ease, background .15s ease;
+  }
+  button:active { transform: translateY(1px); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-d); }
+  .btn-ghost { background: #eef2ff; color: var(--accent-d); }
+  .btn-ghost:hover { background: #e0e7ff; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); cursor: pointer; }
+
+  .banner { display: none; border-radius: 8px; padding: 12px 14px; font-size: 13px; margin-top: 14px; }
+  .banner.show { display: block; }
+  .banner.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+  .banner.info  { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+  .count { color: var(--muted); font-size: 13px; }
+  .empty {
+    text-align: center; color: var(--muted); padding: 40px 16px; border: 1px dashed var(--line);
+    border-radius: 12px; background: #fff;
+  }
+
+  .preview-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 2px 12px; }
+  .preview-head h2 { font-size: 16px; margin: 0; }
+
+  /* ── The label sheet — shared by screen preview and print ──────────────── */
+  .sheet { display: grid; grid-template-columns: repeat(auto-fill, 4in); gap: 14px; justify-content: center; }
+
+  .label {
+    width: 4in; height: 2in; background: #fff; color: #000;
+    border-radius: 10px; overflow: hidden; position: relative;
+    /* screen-only chrome so previews are visible against the gray page */
+    box-shadow: 0 1px 4px rgba(15,23,42,0.12); border: 1px solid var(--line);
+  }
+  .label__inner {
+    width: 100%; height: 100%;
+    display: grid;
+    grid-template-columns: 1fr;          /* text-only default */
+    align-items: center;
+    padding: 0.12in;
+  }
+  .label.has-icon .label__inner {
+    grid-template-columns: 0.95in 1px 1fr;  /* fixed icon track | divider | text */
+    column-gap: 0.06in;
+  }
+  .label__icon { display: flex; align-items: center; justify-content: center; height: 100%; }
+  .label__icon img { max-width: 0.8in; max-height: 1.5in; object-fit: contain; }
+  .label__divider { width: 1px; height: 70%; align-self: center; background: #d4d4d8; }
+  .label__stripe {
+    position: absolute; top: 0.1in; bottom: 0.1in; left: 0.06in; width: 0.06in;
+    background: #000; border-radius: 3px;
+  }
+  .label__text {
+    min-width: 0;                         /* lets grid clamp long names instead of overflowing */
+    text-align: center; padding: 0 0.08in;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .label__fn {
+    font-weight: 800; line-height: 1.02; font-size: 46pt; max-width: 100%;
+    word-break: break-word; overflow-wrap: anywhere; hyphens: auto;
+  }
+  .label__ln { font-size: 20pt; margin-top: 0.02in; max-width: 100%; word-break: break-word; }
+  .label__rule { width: 60%; height: 1px; background: #333; margin: 0.05in 0; }
+  .label__cn { font-size: 12pt; font-style: italic; font-weight: 700; }
+  .label__group { font-size: 9pt; color: #333; margin-top: 0.02in; }
+  .label__badge {
+    position: absolute; top: 0.1in; right: 0.12in; font-size: 8pt; font-weight: 800;
+    background: #000; color: #fff; padding: 2px 6px; border-radius: 4px; letter-spacing: .5px;
+  }
+
+  /* ── Print rules: exact 4×2", strip every web artifact ─────────────────── */
+  @page { size: 4in 2in; margin: 0; }
+  @media print {
+    /* Hide all on-screen UI so ONLY label content reaches the printer. */
+    .app > header, .panel, .preview-head, .empty, #banner { display: none !important; }
+    html, body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
+    .app { max-width: none; margin: 0; padding: 0; }
+    .sheet { display: block; gap: 0; }
+    .label {
+      width: 4in; height: 2in; border: 0 !important; border-radius: 0 !important;
+      box-shadow: none !important; break-inside: avoid;
+      page-break-after: always; break-after: page;  /* one label per physical label */
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .label:last-child { page-break-after: auto; break-after: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🖨️ Awana Label Printer</h1>
+    <p>Zero-install browser printing — works on any printer, no server required. Paste your roster, preview, then Print.</p>
+  </header>
+
+  <div class="panel">
+    <label for="input">Children to print <span class="count" id="count"></span></label>
+    <textarea id="input" placeholder="One child per line:&#10;Emma Johnson, Sparks&#10;Liam Carter, T&amp;T&#10;&#10;Or paste CSV with a header row (FirstName,LastName,Club,HandbookGroup)."></textarea>
+    <div class="hint">Format: <strong>First Last, Club</strong> (club optional). CSV with a header row is also accepted. Long names shrink automatically; missing fields are skipped cleanly.</div>
+    <div class="row">
+      <button class="btn-primary" id="printBtn">Print labels</button>
+      <button class="btn-ghost" id="renderBtn">Update preview</button>
+      <button class="btn-ghost" id="sampleBtn">Load sample</button>
+      <button class="btn-ghost" id="clearBtn">Clear</button>
+      <label class="toggle"><input type="checkbox" id="stripeToggle" checked> Club stripe</label>
+    </div>
+    <div class="banner" id="banner"></div>
+  </div>
+
+  <div class="preview-head">
+    <h2>Preview</h2>
+    <span class="count" id="count2"></span>
+  </div>
+  <div id="empty" class="empty">No labels yet. Paste names above and click <strong>Update preview</strong>.</div>
+  <div class="sheet" id="sheet" aria-label="Label preview"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var els = {
+    input: document.getElementById("input"),
+    sheet: document.getElementById("sheet"),
+    empty: document.getElementById("empty"),
+    banner: document.getElementById("banner"),
+    count: document.getElementById("count"),
+    count2: document.getElementById("count2"),
+    stripe: document.getElementById("stripeToggle")
+  };
+
+  function showBanner(kind, msg) {
+    els.banner.className = "banner show " + kind;
+    els.banner.textContent = msg;
+  }
+  function clearBanner() { els.banner.className = "banner"; els.banner.textContent = ""; }
+
+  // ── Defensive helpers ──────────────────────────────────────────────────
+  function sanitize(v, maxLen) {
+    if (v == null) return "";
+    var s = String(v).replace(/\s+/g, " ").trim();
+    if (maxLen && s.length > maxLen) s = s.slice(0, maxLen - 1).trim() + "…";
+    return s;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+    });
+  }
+  function clubMonogram(club) {
+    var n = (club || "").toLowerCase();
+    if (!n) return "";
+    if (n.indexOf("puggle") > -1) return "P";
+    if (n.indexOf("cubbie") > -1) return "C";
+    if (n.indexOf("spark") > -1) return "S";
+    if (n.indexOf("t&t") > -1 || n.indexOf("tnt") > -1 || n.indexOf("truth") > -1) return "T&T";
+    if (n.indexOf("trek") > -1) return "TR";
+    if (n.indexOf("journey") > -1) return "J";
+    return "";
+  }
+
+  // ── Parsing: accept "First Last, Club" lines OR CSV with a header row ────
+  function parseRoster(text) {
+    var out = [];
+    if (!text || !text.trim()) return out;
+    var lines = text.replace(/\r/g, "").split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
+
+    // Detect a CSV header (contains "name" or commas with a header-ish first row).
+    var header = null;
+    if (/(^|,)\s*(first ?name|firstname|name)\s*(,|$)/i.test(lines[0])) {
+      header = lines.shift().split(",").map(function (h) { return h.trim().toLowerCase(); });
+    }
+
+    lines.forEach(function (line, i) {
+      try {
+        var rec = { firstName: "", lastName: "", club: "", group: "" };
+        if (header) {
+          var cols = line.split(",");
+          var get = function (names) {
+            for (var k = 0; k < names.length; k++) {
+              var idx = header.indexOf(names[k]);
+              if (idx > -1 && cols[idx] != null) return cols[idx].trim();
+            }
+            return "";
+          };
+          var fn = get(["firstname", "first name"]);
+          var ln = get(["lastname", "last name"]);
+          if (!fn && !ln) {
+            var whole = get(["name"]).split(/\s+/);
+            fn = whole[0] || ""; ln = whole.slice(1).join(" ");
+          }
+          rec.firstName = fn; rec.lastName = ln;
+          rec.club = get(["club"]);
+          rec.group = get(["handbookgroup", "handbook group", "group"]);
+        } else {
+          // "First Last, Club"  — club after the (last) comma
+          var parts = line.split(",");
+          var name = (parts[0] || "").trim().split(/\s+/);
+          rec.firstName = name[0] || "";
+          rec.lastName = name.slice(1).join(" ");
+          rec.club = (parts[1] || "").trim();
+          rec.group = (parts[2] || "").trim();
+        }
+        rec.firstName = sanitize(rec.firstName, 40);
+        rec.lastName = sanitize(rec.lastName, 40);
+        rec.club = sanitize(rec.club, 40);
+        rec.group = sanitize(rec.group, 40);
+        if (rec.firstName || rec.lastName) out.push(rec);
+      } catch (err) {
+        console.warn("[labels] Skipped unparseable line " + (i + 1) + ":", line, err);
+      }
+    });
+    return out;
+  }
+
+  function labelHtml(rec, showStripe) {
+    var mono = clubMonogram(rec.club);
+    var hasIcon = !!mono;
+    var iconCol = hasIcon
+      ? '<div class="label__icon"><img alt="" src="' + monogramSvg(mono) + '"></div><div class="label__divider"></div>'
+      : "";
+    var stripe = showStripe ? '<div class="label__stripe"></div>' : "";
+    var ln = rec.lastName ? '<div class="label__ln">' + escapeHtml(rec.lastName) + "</div>" : "";
+    var club = rec.club
+      ? '<div class="label__rule"></div><div class="label__cn">' + escapeHtml(rec.club) + "</div>"
+      : "";
+    var group = rec.group ? '<div class="label__group">' + escapeHtml(rec.group) + "</div>" : "";
+    return (
+      '<div class="label' + (hasIcon ? " has-icon" : "") + '">' +
+        stripe +
+        '<div class="label__inner">' +
+          iconCol +
+          '<div class="label__text">' +
+            '<div class="label__fn">' + escapeHtml(rec.firstName || rec.lastName) + "</div>" +
+            ln + club + group +
+          "</div>" +
+        "</div>" +
+      "</div>"
+    );
+  }
+
+  // Inline monogram badge as an SVG data-URI (crisp at any size, no network).
+  function monogramSvg(text) {
+    var svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90" viewBox="0 0 90 90">' +
+      '<circle cx="45" cy="45" r="42" fill="#000"/>' +
+      '<text x="45" y="46" fill="#fff" font-family="Arial, sans-serif" font-weight="bold" ' +
+      'font-size="' + (text.length > 1 ? 26 : 40) + '" text-anchor="middle" dominant-baseline="central">' +
+      text + "</text></svg>";
+    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  }
+
+  // After render, shrink any first name that overflows its label width.
+  function fitNames() {
+    var names = els.sheet.querySelectorAll(".label__fn");
+    for (var i = 0; i < names.length; i++) {
+      try {
+        var el = names[i];
+        var size = 46;
+        el.style.fontSize = size + "pt";
+        var guard = 0;
+        while ((el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight) && size > 16 && guard < 40) {
+          size -= 2; el.style.fontSize = size + "pt"; guard++;
+        }
+      } catch (err) { /* never let one label break the batch */ }
+    }
+  }
+
+  function render() {
+    clearBanner();
+    var records = parseRoster(els.input.value);
+    var showStripe = !!els.stripe.checked;
+    els.count.textContent = records.length ? "(" + records.length + ")" : "";
+    els.count2.textContent = records.length ? records.length + " label" + (records.length === 1 ? "" : "s") : "";
+
+    if (!records.length) {
+      els.sheet.innerHTML = "";
+      els.empty.style.display = "block";
+      els.empty.innerHTML = els.input.value.trim()
+        ? "No valid names found. Use <strong>First Last, Club</strong> — one child per line."
+        : "No labels yet. Paste names above and click <strong>Update preview</strong>.";
+      return records;
+    }
+    els.empty.style.display = "none";
+    try {
+      els.sheet.innerHTML = records.map(function (r) { return labelHtml(r, showStripe); }).join("");
+      fitNames();
+    } catch (err) {
+      console.error("[labels] Render failed:", err);
+      showBanner("error", "Could not render labels: " + err.message + ". Check the console (F12) for details.");
+    }
+    return records;
+  }
+
+  function doPrint() {
+    var records = render();
+    if (!records.length) {
+      showBanner("info", "Add at least one child before printing.");
+      return;
+    }
+    // Give the browser a tick to lay out before invoking the print dialog.
+    setTimeout(function () {
+      try { window.print(); }
+      catch (err) {
+        console.error("[labels] print() failed:", err);
+        showBanner("error", "The browser could not open the print dialog: " + err.message);
+      }
+    }, 80);
+  }
+
+  // ── Optional data hand-off via ?data=<base64 JSON array> ────────────────
+  function loadFromUrl() {
+    try {
+      var m = location.search.match(/[?&]data=([^&]+)/);
+      if (!m) return false;
+      var json = decodeURIComponent(escape(atob(decodeURIComponent(m[1]))));
+      var arr = JSON.parse(json);
+      if (!Array.isArray(arr) || !arr.length) return false;
+      els.input.value = arr.map(function (r) {
+        var name = [r.firstName, r.lastName].filter(Boolean).join(" ") || r.name || "";
+        return [name, r.club || r.clubName || "", r.group || r.handbookGroup || ""].filter(Boolean).join(", ");
+      }).join("\n");
+      return true;
+    } catch (err) {
+      console.warn("[labels] Ignored malformed ?data= payload:", err);
+      return false;
+    }
+  }
+
+  var SAMPLE = [
+    "Emma Johnson, Sparks, Sparks HangGlider",
+    "Liam Carter, T&T, T&T Group B",
+    "Mia Lopez, Puggles",
+    "Maximilian Throckmorton-Westfield, Journey",
+    "Ava, Trek"
+  ].join("\n");
+
+  document.getElementById("printBtn").addEventListener("click", doPrint);
+  document.getElementById("renderBtn").addEventListener("click", render);
+  document.getElementById("clearBtn").addEventListener("click", function () { els.input.value = ""; render(); });
+  document.getElementById("sampleBtn").addEventListener("click", function () { els.input.value = SAMPLE; render(); });
+  els.stripe.addEventListener("change", render);
+
+  // Boot
+  if (loadFromUrl()) render();
+})();
+</script>
+</body>
+</html>

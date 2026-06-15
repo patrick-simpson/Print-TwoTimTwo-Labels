@@ -1,4 +1,34 @@
-﻿## [3.7.2] - 2026-06-11
+﻿## [3.8.0] - 2026-06-15
+Resilience + UX overhaul for non-technical volunteers, and a new zero-install browser print path. Also fixes a shipped-broken bookmarklet (404) and a stale, inaccurate README.
+
+### Why
+The tool is operated by volunteers mid-event. Feedback was emoji-in-a-pill, several DOM/parse/print paths could throw unguarded, there was no generic "wait for the page to be ready," and the only print path required a Windows helper + thermal printer. The referenced bookmarklet files never existed, so the bookmarklet page and `/bookmarklet.js` `/bookmarklet.min.js` routes returned 404. The README still described a puppeteer/pdf-to-printer/jsPDF pipeline that the project no longer uses.
+
+### 1. Robustness & defensive programming (chrome-extension/content.js)
+- Added `waitForElement(selector, {root, timeout, visible})` — MutationObserver + polling safety-net + hard timeout, so slow/partial page loads never hang or throw.
+- Added `isVisible()` that correctly handles `position:fixed` (the old `offsetParent` checks misclassified fixed elements).
+- Added `safeTry(label, fn, fallback)` — wraps risky work and logs full diagnostic context (label + message + error) instead of failing silently.
+- Added `sanitizeField(value, maxLen)` and `escapeHtml()`; `doPrint()` now validates/normalises name + club, drops oversized (>1.5 MB) club images, and ignores empty names instead of producing a broken label or bloated payload.
+
+### 2. User experience & visual feedback (chrome-extension/content.js)
+- New `AwanaUI` overlay rendered in a **Shadow DOM** so styles are fully scoped (no bleed in or out): a loading **spinner**, a self-dismissing **success toast**, and a friendly **error banner** with a plain-English fix and a dismiss button.
+- Routed the existing `setStatus()` emoji codes (⏳ ✅ ❌ 📦 🚫) through the overlay, so every existing call site is upgraded at once; the legacy `#awana-status` text node is kept for compatibility. The overlay can never throw into the print path.
+
+### 3. Print layout & CSS precision
+- **Both paths, as chosen:**
+  - **New zero-install browser printer** `public/print-labels.html` (also served at `http://localhost:3456/print-labels.html`): pure-CSS 4×2" labels via the browser print dialog — works on Chrome/Firefox/Safari and any printer. Uses **CSS Grid** (fixed icon track + `1fr` text, `min-width:0`) chosen over Flexbox to prevent long-name width drift and guarantee zero margin drift across multi-page runs; `@page { size:4in 2in; margin:0 }`, `page-break-after:always`, `print-color-adjust:exact`, and `@media print` rules that strip all on-screen UI so only labels print. Robust CSV/line parsing, auto font-shrink for long names, clean handling of missing fields and empty datasets, optional `?data=` hand-off.
+  - **Hardened the existing PNG fallback** (`printLabelDataUrl`): added `print-color-adjust:exact`, exact sizing, and rebuilt the offline HTML label on CSS Grid with sanitised + HTML-escaped fields and long-name clamping.
+
+### 4. Documentation & delivery
+- **Fixed the broken bookmarklet:** created `bookmarklet.min.js` (a robust loader with a friendly "server not reachable" fallback) in `public/` and `print-server/public/`. `/bookmarklet.js` now falls back to serving the extension content script, so the bookmarklet runs the exact same tested logic (single source of truth).
+- **Rewrote README.md** for non-technical admins: three clearly separated options (automatic / zero-install browser / bookmarklet), step-by-step setup, a copy-pasteable bookmarklet block, accurate architecture (canvas PNG + PowerShell, not puppeteer/jsPDF), and correct dependencies.
+
+### Verification
+- `node --check` on `content.js`, `server.js`, the embedded `print-labels.html` script, and the bookmarklet (prefix stripped) — all pass.
+- Simulated varied payloads against the live server: very long first+last names (truncate, no clipping — verified visually), missing last name, missing club, special characters `& < > '`, and empty name (→ clean 400). Malformed JSON → clean `400 {"error":...}`.
+- New routes return 200; `/bookmarklet.js` correctly falls back to the content script. `npm run build` copies both new artifacts into `dist/`.
+
+## [3.7.2] - 2026-06-11
 Club logos guaranteed: monogram badge fallback when the client doesn't supply a logo image.
 
 ### Why

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.7.2';
+  const EXTENSION_VERSION = '3.8.0';
   const PRINT_COOLDOWN = 2000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
@@ -111,6 +111,182 @@
   function isUndo(text) {
     return text && text.toLowerCase().includes('undo');
   }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Defensive helpers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  // Run fn() and never let it throw into the caller. Logs full diagnostic
+  // context (label + message + the error object) instead of failing silently.
+  function safeTry(label, fn, fallback) {
+    try {
+      return fn();
+    } catch (err) {
+      console.error('[Awana] ' + label + ' failed:', (err && err.message) || err, err);
+      return fallback;
+    }
+  }
+
+  // True visibility test. `offsetParent` is null for position:fixed elements
+  // even when they're on-screen, which made the old checks misclassify them.
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.offsetParent !== null) return true; // fast path for normal flow
+    var cs;
+    try { cs = window.getComputedStyle(el); } catch (e) { return false; }
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // Resolve once `selector` exists (and optionally is visible), using a
+  // MutationObserver plus a polling safety-net, with a hard timeout so callers
+  // never hang on a slow / partial page load. Resolves null on timeout.
+  function waitForElement(selector, opts) {
+    opts = opts || {};
+    var root = opts.root || document;
+    var timeout = opts.timeout != null ? opts.timeout : 8000;
+    var mustBeVisible = !!opts.visible;
+    function match() {
+      var el = safeTry('waitForElement query', function () { return root.querySelector(selector); }, null);
+      if (!el) return null;
+      if (mustBeVisible && !isVisible(el)) return null;
+      return el;
+    }
+    return new Promise(function (resolve) {
+      var found = match();
+      if (found) { resolve(found); return; }
+      var done = false;
+      var obs, poll, timer;
+      function finish(el) {
+        if (done) return;
+        done = true;
+        safeTry('waitForElement disconnect', function () { obs && obs.disconnect(); });
+        clearInterval(poll);
+        clearTimeout(timer);
+        resolve(el);
+      }
+      obs = new MutationObserver(function () { var el = match(); if (el) finish(el); });
+      safeTry('waitForElement observe', function () {
+        obs.observe(root === document ? document.documentElement : root,
+          { childList: true, subtree: true, attributes: true });
+      });
+      // Polling catches visibility/style changes a MutationObserver can miss.
+      poll = setInterval(function () { var el = match(); if (el) finish(el); }, 150);
+      timer = setTimeout(function () {
+        console.warn('[Awana] waitForElement timed out for selector:', selector);
+        finish(null);
+      }, timeout);
+    });
+  }
+
+  // Collapse whitespace, trim, and cap length so a pathological value (a
+  // 500-char paste, a missing field, embedded newlines) can never break the
+  // label layout or bloat the payload. The server also truncates to fit the
+  // canvas; this is the client-side belt to its suspenders.
+  function sanitizeField(value, maxLen) {
+    if (value == null) return '';
+    var s = String(value).replace(/\s+/g, ' ').trim();
+    if (maxLen && s.length > maxLen) s = s.slice(0, maxLen - 1).trim() + '…';
+    return s;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // AwanaUI — a clean, Shadow-DOM-scoped feedback overlay (spinner / success
+  // toast / error banner). Styles live inside a shadow root so nothing the
+  // host page defines can leak in, and nothing here can pollute the host.
+  // The overlay must NEVER throw into the print path — every entry point is
+  // wrapped so a UI hiccup can't stop a label from printing.
+  // ──────────────────────────────────────────────────────────────────────────
+  var AwanaUI = (function () {
+    var host = null, root = null, card = null, iconEl = null, titleEl = null,
+        msgEl = null, closeEl = null, spinTimer = null;
+
+    var CSS = '' +
+      '.awui-card{position:fixed;right:18px;bottom:18px;max-width:320px;display:flex;' +
+      'gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;' +
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;' +
+      'background:#0f172a;color:#fff;box-shadow:0 10px 30px rgba(2,6,23,.35);' +
+      'opacity:0;transform:translateY(12px);transition:opacity .2s ease,transform .2s ease;' +
+      'pointer-events:none;z-index:2147483647}' +
+      '.awui-card.show{opacity:1;transform:translateY(0)}' +
+      '.awui-card.kind-error{background:#7f1d1d;pointer-events:auto}' +
+      '.awui-card.kind-success{background:#065f46}' +
+      '.awui-card.kind-info{background:#1e3a8a}' +
+      '.awui-icon{flex:0 0 auto;width:22px;height:22px;display:flex;align-items:center;justify-content:center;margin-top:1px}' +
+      '.awui-spin{width:18px;height:18px;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:awui-rot .8s linear infinite}' +
+      '@keyframes awui-rot{to{transform:rotate(360deg)}}' +
+      '.awui-glyph{font-size:18px;line-height:1}' +
+      '.awui-body{flex:1 1 auto;min-width:0}' +
+      '.awui-title{font-size:13px;font-weight:700;margin:0 0 2px}' +
+      '.awui-msg{font-size:12px;line-height:1.45;opacity:.92;word-break:break-word}' +
+      '.awui-close{flex:0 0 auto;background:transparent;border:0;color:#fff;opacity:.7;' +
+      'font-size:16px;line-height:1;cursor:pointer;padding:0 2px;display:none}' +
+      '.awui-card.kind-error .awui-close{display:block}' +
+      '.awui-close:hover{opacity:1}';
+
+    function ensure() {
+      if (host && host.isConnected) return true;
+      return safeTry('AwanaUI.ensure', function () {
+        host = document.createElement('div');
+        host.id = 'awana-ui-overlay-host';
+        host.setAttribute('aria-live', 'polite');
+        // Host has no box of its own — purely a mount point.
+        host.style.cssText = 'all:initial';
+        root = host.attachShadow ? host.attachShadow({ mode: 'open' }) : host;
+        var style = document.createElement('style');
+        style.textContent = CSS;
+        root.appendChild(style);
+        card = document.createElement('div');
+        card.className = 'awui-card';
+        card.innerHTML =
+          '<span class="awui-icon"></span>' +
+          '<div class="awui-body"><p class="awui-title"></p><div class="awui-msg"></div></div>' +
+          '<button class="awui-close" aria-label="Dismiss">×</button>';
+        root.appendChild(card);
+        iconEl = card.querySelector('.awui-icon');
+        titleEl = card.querySelector('.awui-title');
+        msgEl = card.querySelector('.awui-msg');
+        closeEl = card.querySelector('.awui-close');
+        closeEl.addEventListener('click', hide);
+        (document.body || document.documentElement).appendChild(host);
+        return true;
+      }, false);
+    }
+
+    function show(kind, glyphHtml, title, msg, autoMs) {
+      if (!ensure()) return;
+      safeTry('AwanaUI.show', function () {
+        clearTimeout(spinTimer);
+        card.className = 'awui-card show kind-' + kind;
+        iconEl.innerHTML = glyphHtml;
+        titleEl.textContent = title || '';
+        titleEl.style.display = title ? '' : 'none';
+        msgEl.textContent = msg || '';
+        if (autoMs) spinTimer = setTimeout(hide, autoMs);
+      });
+    }
+
+    function hide() {
+      safeTry('AwanaUI.hide', function () {
+        if (card) card.className = 'awui-card';
+      });
+    }
+
+    return {
+      spinner: function (msg) { show('info', '<span class="awui-spin"></span>', 'Printing…', msg || '', 0); },
+      success: function (msg) { show('success', '<span class="awui-glyph">✓</span>', 'Label printed', msg || '', 2500); },
+      info:    function (title, msg) { show('info', '<span class="awui-glyph">ℹ</span>', title || '', msg || '', 4000); },
+      error:   function (title, hint) { show('error', '<span class="awui-glyph">⚠</span>', title || 'Something went wrong', hint || '', 9000); },
+      hide: hide
+    };
+  })();
 
   // Step Up Night — the one Wednesday a year when kids whose age/grade puts
   // them in a different club next year get a "Stepping up to X" label.
@@ -1580,16 +1756,44 @@
       });
   }
 
+  // Single feedback funnel. The whole codebase already calls setStatus() with a
+  // small set of emoji codes; mapping them here upgrades every existing call
+  // site to the rich Shadow-DOM overlay at once, while keeping the legacy
+  // #awana-status text node updated for backward compatibility. Wrapped so the
+  // overlay can never throw into a print path.
   function setStatus(text) {
-    const el = document.getElementById('awana-status');
-    if (el) {
-      el.textContent = text;
-      console.log('[Awana] Status:', text);
-    }
+    var el = document.getElementById('awana-status');
+    if (el) el.textContent = text;
+    if (text) console.log('[Awana] Status:', text);
+    safeTry('setStatus overlay', function () {
+      switch (text) {
+        case '⏳': // ⏳ working
+          AwanaUI.spinner('Sending label to the printer…'); break;
+        case '✅': // ✅ success
+          AwanaUI.success(); break;
+        case '❌': // ❌ failure
+          AwanaUI.error('Print failed',
+            'Check the printer is on and loaded with labels, then check in again.'); break;
+        case '📦': // 📦 queued offline
+          AwanaUI.info('Saved offline',
+            'The print server is unreachable — this label will print automatically when it reconnects.'); break;
+        case '🚫': // 🚫 undo / skipped
+          AwanaUI.info('Skipped', 'Undo detected — no label printed.'); break;
+        case '':
+          AwanaUI.hide(); break;
+        default:
+          if (text) AwanaUI.info('', text);
+      }
+    });
   }
 
+  // Clears only the legacy text node; the overlay self-dismisses on its own
+  // per-kind timers so an error banner isn't cut short by a generic timeout.
   function clearStatus() {
-    setTimeout(function() { setStatus(''); }, STATUS_TIMEOUT);
+    setTimeout(function() {
+      var el = document.getElementById('awana-status');
+      if (el) el.textContent = '';
+    }, STATUS_TIMEOUT);
   }
 
   function watchCheckins() {
@@ -1837,11 +2041,24 @@
   }
 
   function doPrint(fullName, clubName, imageData) {
+    // Validate and normalise inputs up front \u2014 a malformed/empty/overlong name
+    // or club must never throw, print a broken label, or bloat the payload.
+    fullName = sanitizeField(fullName, 80);
+    clubName = sanitizeField(clubName, 40);
+    if (!fullName) {
+      console.warn('[Awana] doPrint called with no usable name \u2014 ignoring');
+      return;
+    }
+    if (imageData && typeof imageData === 'string' && imageData.length > 1500000) {
+      console.warn('[Awana] club image is ' + imageData.length + ' bytes \u2014 dropping it to avoid a bloated payload');
+      imageData = null;
+    }
+
     setStatus('\u23F3');
 
     var parts = fullName.split(' ');
-    var firstName = parts[0] || '';
-    var lastName = parts.slice(1).join(' ') || '';
+    var firstName = sanitizeField(parts[0], 40);
+    var lastName = sanitizeField(parts.slice(1).join(' '), 40);
 
     if (isUndo(firstName) || isUndo(lastName) || isUndo(clubName)) {
       setStatus('\uD83D\uDEAB');
@@ -1941,39 +2158,55 @@
 
     var html;
     if (dataUrl) {
-      // Server-generated PNG — same output as auto-print
+      // Server-generated PNG — same output as auto-print. print-color-adjust
+      // forces the browser to keep the rendered pixels exactly (some browsers
+      // strip backgrounds/colors by default in print).
       html = '<!DOCTYPE html><html><head><style>' +
         '@page { size: 4in 2in; margin: 0; }' +
         '* { margin: 0; padding: 0; }' +
-        'body { width: 4in; height: 2in; overflow: hidden; }' +
-        'img { width: 4in; height: 2in; display: block; }' +
+        'html,body { width: 4in; height: 2in; overflow: hidden; background:#fff; ' +
+        '-webkit-print-color-adjust: exact; print-color-adjust: exact; }' +
+        'img { width: 4in; height: 2in; display: block; image-rendering: -webkit-optimize-contrast; }' +
         '</style></head><body><img src="' + dataUrl + '"/></body></html>';
     } else {
-      // Offline fallback HTML label
-      var fontSize = (firstName || '').length > 12 ? '32pt' : (firstName || '').length > 8 ? '40pt' : '48pt';
-      var iconHtml = imageData
-        ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
+      // Offline fallback HTML label (server unreachable). Built with CSS Grid:
+      // a fixed icon track + a 1fr text column. Grid pins the icon width so a
+      // very long name can't shove it (Flexbox basis drift), and `min-width:0`
+      // lets the name wrap/clamp instead of overflowing the 4×2 box. Fields are
+      // sanitised + HTML-escaped so names containing & < > can't break markup.
+      var fn = sanitizeField(firstName, 40);
+      var ln = sanitizeField(lastName, 40);
+      var cn = sanitizeField(clubName, 40);
+      var fontSize = fn.length > 14 ? '28pt' : fn.length > 12 ? '32pt' : fn.length > 8 ? '40pt' : '48pt';
+      var hasIcon = !!imageData;
+      var iconHtml = hasIcon
+        ? '<div class="icon-col"><img alt="" src="' + escapeHtml(imageData) + '"/></div><div class="divider"></div>'
         : '';
-      var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
-      var clubHtml = clubName
-        ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
+      var lastNameHtml = ln ? '<div class="ln">' + escapeHtml(ln) + '</div>' : '';
+      var clubHtml = cn
+        ? '<div class="sep"></div><div class="cn">' + escapeHtml(cn) + '</div>'
         : '';
       html = '<!DOCTYPE html><html><head><style>' +
         '@page { size: 4in 2in; margin: 0; }' +
         '* { box-sizing: border-box; margin: 0; padding: 0; }' +
-        'body { width: 4in; height: 2in; display: flex; align-items: center; justify-content: center; font-family: Helvetica, Arial, sans-serif; }' +
-        '.badge { width: 3.8in; height: 1.8in; border: 1.5pt solid #000; border-radius: 12pt; display: flex; align-items: stretch; overflow: hidden; }' +
-        '.icon-col { width: 1.1in; display: flex; align-items: center; justify-content: center; background: #f4f4f4; flex-shrink: 0; padding: 8pt; }' +
-        '.icon-col img { width: 52pt; height: 52pt; object-fit: contain; }' +
-        '.divider { width: 1pt; background: #ddd; flex-shrink: 0; }' +
-        '.text { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 6pt 10pt; text-align: center; }' +
-        '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.05; word-break: break-word; }' +
-        '.ln { font-size: 20pt; margin-top: 2pt; }' +
-        '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
-        '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
+        'html,body { width: 4in; height: 2in; background:#fff; ' +
+        '-webkit-print-color-adjust: exact; print-color-adjust: exact; ' +
+        'font-family: Helvetica, Arial, sans-serif; }' +
+        '.badge { width: 4in; height: 2in; display: grid; ' +
+        'grid-template-columns: ' + (hasIcon ? '1.05in 1pt 1fr' : '1fr') + '; ' +
+        'align-items: center; padding: 0.1in; }' +
+        '.icon-col { display: flex; align-items: center; justify-content: center; height: 100%; }' +
+        '.icon-col img { max-width: 0.85in; max-height: 1.5in; object-fit: contain; }' +
+        '.divider { width: 1pt; height: 70%; background: #ddd; align-self: center; }' +
+        '.text { min-width: 0; text-align: center; padding: 0 8pt; }' +
+        '.fn { font-size: ' + fontSize + '; font-weight: bold; line-height: 1.04; ' +
+        'word-break: break-word; overflow-wrap: anywhere; hyphens: auto; }' +
+        '.ln { font-size: 20pt; margin-top: 2pt; word-break: break-word; }' +
+        '.sep { width: 60%; height: 1pt; background: #333; margin: 5pt auto; }' +
+        '.cn { font-size: 12pt; font-style: italic; font-weight: 700; color: #000; }' +
         '</style></head><body><div class="badge">' +
         iconHtml +
-        '<div class="text"><div class="fn">' + (firstName || '') + '</div>' +
+        '<div class="text"><div class="fn">' + escapeHtml(fn) + '</div>' +
         lastNameHtml + clubHtml +
         '</div></div></body></html>';
     }
