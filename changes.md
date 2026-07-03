@@ -1,4 +1,27 @@
-﻿## [3.8.0] - 2026-06-15
+﻿## [3.9.0] - 2026-06-15
+Catalog-true label design (based on the official Awana Clubs 2026–27 catalog) + async serialized printing and roster-matching/reliability upgrades.
+
+### Why
+The label design predated the current Awana brand. Reviewing the 2026–27 catalog: chunky rounded type, four-point sparkle doodles, rounded "AGES/GRADES" tab chips, and strong club motifs — apples ARE the Cubbies award system, T&T's logo is a hexagon shield, Sparks is a flight theme with pilot-wing badges. Separately, the print path still used `execSync`, which froze the entire Node event loop for up to ~31 s per print (2 × 15 s timeout + retry wait) — during a busy check-in rush the server appeared dead to every other request.
+
+### Label design (print-server/server.js), all thermal-safe solid ink
+- **Club emblem badges** (monogram fallback) now use catalog-true shapes: Cubbies = apple (body + stem + leaf) with "C", T&T = hexagon shield with "T&T", Sparks = disc with pilot wings, others = disc. Each badge gets a small ✦ sparkle accent — the catalog's signature doodle.
+- **Stripe motifs updated:** Cubbies solid bar → stacked apples; T&T rungs → chained hexagon outlines. Dots/zigzag/hatch/chevrons unchanged.
+- **Grade-band tab chip** (bottom-left): the catalog's rounded "AGES 2–3 / GRADES K–2" chip, per club (Puggles 2–3, Cubbies 3–5, Sparks K–2, T&T 3–6, Trek 6–8, Journey 9–12) — lets a door volunteer route a visiting kid to the right room without asking. Skipped on step-up labels.
+- **Step-up celebration:** amber ✦ sparkles flank the "Stepping up to X" callout.
+- **Layout fix:** when the bottom-right row (allergy chips/cake/shares) prints, the centered text block shifts up 7 pt so a long handbook-group line can never collide with the chips (it previously could).
+
+### Reliability (print-server/server.js)
+- **Async serialized print queue:** `printImage` now runs PowerShell via async `execFile` (argument vector — no shell quoting) with jobs serialized one-at-a-time. The event loop is never blocked, concurrent check-ins can't race the Windows spooler with parallel PowerShell processes, and per-request error semantics are unchanged (callers `await` their own job). Verified: two simultaneous /print requests fail independently with clean per-request errors when the spooler is unavailable, while /health stays responsive.
+- **Accent/punctuation-insensitive roster matching:** "José Muñoz" at check-in now matches "Jose Munoz" in the CSV (NFD normalize + strip non-alphanumerics), as do O'Neil↔ONeil and Mary-Jane↔Mary Jane. Exact match is tried first, and the fallback is still full-name equality — deterministic, never fuzzy, because a wrong match would print the wrong kid's allergies.
+- **Configurable step-up grades:** `config.json` `{"stepUpGrades": {"t&t": 6}}` overrides the graduating grade per club. Shipped defaults unchanged — note the 2026–27 catalog lists T&T as grades 3–6 (grade-6 graduation); churches running T&T through grade 5 need no change, churches following the new structure can opt in without a code edit.
+- **Roster backup:** /update-csv keeps `clubbers.csv.bak` (previous good roster) before each sync — a bad export can be undone by renaming one file.
+- **Print observability:** /health now reports `printQueue` depth, `lastPrintAt`, and `lastPrintError`.
+
+### Verification
+- `node --check` passes; full render suite for all six clubs + visitor + step-up + allergies + shares reviewed visually at 300 DPI; malformed/edge payloads unchanged from 3.7/3.8 behavior; concurrent-print and health-during-print behavior tested live.
+
+## [3.8.0] - 2026-06-15
 Resilience + UX overhaul for non-technical volunteers, and a new zero-install browser print path. Also fixes a shipped-broken bookmarklet (404) and a stale, inaccurate README.
 
 ### Why

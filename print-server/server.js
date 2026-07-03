@@ -14,7 +14,9 @@ const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
 const { createCanvas, loadImage } = require('canvas');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const http  = require('http');
 const https = require('https');
 const fs    = require('fs');
@@ -282,9 +284,21 @@ function loadClubbers() {
 function findClubber(firstName, lastName) {
   const fn = (firstName || '').toLowerCase().trim();
   const ln = (lastName  || '').toLowerCase().trim();
-  return clubbers.find(r =>
+  const exact = clubbers.find(r =>
     (r.FirstName || '').toLowerCase().trim() === fn &&
     (r.LastName  || '').toLowerCase().trim() === ln
+  );
+  if (exact) return exact;
+  // Fallback: accent/punctuation-insensitive match, so "José Muñoz" on the
+  // check-in page still finds "Jose Munoz" in the CSV (and O'Neil ↔ ONeil,
+  // Mary-Jane ↔ Mary Jane). Still a full-name equality check — deterministic,
+  // never fuzzy — because a wrong match would print the wrong kid's ALLERGIES.
+  const canon = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cfn = canon(firstName), cln = canon(lastName);
+  if (!cfn && !cln) return null;
+  return clubbers.find(r =>
+    canon(r.FirstName) === cfn && canon(r.LastName) === cln
   ) || null;
 }
 
@@ -329,6 +343,21 @@ const STEP_UP_GRADUATING_GRADE = {
   trek:    8,  // last grade in Trek
   journey: 12  // last grade in Journey
 };
+
+// Churches structure clubs differently — the 2026–27 Awana catalog lists T&T
+// as grades 3–6, while many churches still run it through grade 5. Rather
+// than hard-code a guess, honour a config.json override and keep the shipped
+// defaults unchanged:  { "stepUpGrades": { "t&t": 6 } }
+if (config.stepUpGrades && typeof config.stepUpGrades === 'object') {
+  for (const [club, grade] of Object.entries(config.stepUpGrades)) {
+    const k = clubKey(club);
+    const g = parseInt(grade, 10);
+    if (k && STEP_UP_GRADUATING_GRADE[k] !== undefined && Number.isInteger(g) && g >= 0 && g <= 12) {
+      STEP_UP_GRADUATING_GRADE[k] = g;
+      console.log(`[config] Step-up graduating grade override: ${k} → grade ${g}`);
+    }
+  }
+}
 
 const STEP_UP_NEXT_CLUB = {
   puggle:  'Cubbies',
@@ -569,12 +598,14 @@ async function resolveImageBuffer(clubImageData) {
 // dithered grays, so color can't carry club identity. Solid-black shapes at
 // 300 dpi stay crisp — each club therefore gets a distinct PATTERN drawn in
 // pure ink inside the left identity stripe, alongside its font personality
-// below. Patterns are distinguishable at arm's length without reading text.
+// below. Motifs follow the official Awana Clubs catalog: apples are the
+// Cubbies award system, Sparks is the flight theme, T&T's logo is a hexagon
+// shield, Trek is the trail, Journey climbs upward.
 const CLUB_PATTERNS = {
   puggle:  'dots',      // playful dots for the littlest kids
-  cubbie:  'solid',     // one solid bar
+  cubbie:  'apples',    // red/green apple awards on the Cubbies vest
   spark:   'zigzag',    // lightning bolt echoes the Sparky flame
-  't&t':   'rungs',     // ladder rungs — Truth & Training handbook steps
+  't&t':   'hexagons',  // T&T hexagon shield emblem, chained
   trek:    'hatch',     // diagonal trail hatching
   journey: 'chevrons',  // upward chevrons
 };
@@ -583,6 +614,19 @@ function getClubPattern(clubName) {
   const k = clubKey(clubName);
   return (k && CLUB_PATTERNS[k]) || 'none';
 }
+
+// Grade band per club, straight from the Awana Clubs catalog. Printed as a
+// small rounded tab chip (the catalog's signature "AGES / GRADES" chip) so a
+// door volunteer can route a new or visiting kid to the right room without
+// asking. Missing/unknown club → no chip.
+const CLUB_GRADES = {
+  puggle:  'AGES 2–3',
+  cubbie:  'AGES 3–5',
+  spark:   'GRADES K–2',
+  't&t':   'GRADES 3–6',
+  trek:    'GRADES 6–8',
+  journey: 'GRADES 9–12',
+};
 
 // Monogram fallback for the icon panel: when the client doesn't supply a
 // club logo (page layout changed, image failed to scrape), the label still
@@ -596,6 +640,22 @@ const CLUB_MONOGRAM = {
   trek:    'TR',
   journey: 'J',
 };
+
+// Four-point sparkle ✦ — the doodle the Awana catalog scatters on every page.
+// Used as a small celebratory accent (emblem badges, step-up callout).
+function drawSparkle(ctx, cx, cy, r, ink) {
+  ctx.save();
+  ctx.fillStyle = ink;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.quadraticCurveTo(cx, cy, cx + r, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy + r);
+  ctx.quadraticCurveTo(cx, cy, cx - r, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy - r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
 
 // Draw one club pattern in the vertical stripe (x, y, w, h). The caller has
 // already clipped to the badge's rounded corners. `ink` is black on normal
@@ -634,6 +694,36 @@ function drawClubStripe(ctx, pattern, x, y, w, h, ink) {
         ctx.fillRect(x, cy, w, 3);
       }
       break;
+    case 'apples': {
+      // Cubbies apple awards: filled apple silhouettes (body + stem)
+      const r = w * 0.34;
+      for (let cy = y + 8; cy <= y + h - 5; cy += 12) {
+        const cx = x + w / 2;
+        ctx.fillRect(cx - 0.5, cy - r - 2.5, 1, 3);         // stem
+        ctx.beginPath();                                     // body, slightly wide
+        ctx.ellipse(cx, cy, r * 1.15, r, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'hexagons': {
+      // T&T shield: chain of hexagon outlines
+      ctx.lineWidth = 1.4;
+      const r = w / 2 - 0.8;
+      for (let cy = y + 7; cy <= y + h - 4; cy += 11) {
+        const cx = x + w / 2;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 6 + i * Math.PI / 3;  // flat-top hexagon
+          const px = cx + r * Math.cos(a);
+          const py = cy + r * Math.sin(a);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+      break;
+    }
     case 'hatch': {
       ctx.lineWidth = 2;
       for (let cy = y; cy <= y + h + w; cy += 8) {
@@ -836,17 +926,58 @@ async function generateLabel(
       } catch { /* decode failed — fall through to the monogram badge */ }
     }
     if (!logoDrawn) {
-      // Monogram badge: solid disc + club initials in the club's own font.
-      // Solid ink stays crisp on thermal output where a grayscale logo
-      // placeholder would just dither away.
-      const monogram = CLUB_MONOGRAM[clubKey(clubName)] || '?';
+      // Monogram badge: solid emblem + club initials in the club's own font.
+      // Badge shapes follow the catalog: Cubbies get an apple (their award
+      // motif), T&T gets its hexagon shield, Sparks gets pilot wings from the
+      // flight theme; everyone else gets a disc. Solid ink stays crisp on
+      // thermal output where a grayscale logo placeholder would dither away.
+      const k = clubKey(clubName);
+      const monogram = CLUB_MONOGRAM[k] || '?';
       const cx = BX + ICON_COL_W / 2;
       const cy = BY + BH / 2;
       const radius = 28;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fillStyle = COLOR.stripe;
-      ctx.fill();
+      if (k === 't&t') {
+        // Hexagon shield (flat-top), same silhouette as the T&T logo
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 6 + i * Math.PI / 3;
+          const px = cx + radius * 1.08 * Math.cos(a);
+          const py = cy + radius * 1.08 * Math.sin(a);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+      } else if (k === 'cubbie') {
+        // Apple: round body + stem + leaf
+        ctx.fillRect(cx - 1.5, cy - radius - 8, 3, 9);       // stem
+        ctx.beginPath();                                      // leaf
+        ctx.ellipse(cx + 8, cy - radius - 4, 7, 3.5, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();                                      // body
+        ctx.ellipse(cx, cy + 1, radius * 1.06, radius * 0.96, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (k === 'spark') {
+        // Disc with pilot wings — the Sparks flight badge
+        for (const dir of [-1, 1]) {
+          for (let i = 0; i < 3; i++) {
+            const wy = cy - 6 + i * 6;
+            ctx.beginPath();
+            ctx.moveTo(cx + dir * (radius - 2), wy);
+            ctx.lineTo(cx + dir * (radius + 9 - i * 2), wy - 3);
+            ctx.lineTo(cx + dir * (radius + 9 - i * 2), wy + 1.5);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
       const mFont = getClubFontFamily(clubName);
       const mSize = fitFontSize(ctx, monogram, 'bold', radius * 1.5, 30, 12, mFont);
       ctx.font = `bold ${mSize}px ${mFont}`;
@@ -855,6 +986,8 @@ async function generateLabel(
       ctx.fillStyle = COLOR.bg;
       ctx.fillText(monogram, cx, cy + 1);
       ctx.textBaseline = 'top';  // restore default used by the text area
+      // Catalog-style sparkle accent beside the emblem
+      drawSparkle(ctx, cx + radius + 6, cy - radius - 2, 3.2, COLOR.stripe);
     }
   }
 
@@ -862,7 +995,7 @@ async function generateLabel(
   // Per-club pattern in solid ink, hugging the left edge — the fastest
   // "which club is this kid in" cue when sorting at the door, and it stays
   // crisp on a 1-bit thermal printer where hues would all flatten to gray:
-  // dots = Puggles, solid = Cubbies, zigzag = Sparks, rungs = T&T,
+  // dots = Puggles, apples = Cubbies, zigzag = Sparks, hexagons = T&T,
   // hatch = Trek, chevrons = Journey.
   const stripePattern = getClubPattern(clubName);
   if (stripePattern !== 'none') {
@@ -871,6 +1004,30 @@ async function generateLabel(
     ctx.clip();
     drawClubStripe(ctx, stripePattern, BX, BY, STRIPE_W, BH, COLOR.stripe);
     ctx.restore();
+  }
+
+  // ── Grade-band tab chip ───────────────────────────────────────────────────
+  // The catalog's signature rounded "AGES / GRADES" chip, bottom-left corner:
+  // lets a door volunteer route a visiting kid to the right room at a glance.
+  // Skipped on step-up labels — the callout line is the message there.
+  const gradeBand = !stepUp ? CLUB_GRADES[clubKey(clubName)] : null;
+  if (gradeBand) {
+    const gFont = 'bold 6.5px Arial, sans-serif';
+    ctx.font = gFont;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    const gPadX = 3.5;
+    const gW = ctx.measureText(gradeBand).width + gPadX * 2;
+    const gH = 12;
+    const gX = BX + STRIPE_W + 5;
+    const gY = BY + BH - 5 - gH;
+    ctx.fillStyle = COLOR.stripe;
+    roundedRect(ctx, gX, gY, gW, gH, 4);
+    ctx.fill();
+    ctx.fillStyle = COLOR.bg;
+    ctx.fillText(gradeBand, gX + gPadX, gY + gH - 3.5);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
   }
 
   // ── Text area ─────────────────────────────────────────────────────────────
@@ -884,7 +1041,10 @@ async function generateLabel(
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 
-  const ALLERGY_STRIP_H = 0;  // No bottom strip — allergy icons go in bottom-right corner
+  // When the bottom-right row (allergy chips / cake / shares) will print,
+  // reserve a little bottom space and nudge the centered text block up so a
+  // long group line can never collide with the chips.
+  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null) ? 14 : 0;
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
@@ -965,6 +1125,12 @@ async function generateLabel(
     groupStr = truncateTextCanvas(ctx, groupStr, groupFont, textW);
     ctx.fillStyle = COLOR.group;
     ctx.fillText(groupStr, textCenterX, y);
+    if (stepUp) {
+      // Celebration sparkles flanking the callout, catalog-doodle style
+      const gw = ctx.measureText(groupStr).width;
+      drawSparkle(ctx, textCenterX - gw / 2 - 8, y + fs4 / 2, 3.5, COLOR.group);
+      drawSparkle(ctx, textCenterX + gw / 2 + 8, y + fs4 / 2, 3.5, COLOR.group);
+    }
     y += fs4;
   }
 
@@ -1069,7 +1235,10 @@ async function generateLabel(
 // PrintDocument object itself so the PrintPage handler can load it fresh —
 // this sidesteps the .NET event handler scope issue where outer-scope
 // variables are not reliably accessible inside add_PrintPage scriptblocks.
-function printImage(imagePath, printerName) {
+// Runs via async execFile (argument vector, no shell quoting) so a slow
+// spooler can never freeze the event loop. Do not call directly — go through
+// printImage(), which serializes jobs.
+async function runPrintJob(imagePath, printerName) {
   // Escape single quotes in paths/names for PowerShell single-quoted strings
   const safePath    = imagePath.replace(/'/g, "''");
   const safePrinter = (printerName || '').replace(/'/g, "''");
@@ -1101,26 +1270,48 @@ $pd.Dispose()
     let lastErr = null;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
-          timeout: 15000,
-          windowsHide: true,
-          encoding: 'utf8'
-        });
-        if (result) console.log('[print] PowerShell:', result.trim());
+        const { stdout } = await execFileAsync(
+          'powershell',
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psPath],
+          { timeout: 15000, windowsHide: true, encoding: 'utf8' }
+        );
+        if (stdout && stdout.trim()) console.log('[print] PowerShell:', stdout.trim());
+        printStats.lastPrintAt = new Date().toISOString();
+        printStats.lastError = null;
         return;
       } catch (e) {
         lastErr = e;
         if (attempt < 2) {
           console.warn(`[print] Attempt ${attempt} failed (${e.message.split('\n')[0]}) — retrying in 750ms`);
-          // Synchronous wait keeps the existing blocking print contract
-          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
+          await new Promise(r => setTimeout(r, 750));
         }
       }
     }
+    printStats.lastError = { at: new Date().toISOString(), message: (lastErr.message || '').split('\n')[0] };
     throw lastErr;
   } finally {
     fs.unlink(psPath, () => {});
   }
+}
+
+// ── Serialized print queue ────────────────────────────────────────────────────
+// Printing used to call execSync, which froze the entire event loop for up to
+// ~31s per print (2 × 15s timeout + retry wait): health checks stalled, other
+// check-ins queued at the TCP layer, and the tray app looked dead. Prints now
+// run through async execFile, serialized one-at-a-time so two simultaneous
+// check-ins can't race the Windows spooler with parallel PowerShell processes.
+// Callers await the returned promise, so per-request error handling and PNG
+// cleanup timing are unchanged.
+const printStats = { queued: 0, lastPrintAt: null, lastError: null };
+let printChain = Promise.resolve();
+function printImage(imagePath, printerName) {
+  printStats.queued++;
+  const job = printChain
+    .then(() => runPrintJob(imagePath, printerName))
+    .finally(() => { printStats.queued--; });
+  // Keep the chain alive after a failed job — the next print must still run.
+  printChain = job.catch(() => {});
+  return job;
 }
 
 // ── Express server ────────────────────────────────────────────────────────────
@@ -1211,6 +1402,12 @@ app.post('/update-csv', (req, res) => {
   const csvPath = path.join(__dirname, 'clubbers.csv');
   const tmpPath = csvPath + '.tmp';
   try {
+    // Keep one backup generation: if a bad sync ever lands (empty export,
+    // truncated download), clubbers.csv.bak is last week's known-good roster
+    // a volunteer can restore by renaming. Best-effort — never blocks a sync.
+    try {
+      if (fs.existsSync(csvPath)) fs.copyFileSync(csvPath, csvPath + '.bak');
+    } catch (e) { console.warn('[csv] Could not write clubbers.csv.bak:', e.message); }
     // Atomic write: write to a temp file then rename over the target, so a
     // crash or concurrent reader mid-write can never observe a truncated CSV.
     fs.writeFileSync(tmpPath, csv, 'utf8');
@@ -1369,7 +1566,7 @@ app.post('/print', async (req, res) => {
     );
     pngPath = result.pngPath;
 
-    printImage(pngPath, effectivePrinter);
+    await printImage(pngPath, effectivePrinter);
 
     if (pusher) {
       pusher.trigger('awana-channel', 'checkin', {
@@ -1534,7 +1731,7 @@ app.post('/reprint', async (req, res) => {
     );
     pngPath = result.pngPath;
 
-    printImage(pngPath, effectivePrinter);
+    await printImage(pngPath, effectivePrinter);
 
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
@@ -1634,6 +1831,11 @@ app.get('/health', async (req, res) => {
     version: SERVER_VERSION,
     latestVersion: latestVersion,
     uptime: Math.round(process.uptime()),
+    // Print pipeline observability: jobs waiting/running in the serialized
+    // queue, when the last label successfully printed, and the last error.
+    printQueue: printStats.queued,
+    lastPrintAt: printStats.lastPrintAt,
+    lastPrintError: printStats.lastError,
     warnings
   });
 });
@@ -1781,7 +1983,7 @@ try {
       try {
         console.log('[prewarm] Sending blank label to printer...');
         const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
-        printImage(result.pngPath, PRINTER_NAME);
+        await printImage(result.pngPath, PRINTER_NAME);
         fs.unlink(result.pngPath, () => {});
         console.log('[prewarm] Done');
       } catch (e) {
