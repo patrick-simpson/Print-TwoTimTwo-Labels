@@ -1,4 +1,52 @@
-﻿## [3.8.0] - 2026-07-11
+﻿## [4.0.0] - 2026-07-11
+Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
+
+### One-tap reprints in the widget (chrome-extension/content.js)
+New **Tonight** section in the widget lists today's prints (name, time) with a Reprint button per row — rescues torn/jammed/lost labels without leaving the check-in page. Refreshes when the panel opens, after every successful print, and once a minute while expanded. Uses the existing `/history/today` + `/reprint` endpoints.
+
+### Tonight at a glance (print-server)
+- New `GET /stats/tonight`: unique kids checked in, labels printed, visitors, per-club counts, plus safety flags for everyone in the building — allergy kids (with tokens), birthday-week kids, and no-photo kids. Each child counts once regardless of reprints.
+- Dashboard gets a "Tonight at a Glance" card: per-club chips and color-coded allergy / no-photo / birthday rows, refreshed every 15 s.
+- Print history entries now record the `visitor` flag so visitor counts are accurate.
+
+### Offline roster cache (chrome-extension/content.js)
+The scraped roster (names, clubs, logos) is persisted to `chrome.storage.local` (2-week TTL, 400-entry cap) and restored automatically when the page can't render its roster — site down, Wi-Fi drop, offline reload. Widget search keeps working, and selecting a cached kid with no live page row prints the label anyway (label-only; do the TwoTimTwo check-in when the site is back). Combined with the existing print queue, a mid-event outage no longer stops the door.
+
+### One-click self-update
+- New `POST /update-now`: the server exits with code 99 after confirming an update exists.
+- `launch-awana.bat` treats exit 99 as "re-run the update check" — it downloads the latest installer and restarts on the new version (the launcher already updates on every launch; this adds mid-season one-click updates).
+- The widget's update notice and the dashboard banner both grow an **Update now** button.
+
+### Med Release → no-photo label icon (print-server/server.js)
+- New CSV column `MedRelease` (aliases: Med/Medical/Media/Photo Release, Photo Permission) parsed as y/n. Only an explicit "n"/"no"/"false"/"0" flags the child — blank or missing prints nothing.
+- Flagged kids get a **crossed-out camera** (camera emoji + drawn slash) in the label's bottom-right icon row, and appear in `/stats/tonight` + the dashboard as NO PHOTOS.
+- `clubbers-template.csv` updated with the new column; enrichment logs show `NO PHOTO`.
+
+### Website redesigned from scratch
+New single-page site (App.tsx + Nav/Hero/Features/InstallGuide/Simulator/Faq components, PrintServerInfo removed): hero with a CSS mock of the real 4×2 label, 3-step "How it works", v4 feature grid, 4-step install guide with copy-to-clipboard command and connection test, the working check-in simulator (now with a functional name filter) styled as a browser mock, and a volunteer FAQ. Inter font, brand green palette, fully responsive.
+
+## [3.9.0] - 2026-07-11
+Housekeeping release: sibling check-in disabled for now, widget panel reorganized, dead code removed.
+
+### Sibling check-in disabled (chrome-extension/content.js)
+Both triggers — the sibling panel after a normal check-in and Quick Mode's auto-sibling batch — are commented out with `SIBLING CHECK-IN DISABLED` markers. All the underlying functions (`findSiblings`, `showSiblingPanel`, `batchCheckInSiblings`, …) are kept intact so the feature can be re-enabled by uncommenting the two blocks. Quick Mode hint and website copy updated to match ("currently disabled").
+
+### Widget interface cleanup (chrome-extension/content.js)
+The expanded panel is reorganized into labeled sections, most-used first:
+1. **Search + Quick Mode** at the top
+2. **Night Modes** — Step Up Night, Awana Store Night
+3. **Printing** — mode selector, Test, printer picker
+4. **Walk-in Guest** — name, club, visitor
+5. Status lines (queue, roster sync, warnings) and Help at the bottom
+
+New shared `sectionLabel()`/`divider()` helpers replace the hand-rolled duplicate style blocks.
+
+### Dead code removed
+- `lastPrintTime` (extension): assigned in four places but never read — the cooldown guard it armed was removed in v3.6.1.
+- `printHistory` (server): loaded at startup but never used; `/history` reads the file per request.
+- Stale "Text truncation helper" comment block referencing pdfkit, which the server no longer uses.
+
+## [3.8.0] - 2026-07-11
 Field-test fixes: duplicate label printed for the first check-in of the night; label redesign per feedback (no left stripe, allergy icons instead of words, handbook group restored).
 
 ### Bug fix: same child's label printed twice

@@ -3,19 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Awana Label Printer — Setup</title>
+    <title>Awana Label Printer — silent check-in labels for TwoTimTwo</title>
+    <meta name="description" content="Free tool that silently prints 4×2 check-in labels the moment a child checks in on TwoTimTwo.com — allergy icons, birthday flags, reprints, and a live dashboard." />
     <link rel="icon" type="image/png" href="/icon128.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            fontFamily: {
+              sans: ['Inter', 'system-ui', 'sans-serif'],
+            },
             colors: {
+              brand: {
+                50:  '#f0fdf4',
+                100: '#dcfce7',
+                200: '#bbf7d0',
+                500: '#22c55e',
+                600: '#16a34a',
+                700: '#15803d',
+                900: '#14532d',
+              },
               club: {
-                header: '#ffffff',
-                bg: '#f8f8f8',
-                accent: '#4672b3',
                 girl: '#FDCCCE',
                 girlBorder: '#FD8388',
                 boy: '#D6DCFF',
@@ -27,6 +40,7 @@
       }
     </script>
     <style>
+      html { scroll-behavior: smooth; }
       @media print {
         .no-print { display: none !important; }
         body { margin: 0; padding: 0; }
@@ -44,7 +58,7 @@
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-gray-50 text-gray-800 antialiased">
+  <body class="bg-white text-slate-800 antialiased font-sans">
     <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

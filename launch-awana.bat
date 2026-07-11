@@ -174,8 +174,18 @@ if %RESTART_COUNT% GEQ %MAX_RESTARTS% (
 cd /d "%SERVER_DIR%"
 node server.js
 
+:: Exit code 99 = the dashboard/widget "Update now" button was clicked.
+:: Re-run the update check, which downloads the latest installer and
+:: restarts the server on the new version. Not a crash - reset the counter.
+if "!errorlevel!"=="99" (
+    echo.
+    echo   [#] Update requested from the dashboard...
+    set "RESTART_COUNT=0"
+    goto :check_for_updates
+)
+
 set /a RESTART_COUNT+=1
 echo.
-echo   [!] Server exited. Restarting in 3 seconds (%RESTART_COUNT%/%MAX_RESTARTS%)...
+echo   [!] Server exited. Restarting in 3 seconds (!RESTART_COUNT!/%MAX_RESTARTS%)...
 timeout /t 3 /nobreak >nul
 goto :server_loop
