@@ -293,7 +293,7 @@ export const PrintServerInfo: React.FC = () => {
             <i className="fa fa-bolt text-blue-500 mt-0.5 flex-shrink-0"></i>
             <div>
               <strong className="text-blue-700 block mb-0.5">Quick Mode</strong>
-              <span className="text-gray-600">One-click check-in with auto-sibling detection and keyboard shortcuts. Toggle it on for the fastest check-in experience.</span>
+              <span className="text-gray-600">One-click check-in with keyboard shortcuts. Toggle it on for the fastest check-in experience.</span>
             </div>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-start gap-2">
@@ -330,8 +330,8 @@ export const PrintServerInfo: React.FC = () => {
           <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">
             <i className="fa fa-users text-purple-500 mt-0.5 flex-shrink-0"></i>
             <div>
-              <strong className="text-purple-700 block mb-0.5">Sibling batch check-in</strong>
-              <span className="text-gray-600">When a child checks in, siblings (same last name) are automatically detected with checkboxes to check them in too</span>
+              <strong className="text-purple-700 block mb-0.5">Sibling batch check-in <em className="text-gray-500 font-normal">(currently disabled)</em></strong>
+              <span className="text-gray-600">When a child checks in, siblings are detected with checkboxes to check them in too — temporarily turned off while the detection is reworked</span>
             </div>
           </div>
           <div className="bg-purple-50 border border-purple-200 rounded p-2 flex items-start gap-2">

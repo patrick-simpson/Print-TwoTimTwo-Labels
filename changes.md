@@ -1,4 +1,25 @@
-﻿## [3.8.0] - 2026-07-11
+﻿## [3.9.0] - 2026-07-11
+Housekeeping release: sibling check-in disabled for now, widget panel reorganized, dead code removed.
+
+### Sibling check-in disabled (chrome-extension/content.js)
+Both triggers — the sibling panel after a normal check-in and Quick Mode's auto-sibling batch — are commented out with `SIBLING CHECK-IN DISABLED` markers. All the underlying functions (`findSiblings`, `showSiblingPanel`, `batchCheckInSiblings`, …) are kept intact so the feature can be re-enabled by uncommenting the two blocks. Quick Mode hint and website copy updated to match ("currently disabled").
+
+### Widget interface cleanup (chrome-extension/content.js)
+The expanded panel is reorganized into labeled sections, most-used first:
+1. **Search + Quick Mode** at the top
+2. **Night Modes** — Step Up Night, Awana Store Night
+3. **Printing** — mode selector, Test, printer picker
+4. **Walk-in Guest** — name, club, visitor
+5. Status lines (queue, roster sync, warnings) and Help at the bottom
+
+New shared `sectionLabel()`/`divider()` helpers replace the hand-rolled duplicate style blocks.
+
+### Dead code removed
+- `lastPrintTime` (extension): assigned in four places but never read — the cooldown guard it armed was removed in v3.6.1.
+- `printHistory` (server): loaded at startup but never used; `/history` reads the file per request.
+- Stale "Text truncation helper" comment block referencing pdfkit, which the server no longer uses.
+
+## [3.8.0] - 2026-07-11
 Field-test fixes: duplicate label printed for the first check-in of the night; label redesign per feedback (no left stripe, allergy icons instead of words, handbook group restored).
 
 ### Bug fix: same child's label printed twice

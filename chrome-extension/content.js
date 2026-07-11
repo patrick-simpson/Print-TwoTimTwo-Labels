@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.8.0';
+  const EXTENSION_VERSION = '3.9.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -31,7 +31,6 @@
   let stepUpMode          = localStorage.getItem(STEP_UP_KEY) || 'auto';
   let storeMode           = localStorage.getItem(STORE_KEY) || 'auto';
   let lastPrintedName = null;
-  let lastPrintTime = 0;
   var batchPrintedNames = new Set();
 
   // ── Remote check-in detection state ────────────────────────────────────────
@@ -688,14 +687,11 @@
     setStatus('\u23F3');
 
     // Fire print in background immediately — don't wait for check-in to complete.
-    // Guard against onCheckin double-printing via two layers:
-    //   1. batchPrintedNames Set (8 s window) — primary guard
-    //   2. lastPrintTime reset — secondary cooldown guard
+    // batchPrintedNames (8 s window) guards against onCheckin double-printing.
     var club = lookupClub(sib.name);
     var sibKey = sib.name.toLowerCase().trim();
     batchPrintedNames.add(sibKey);
     setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
-    lastPrintTime = Date.now(); // also arm the cooldown guard
     markPrinted(sib.name); // record in session dedup so remote scan won't reprint
     doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
 
@@ -740,6 +736,22 @@
     // Default to minimized so the widget never obstructs the page on first load.
     // Only stay expanded if the user explicitly expanded it (stored 'false').
     var isMinimized = localStorage.getItem(MINIMIZE_KEY) !== 'false';
+
+    // Shared building blocks so every section of the panel looks the same.
+    function sectionLabel(text) {
+      var el = document.createElement('div');
+      Object.assign(el.style, {
+        fontSize: '10px', color: '#94a3b8', fontWeight: '600',
+        textTransform: 'uppercase', letterSpacing: '0.05em'
+      });
+      el.textContent = text;
+      return el;
+    }
+    function divider() {
+      var el = document.createElement('div');
+      Object.assign(el.style, { height: '1px', background: '#e2e8f0', margin: '2px 0' });
+      return el;
+    }
 
     // ── Outer container ──
     const widget = document.createElement('div');
@@ -896,12 +908,7 @@
     var printerRow = document.createElement('div');
     Object.assign(printerRow.style, { display: 'flex', flexDirection: 'column', gap: '2px' });
 
-    var printerLabel = document.createElement('div');
-    Object.assign(printerLabel.style, {
-      fontSize: '10px', color: '#94a3b8', fontWeight: '600',
-      textTransform: 'uppercase', letterSpacing: '0.05em'
-    });
-    printerLabel.textContent = 'Printer';
+    var printerLabel = sectionLabel('Printer');
 
     var printerSelect = document.createElement('select');
     printerSelect.id = 'awana-printer-select';
@@ -950,15 +957,7 @@
     });
 
     // Walk-in guest section
-    var walkInDivider = document.createElement('div');
-    Object.assign(walkInDivider.style, { height: '1px', background: '#e2e8f0', margin: '2px 0' });
-
-    var walkInLabel = document.createElement('div');
-    Object.assign(walkInLabel.style, {
-      fontSize: '10px', color: '#94a3b8', fontWeight: '600',
-      textTransform: 'uppercase', letterSpacing: '0.05em'
-    });
-    walkInLabel.textContent = 'Walk-in Guest';
+    var walkInLabel = sectionLabel('Walk-in Guest');
 
     var walkInRow = document.createElement('div');
     Object.assign(walkInRow.style, { display: 'flex', gap: '4px' });
@@ -1081,7 +1080,7 @@
     quickModeText.textContent = 'Quick Mode';
     var quickModeHint = document.createElement('span');
     Object.assign(quickModeHint.style, { fontSize: '10px', color: '#64748b', fontWeight: '400' });
-    quickModeHint.textContent = 'One-click, auto-siblings, keyboard';
+    quickModeHint.textContent = 'One-click check-in + keyboard';
     quickModeLbl.append(quickModeCb, quickModeText);
     quickModeRow.append(quickModeLbl, quickModeHint);
 
@@ -1356,7 +1355,6 @@
       if (quickModeEnabled) {
         // Quick Mode: print immediately + auto-click the clubber element to check in on TwoTimTwo
         markPrinted(name);
-        lastPrintTime = Date.now();
         doPrint(name, meta.clubName || '', meta.clubImageData || null);
         var el = meta.element;
         if (el && el.isConnected) {
@@ -1485,7 +1483,17 @@
         });
     });
 
-    panelBody.append(quickModeRow, stepUpRow, storeRow, searchContainer, controls, printerRow, walkInDivider, walkInLabel, walkInRow, walkInClubRow, queueBadge, csvStatus, csvWarningBanner, updateRow, soundRow, helpBtn);
+    // Panel layout, most-used first: search + Quick Mode on top, then the
+    // per-night toggles, printing controls, walk-in printing, and finally
+    // status lines and help.
+    panelBody.append(
+      searchContainer, quickModeRow,
+      divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
+      divider(), sectionLabel('Printing'), controls, printerRow,
+      divider(), walkInLabel, walkInRow, walkInClubRow,
+      queueBadge, csvStatus, csvWarningBanner, updateRow,
+      divider(), soundRow, helpBtn
+    );
     panel.append(panelHeader, panelBody);
     widget.append(pill, panel);
 
@@ -1820,26 +1828,26 @@
     if (batchPrintedNames.has(key)) return; // already printed in batch
     if (printedNames.has(key)) return; // already printed this session (local or remote)
 
-    lastPrintTime = Date.now();
     markPrinted(name);
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
 
-    // Check for siblings after printing the current child
-    setTimeout(function() {
-      findSiblings(name).then(function(siblings) {
-        if (siblings.length === 0) return;
-        if (quickModeEnabled) {
-          // Auto-check-in all siblings without showing the panel
-          var autoSibs = siblings.map(function(sib) {
-            return Object.assign({}, sib, { options: {} });
-          });
-          batchCheckInSiblings(autoSibs);
-        } else {
-          showSiblingPanel(siblings, name);
-        }
-      });
-    }, 500);
+    // SIBLING CHECK-IN DISABLED — re-enable by uncommenting this block.
+    // (findSiblings / showSiblingPanel / batchCheckInSiblings are kept intact.)
+    // setTimeout(function() {
+    //   findSiblings(name).then(function(siblings) {
+    //     if (siblings.length === 0) return;
+    //     if (quickModeEnabled) {
+    //       // Auto-check-in all siblings without showing the panel
+    //       var autoSibs = siblings.map(function(sib) {
+    //         return Object.assign({}, sib, { options: {} });
+    //       });
+    //       batchCheckInSiblings(autoSibs);
+    //     } else {
+    //       showSiblingPanel(siblings, name);
+    //     }
+    //   });
+    // }, 500);
   }
 
   function doPrint(fullName, clubName, imageData) {
@@ -2114,22 +2122,21 @@
     markPrinted(name);
     batchPrintedNames.add(key);
     setTimeout(function() { batchPrintedNames.delete(key); }, 8000);
-    lastPrintTime = Date.now();
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData);
 
-      // Quick Mode Auto-Sibling Check-in
-      setTimeout(function() {
-        findSiblings(name).then(function(siblings) {
-          if (siblings && siblings.length > 0) {
-            console.log("[Awana] Quick Mode: automatically checking in " + siblings.length + " sibling(s)");
-            var autoSibs = siblings.map(function(sib) {
-              return Object.assign({}, sib, { options: {} });
-            });
-            batchCheckInSiblings(autoSibs);
-          }
-        });
-      }, 500);
+    // SIBLING CHECK-IN DISABLED — re-enable by uncommenting this block.
+    // setTimeout(function() {
+    //   findSiblings(name).then(function(siblings) {
+    //     if (siblings && siblings.length > 0) {
+    //       console.log("[Awana] Quick Mode: automatically checking in " + siblings.length + " sibling(s)");
+    //       var autoSibs = siblings.map(function(sib) {
+    //         return Object.assign({}, sib, { options: {} });
+    //       });
+    //       batchCheckInSiblings(autoSibs);
+    //     }
+    //   });
+    // }, 500);
 
     // Let native click open the modal, then auto-dismiss after 150ms
     setTimeout(function() {

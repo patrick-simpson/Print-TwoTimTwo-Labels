@@ -512,10 +512,6 @@ const ALLERGY_EMOJI = {
   'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
 };
 
-// ── Text truncation helper ────────────────────────────────────────────────────
-// Returns text trimmed and suffixed with '…' if it exceeds maxWidth at the
-// given font/size. Prevents pdfkit text from printing off the edge of the label.
-
 // ── Unique temp file path ─────────────────────────────────────────────────────
 // Date.now() alone can collide when two prints land in the same millisecond
 // (double-tap on the check-in screen) — one request would then delete the
@@ -1350,8 +1346,6 @@ function addHistoryEntry(entry) {
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
   saveHistory(history);
 }
-
-let printHistory = loadHistory();
 
 app.get('/history', (req, res) => {
   const history = loadHistory();
