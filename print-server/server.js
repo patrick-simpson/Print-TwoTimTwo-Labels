@@ -539,29 +539,6 @@ function saveAttendanceLog(log) {
   }
 }
 
-// Consecutive ISO weeks (ending with the current week) that contain at least
-// one attendance date. One club night per week is the norm, so "weeks in a
-// row" — not "nights in a row" — is the streak volunteers actually mean.
-function computeStreakWeeks(dates) {
-  const weekKeys = new Set();
-  for (const s of dates) {
-    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) continue;
-    const w = getISOWeek(new Date(+m[1], +m[2] - 1, +m[3]));
-    weekKeys.add(`${w.year}-${w.week}`);
-  }
-  let streak = 0;
-  const cursor = new Date();
-  cursor.setHours(0, 0, 0, 0);
-  while (streak < weekKeys.size) {
-    const w = getISOWeek(cursor);
-    if (!weekKeys.has(`${w.year}-${w.week}`)) break;
-    streak++;
-    cursor.setDate(cursor.getDate() - 7);
-  }
-  return streak;
-}
-
 // Records tonight's attendance for a child and returns the aggregates the
 // milestone stickers need. Never throws — any failure logs a warning and
 // returns safe defaults so a check-in can't be affected.
@@ -570,7 +547,7 @@ function computeStreakWeeks(dates) {
 function recordAttendance(firstName, lastName) {
   try {
     const key = `${firstName || ''} ${lastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (!key) return { isNewTonight: false, totalNights: 0, streakWeeks: 0 };
+    if (!key) return { isNewTonight: false, totalNights: 0 };
 
     const log = loadAttendanceLog();
     const existing = Array.isArray(log[key]) ? log[key].filter(d => typeof d === 'string') : [];
@@ -581,10 +558,10 @@ function recordAttendance(firstName, lastName) {
       log[key] = dates;
       saveAttendanceLog(log);
     }
-    return { isNewTonight, totalNights: dates.length, streakWeeks: computeStreakWeeks(dates) };
+    return { isNewTonight, totalNights: dates.length };
   } catch (e) {
     console.warn('[attendance] Failed to record attendance:', e.message);
-    return { isNewTonight: false, totalNights: 0, streakWeeks: 0 };
+    return { isNewTonight: false, totalNights: 0 };
   }
 }
 
@@ -1109,9 +1086,11 @@ async function generateLabel(
 // never be destabilized by sticker changes. Same canvas geometry and
 // thermal-first palette: solid black on white only.
 const STICKER_EMOJI_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
-// Text face first so letters render in Arial; emoji glyphs fall through to
-// the emoji fonts (Arial has none).
-const STICKER_TEXT_STACK = `Arial, ${STICKER_EMOJI_STACK}`;
+// Playful text face (same Comic Sans the Cubbies/Puggles labels use).
+// Deliberately NO emoji families here: when they share a stack, digits can
+// resolve to the emoji font's wide keycap glyphs. Text and emoji are always
+// drawn as separate fillText calls with their own stacks.
+const STICKER_FUN_STACK = "'Comic Sans MS', 'Trebuchet MS', Arial, sans-serif";
 
 function newStickerCanvas() {
   const canvas = createCanvas(PX_W, PX_H);
@@ -1119,15 +1098,8 @@ function newStickerCanvas() {
   ctx.scale(SCALE, SCALE);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, PAGE_W, PAGE_H);
-  // Festive framed border sets stickers apart from the plain check-in label
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 2.5;
-  roundedRect(ctx, BX, BY, BW, BH, CORNER);
-  ctx.stroke();
-  ctx.lineWidth = 1;
-  roundedRect(ctx, BX + 4, BY + 4, BW - 8, BH - 8, CORNER - 4);
-  ctx.stroke();
   ctx.fillStyle = '#000000';
+  ctx.strokeStyle = '#000000';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   return { canvas, ctx };
@@ -1140,74 +1112,159 @@ function finishSticker(canvas) {
   return { pngPath, buffer };
 }
 
-function generateBirthdaySticker(firstName) {
+// Party border: dashed rounded frame reads as "cut here / party invite" and
+// stays crisp on 1-bit thermal output.
+function drawPartyBorder(ctx) {
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([7, 5]);
+  roundedRect(ctx, BX, BY, BW, BH, CORNER);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Hand-placed confetti (solid dots, rings, triangles) — deterministic so
+// every sticker prints identically; positions hug the edges clear of text.
+function drawConfetti(ctx, spots) {
+  ctx.save();
+  ctx.lineWidth = 1.2;
+  for (const s of spots) {
+    if (s.shape === 'dot') {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (s.shape === 'ring') {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {  // tri
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - s.r);
+      ctx.lineTo(s.x + s.r, s.y + s.r);
+      ctx.lineTo(s.x - s.r, s.y + s.r);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+// Filled starburst path centered on (cx, cy) — the badge behind the
+// milestone number.
+function drawStarburst(ctx, cx, cy, outer, inner, points) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = (i % 2 === 0) ? outer : inner;
+    const a = (Math.PI * i) / points - Math.PI / 2;
+    const x = cx + r * Math.cos(a);
+    const y = cy + r * Math.sin(a);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function generateBirthdaySticker() {
   const { canvas, ctx } = newStickerCanvas();
+  drawPartyBorder(ctx);
   const cx = PAGE_W / 2;
-  const maxW = BW - 28;
+  const maxW = BW - 60;  // keep clear of the corner emoji
 
-  const banner = '🎉 HAPPY BIRTHDAY! 🎂';  // 🎉 ... 🎂
-  const bannerSize = fitFontSize(ctx, banner, 'bold', maxW, 20, 12, STICKER_TEXT_STACK);
-  const bannerY = BY + 14;
-  ctx.font = `bold ${bannerSize}px ${STICKER_TEXT_STACK}`;
-  ctx.fillText(banner, cx, bannerY);
+  // Party emoji anchored in the corners
+  ctx.font = `22px ${STICKER_EMOJI_STACK}`;
+  ctx.fillText('🎈', BX + 22, BY + 8);   // 🎈
+  ctx.fillText('🎉', BX + BW - 22, BY + 8);   // 🎉
+  ctx.fillText('🎁', BX + 22, BY + BH - 32);  // 🎁
+  ctx.fillText('🎂', BX + BW - 22, BY + BH - 32);  // 🎂
 
-  const footer = 'from your Awana family';
-  const footerSize = 11;
-  const footerY = BY + BH - footerSize - 12;
-  ctx.font = `italic ${footerSize}px ${STICKER_TEXT_STACK}`;
-  ctx.fillText(footer, cx, footerY);
+  // Two big playful lines, tilted a touch like a hand-placed party banner
+  const line1 = 'MY BIRTHDAY';
+  const line2 = 'IS THIS WEEK!';
+  const s1 = fitFontSize(ctx, line1, 'bold', maxW, 38, 20, STICKER_FUN_STACK);
+  const s2 = fitFontSize(ctx, line2, 'bold', maxW, 38, 20, STICKER_FUN_STACK);
+  const gap = 6;
+  const blockH = s1 + gap + s2;
+  const topY = BY + (BH - blockH) / 2;
+  ctx.save();
+  ctx.translate(cx, topY + blockH / 2);
+  ctx.rotate(-0.035);
+  ctx.font = `bold ${s1}px ${STICKER_FUN_STACK}`;
+  ctx.fillText(line1, 0, -blockH / 2);
+  ctx.font = `bold ${s2}px ${STICKER_FUN_STACK}`;
+  ctx.fillText(line2, 0, -blockH / 2 + s1 + gap);
+  ctx.restore();
 
-  // Big first name centered in the space between banner and footer
-  const name = String(firstName || '').trim() || 'Friend';
-  const nameSize = fitFontSize(ctx, name, 'bold', maxW, 46, 18, STICKER_TEXT_STACK);
-  const nameFont = `bold ${nameSize}px ${STICKER_TEXT_STACK}`;
-  ctx.font = nameFont;
-  const safeName = truncateTextCanvas(ctx, name, nameFont, maxW);
-  const bandTop = bannerY + bannerSize;
-  ctx.fillText(safeName, cx, bandTop + (footerY - bandTop - nameSize) / 2);
+  drawConfetti(ctx, [
+    { x: cx - 92, y: BY + 22, r: 3,   shape: 'dot'  },
+    { x: cx - 60, y: BY + 14, r: 2.5, shape: 'ring' },
+    { x: cx - 26, y: BY + 20, r: 3,   shape: 'tri'  },
+    { x: cx + 22, y: BY + 13, r: 2.5, shape: 'dot'  },
+    { x: cx + 58, y: BY + 21, r: 3,   shape: 'ring' },
+    { x: cx + 94, y: BY + 14, r: 2.5, shape: 'tri'  },
+    { x: cx - 96, y: BY + BH - 18, r: 2.5, shape: 'tri'  },
+    { x: cx - 58, y: BY + BH - 13, r: 3,   shape: 'ring' },
+    { x: cx - 20, y: BY + BH - 19, r: 2.5, shape: 'dot'  },
+    { x: cx + 26, y: BY + BH - 13, r: 3,   shape: 'tri'  },
+    { x: cx + 62, y: BY + BH - 19, r: 2.5, shape: 'dot'  },
+    { x: cx + 96, y: BY + BH - 14, r: 3,   shape: 'ring' },
+  ]);
 
   return finishSticker(canvas);
 }
 
-function generateMilestoneSticker(firstName, kind, n) {
+function generateMilestoneSticker(firstName, n) {
   const { canvas, ctx } = newStickerCanvas();
+  drawPartyBorder(ctx);
   const cx = PAGE_W / 2;
-  const maxW = BW - 28;
+  const maxW = BW - 24;
 
-  // Huge number flanked by stars — the number IS the celebration
-  const numText = `⭐ ${n} ⭐`;  // ⭐ N ⭐
-  const numSize = fitFontSize(ctx, numText, 'bold', maxW, 52, 24, STICKER_TEXT_STACK);
-  const numY = BY + 10;
-  ctx.font = `bold ${numSize}px ${STICKER_TEXT_STACK}`;
-  ctx.fillText(numText, cx, numY);
-
-  const headline = kind === 'streak' ? 'WEEKS IN A ROW!' : 'NIGHTS AT AWANA!';
-  const headSize = fitFontSize(ctx, headline, 'bold', maxW, 19, 12, STICKER_TEXT_STACK);
-  const headY = numY + numSize + 4;
-  ctx.font = `bold ${headSize}px ${STICKER_TEXT_STACK}`;
-  ctx.fillText(headline, cx, headY);
-
-  // Name centered in the band left under the headline
+  // Top: personal cheer, flanked by party poppers drawn as separate emoji
   const name = String(firstName || '').trim() || 'Friend';
-  const nameSize = fitFontSize(ctx, name, 'bold', maxW, 24, 12, STICKER_TEXT_STACK);
-  const nameFont = `bold ${nameSize}px ${STICKER_TEXT_STACK}`;
-  ctx.font = nameFont;
-  const safeName = truncateTextCanvas(ctx, name, nameFont, maxW);
-  const bandTop = headY + headSize;
-  ctx.fillText(safeName, cx, bandTop + (BY + BH - 8 - bandTop - nameSize) / 2);
+  const cheer = `WAY TO GO, ${name.toUpperCase()}!`;
+  const cheerMaxW = maxW - 64;  // leave room for the flanking 🎉
+  const cheerSize = fitFontSize(ctx, cheer, 'bold', cheerMaxW, 17, 10, STICKER_FUN_STACK);
+  const cheerFont = `bold ${cheerSize}px ${STICKER_FUN_STACK}`;
+  ctx.font = cheerFont;
+  const safeCheer = truncateTextCanvas(ctx, cheer, cheerFont, cheerMaxW);
+  const cheerW = ctx.measureText(safeCheer).width;
+  ctx.fillText(safeCheer, cx, BY + 8);
+  ctx.font = `${cheerSize + 2}px ${STICKER_EMOJI_STACK}`;
+  ctx.fillText('🎉', cx - cheerW / 2 - 16, BY + 7);  // 🎉
+  ctx.fillText('🎉', cx + cheerW / 2 + 16, BY + 7);  // 🎉
+
+  // Middle: huge number knocked out of a solid starburst badge
+  const burstCY = BY + 68;
+  drawStarburst(ctx, cx, burstCY, 38, 28, 14);
+  ctx.fill();
+  const numText = String(n);
+  const numSize = fitFontSize(ctx, numText, 'bold', 40, 40, 18, STICKER_FUN_STACK);
+  ctx.font = `bold ${numSize}px ${STICKER_FUN_STACK}`;
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(numText, cx, burstCY + 1);
+  ctx.fillStyle = '#000000';
+  ctx.textBaseline = 'top';
+
+  // Stars flanking the burst
+  ctx.font = `26px ${STICKER_EMOJI_STACK}`;
+  ctx.fillText('⭐', cx - 82, burstCY - 16);  // ⭐
+  ctx.fillText('⭐', cx + 82, burstCY - 16);  // ⭐
+
+  // Bottom: what the number means
+  const tagline = 'NIGHTS AT AWANA!';
+  const tagSize = fitFontSize(ctx, tagline, 'bold', maxW, 20, 12, STICKER_FUN_STACK);
+  ctx.font = `bold ${tagSize}px ${STICKER_FUN_STACK}`;
+  ctx.fillText(tagline, cx, BY + BH - tagSize - 10);
+
+  drawConfetti(ctx, [
+    { x: BX + 26,      y: burstCY - 34, r: 3,   shape: 'dot'  },
+    { x: BX + 44,      y: burstCY + 2,  r: 2.5, shape: 'tri'  },
+    { x: BX + 24,      y: burstCY + 30, r: 3,   shape: 'ring' },
+    { x: BX + BW - 26, y: burstCY - 34, r: 3,   shape: 'ring' },
+    { x: BX + BW - 44, y: burstCY + 2,  r: 2.5, shape: 'dot'  },
+    { x: BX + BW - 24, y: burstCY + 30, r: 3,   shape: 'tri'  },
+  ]);
 
   return finishSticker(canvas);
-}
-
-// Milestone selection: at most ONE milestone sticker per child per night so
-// the printer doesn't spit a stack of paper at one kid. Total-nights wins
-// over streaks when both land on the same night.
-const STREAK_MILESTONES = new Set([3, 5, 10, 15, 20]);
-
-function pickMilestone(totalNights, streakWeeks) {
-  if (totalNights >= 5 && totalNights % 5 === 0) return { kind: 'total', n: totalNights };
-  if (STREAK_MILESTONES.has(streakWeeks)) return { kind: 'streak', n: streakWeeks };
-  return null;
 }
 
 // ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
@@ -1545,7 +1602,7 @@ app.post('/print', async (req, res) => {
     if (birthday) {
       let stickerPath = null;
       try {
-        const sticker = generateBirthdaySticker(firstName);
+        const sticker = generateBirthdaySticker();
         stickerPath = sticker.pngPath;
         printImage(stickerPath, effectivePrinter);
         console.log(`[sticker] Birthday sticker printed for ${firstName} ${lastName}`);
@@ -1556,20 +1613,18 @@ app.post('/print', async (req, res) => {
       }
     }
 
-    if (attendance.isNewTonight) {
-      const milestone = pickMilestone(attendance.totalNights, attendance.streakWeeks);
-      if (milestone) {
-        let stickerPath = null;
-        try {
-          const sticker = generateMilestoneSticker(firstName, milestone.kind, milestone.n);
-          stickerPath = sticker.pngPath;
-          printImage(stickerPath, effectivePrinter);
-          console.log(`[sticker] Milestone sticker printed for ${firstName} ${lastName}: ${milestone.n} ${milestone.kind === 'streak' ? 'weeks in a row' : 'total nights'}`);
-        } catch (e) {
-          console.warn('[sticker] Milestone sticker failed (check-in unaffected):', e.message);
-        } finally {
-          if (stickerPath) fs.unlink(stickerPath, () => {});
-        }
+    // Cumulative milestone: every 5th night at Awana earns a sticker.
+    if (attendance.isNewTonight && attendance.totalNights >= 5 && attendance.totalNights % 5 === 0) {
+      let stickerPath = null;
+      try {
+        const sticker = generateMilestoneSticker(firstName, attendance.totalNights);
+        stickerPath = sticker.pngPath;
+        printImage(stickerPath, effectivePrinter);
+        console.log(`[sticker] Milestone sticker printed for ${firstName} ${lastName}: ${attendance.totalNights} nights at Awana`);
+      } catch (e) {
+        console.warn('[sticker] Milestone sticker failed (check-in unaffected):', e.message);
+      } finally {
+        if (stickerPath) fs.unlink(stickerPath, () => {});
       }
     }
   } catch (err) {
@@ -1728,8 +1783,8 @@ app.get('/preview', async (req, res) => {
 // ── Celebration sticker previews ─────────────────────────────────────────────
 // Render-and-stream endpoints for field-testing the bonus stickers from a
 // browser without touching the printer or the attendance log.
-//   GET /preview/birthday?name=First+Last
-//   GET /preview/milestone?name=First+Last&kind=total|streak&n=10
+//   GET /preview/birthday
+//   GET /preview/milestone?name=First+Last&n=10
 function previewFirstName(req) {
   const { name, firstName } = req.query;
   if (firstName) return String(firstName).trim();
@@ -1739,7 +1794,7 @@ function previewFirstName(req) {
 
 app.get('/preview/birthday', (req, res) => {
   try {
-    const result = generateBirthdaySticker(previewFirstName(req));
+    const result = generateBirthdaySticker();
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
     fs.unlink(result.pngPath, () => {});
@@ -1750,11 +1805,10 @@ app.get('/preview/birthday', (req, res) => {
 });
 
 app.get('/preview/milestone', (req, res) => {
-  const kind = req.query.kind === 'streak' ? 'streak' : 'total';
   const parsed = parseInt(req.query.n, 10);
   const n = (Number.isFinite(parsed) && parsed > 0) ? parsed : 5;
   try {
-    const result = generateMilestoneSticker(previewFirstName(req), kind, n);
+    const result = generateMilestoneSticker(previewFirstName(req), n);
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
     fs.unlink(result.pngPath, () => {});
