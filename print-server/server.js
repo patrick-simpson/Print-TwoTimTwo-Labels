@@ -98,6 +98,8 @@ const HEADER_MAP = {
   'handbookgroup':  'HandbookGroup',
   'handbook group': 'HandbookGroup',
   'handbook_group': 'HandbookGroup',
+  'handbook':       'HandbookGroup',
+  'handbook time':  'HandbookGroup',
   'club':           'Club',
   'group':          'Group',
   'color':          'Color',
@@ -244,11 +246,11 @@ function loadClubbers() {
     const raw = fs.readFileSync(csvPath, 'utf8');
     const rows = parseCSV(raw);
     if (rows.length > 0) {
-      const sample = rows[0];
-      const keys = Object.keys(sample);
-      const has = (k) => keys.includes(k) ? k : null;
-      const detected = [has('FirstName'), has('LastName'), has('Birthdate'), has('HandbookGroup'), has('Allergies'), has('Notes')].filter(Boolean);
-      console.log(`[csv] Loaded ${rows.length} clubber(s) from clubbers.csv (columns: ${detected.join(', ')})`);
+      // Log every parsed column (not just the known ones) so a renamed
+      // TwoTimTwo header that misses HEADER_MAP is visible in the console
+      // instead of silently dropping enrichment (group, allergies, ...).
+      const keys = Object.keys(rows[0]);
+      console.log(`[csv] Loaded ${rows.length} clubber(s) from clubbers.csv (columns: ${keys.join(', ')})`);
       // Log a few sample names to verify parsing
       const samples = rows.slice(0, 3).map(r => `${r.FirstName} ${r.LastName}`).join(', ');
       console.log(`[csv] Sample names: ${samples}`);
@@ -273,6 +275,30 @@ function loadClubbers() {
       console.warn(`[csv] Keeping last good roster in memory (${clubbers.length} clubber(s))`);
     }
     return clubbers;
+  }
+}
+
+// ── Duplicate-print suppression ───────────────────────────────────────────────
+// A cold printer plus PowerShell startup can push a print past the client's
+// request timeout; the client then aborts and retries even though the first
+// request is still printing (or just printed). Printing is per-child-per-
+// check-in, so any /print for a name that already printed successfully within
+// this window is a duplicate — acknowledge it as success without printing.
+// Deliberate reprints go through POST /reprint, which is not gated.
+const DUPLICATE_WINDOW_MS = 25000;
+const recentPrints = new Map();  // nameKey → timestamp of last successful print
+
+function isDuplicatePrint(nameKey) {
+  const last = recentPrints.get(nameKey);
+  return last !== undefined && Date.now() - last < DUPLICATE_WINDOW_MS;
+}
+
+function recordPrint(nameKey) {
+  const now = Date.now();
+  recentPrints.set(nameKey, now);
+  // Prune expired entries so the map stays small over a whole event night
+  for (const [k, t] of recentPrints) {
+    if (now - t >= DUPLICATE_WINDOW_MS) recentPrints.delete(k);
   }
 }
 
@@ -477,6 +503,15 @@ function parseAllergies(allergiesStr) {
   return tokens;
 }
 
+// Allergen icons for the bottom-right row — icons only, no words on the label.
+const ALLERGY_EMOJI = {
+  'NUTS':   '\uD83E\uDD5C',  // 🥜
+  'DAIRY':  '\uD83E\uDD5B',  // 🥛
+  'GLUTEN': '\uD83C\uDF3E',  // 🌾
+  'EGG':    '\uD83E\uDD5A',  // 🥚
+  'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
+};
+
 // ── Text truncation helper ────────────────────────────────────────────────────
 // Returns text trimmed and suffixed with '…' if it exceeds maxWidth at the
 // given font/size. Prevents pdfkit text from printing off the edge of the label.
@@ -564,26 +599,6 @@ async function resolveImageBuffer(clubImageData) {
   return null;
 }
 
-// ── Per-club design system ────────────────────────────────────────────────────
-// The target printer is a monochrome thermal printer: hues flatten to mushy,
-// dithered grays, so color can't carry club identity. Solid-black shapes at
-// 300 dpi stay crisp — each club therefore gets a distinct PATTERN drawn in
-// pure ink inside the left identity stripe, alongside its font personality
-// below. Patterns are distinguishable at arm's length without reading text.
-const CLUB_PATTERNS = {
-  puggle:  'dots',      // playful dots for the littlest kids
-  cubbie:  'solid',     // one solid bar
-  spark:   'zigzag',    // lightning bolt echoes the Sparky flame
-  't&t':   'rungs',     // ladder rungs — Truth & Training handbook steps
-  trek:    'hatch',     // diagonal trail hatching
-  journey: 'chevrons',  // upward chevrons
-};
-
-function getClubPattern(clubName) {
-  const k = clubKey(clubName);
-  return (k && CLUB_PATTERNS[k]) || 'none';
-}
-
 // Monogram fallback for the icon panel: when the client doesn't supply a
 // club logo (page layout changed, image failed to scrape), the label still
 // gets a club emblem — a solid badge with the club's monogram, drawn in the
@@ -596,69 +611,6 @@ const CLUB_MONOGRAM = {
   trek:    'TR',
   journey: 'J',
 };
-
-// Draw one club pattern in the vertical stripe (x, y, w, h). The caller has
-// already clipped to the badge's rounded corners. `ink` is black on normal
-// labels and white on inverted step-up labels — never a mid-tone.
-function drawClubStripe(ctx, pattern, x, y, w, h, ink) {
-  ctx.save();
-  ctx.fillStyle = ink;
-  ctx.strokeStyle = ink;
-  switch (pattern) {
-    case 'solid':
-      ctx.fillRect(x, y, w, h);
-      break;
-    case 'dots': {
-      const r = w * 0.28;
-      for (let cy = y + 7; cy <= y + h - 5; cy += 11) {
-        ctx.beginPath();
-        ctx.arc(x + w / 2, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      break;
-    }
-    case 'zigzag': {
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x + w - 1.5, y + 2);
-      let left = true;
-      for (let cy = y + 9; cy <= y + h; cy += 7) {
-        ctx.lineTo(left ? x + 1.5 : x + w - 1.5, cy);
-        left = !left;
-      }
-      ctx.stroke();
-      break;
-    }
-    case 'rungs':
-      for (let cy = y + 4; cy <= y + h - 3; cy += 9) {
-        ctx.fillRect(x, cy, w, 3);
-      }
-      break;
-    case 'hatch': {
-      ctx.lineWidth = 2;
-      for (let cy = y; cy <= y + h + w; cy += 8) {
-        ctx.beginPath();
-        ctx.moveTo(x, cy);
-        ctx.lineTo(x + w, cy - w);
-        ctx.stroke();
-      }
-      break;
-    }
-    case 'chevrons': {
-      ctx.lineWidth = 2;
-      for (let cy = y + 9; cy <= y + h - 2; cy += 10) {
-        ctx.beginPath();
-        ctx.moveTo(x + 1, cy);
-        ctx.lineTo(x + w / 2, cy - 5);
-        ctx.lineTo(x + w - 1, cy);
-        ctx.stroke();
-      }
-      break;
-    }
-    // 'none' — unknown club, no stripe
-  }
-  ctx.restore();
-}
 
 // ── Club-specific font selection ──────────────────────────────────────────────
 // Each Awana club gets a distinct font personality on the label.
@@ -751,10 +703,7 @@ async function generateLabel(
     iconDivider: '#3f3f46',
     iconPlaceholder: '#d4d4d8',
     visitorBg: '#ffffff',
-    visitorText: '#000000',
-    stripe: '#ffffff',
-    chipBg: '#ffffff',
-    chipText: '#000000'
+    visitorText: '#000000'
   } : {
     bg: '#ffffff',
     name: '#000000',
@@ -766,10 +715,7 @@ async function generateLabel(
     iconDivider: '#bbbbbb',
     iconPlaceholder: '#888888',
     visitorBg: '#000000',
-    visitorText: '#ffffff',
-    stripe: '#000000',
-    chipBg: '#000000',
-    chipText: '#ffffff'
+    visitorText: '#ffffff'
   };
 
   const pngPath = tmpFilePath('awana', 'png');
@@ -789,12 +735,11 @@ async function generateLabel(
   // The icon panel shows the real club logo when the client supplied one,
   // and falls back to a monogram badge for any recognized club so the icon
   // zone never silently disappears.
-  const STRIPE_W = 7;
   const hasLogo     = !stepUp && !!clubImageBuffer;
   const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)];
   const hasIcon     = hasLogo || hasMonogram;
-  const textX   = hasIcon ? TEXT_X : BX + STRIPE_W + 6;
-  const textW   = hasIcon ? TEXT_W : BW - STRIPE_W - 14;
+  const textX   = hasIcon ? TEXT_X : BX + 10;
+  const textW   = hasIcon ? TEXT_W : BW - 20;
 
   // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
@@ -845,7 +790,7 @@ async function generateLabel(
       const radius = 28;
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fillStyle = COLOR.stripe;
+      ctx.fillStyle = COLOR.name;
       ctx.fill();
       const mFont = getClubFontFamily(clubName);
       const mSize = fitFontSize(ctx, monogram, 'bold', radius * 1.5, 30, 12, mFont);
@@ -856,21 +801,6 @@ async function generateLabel(
       ctx.fillText(monogram, cx, cy + 1);
       ctx.textBaseline = 'top';  // restore default used by the text area
     }
-  }
-
-  // ── Club identity stripe ──────────────────────────────────────────────────
-  // Per-club pattern in solid ink, hugging the left edge — the fastest
-  // "which club is this kid in" cue when sorting at the door, and it stays
-  // crisp on a 1-bit thermal printer where hues would all flatten to gray:
-  // dots = Puggles, solid = Cubbies, zigzag = Sparks, rungs = T&T,
-  // hatch = Trek, chevrons = Journey.
-  const stripePattern = getClubPattern(clubName);
-  if (stripePattern !== 'none') {
-    ctx.save();
-    roundedRect(ctx, BX, BY, BW, BH, CORNER);
-    ctx.clip();
-    drawClubStripe(ctx, stripePattern, BX, BY, STRIPE_W, BH, COLOR.stripe);
-    ctx.restore();
   }
 
   // ── Text area ─────────────────────────────────────────────────────────────
@@ -884,7 +814,10 @@ async function generateLabel(
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 
-  const ALLERGY_STRIP_H = 0;  // No bottom strip — allergy icons go in bottom-right corner
+  // Reserve room for the bottom-right icon row (coin/cake/allergy) so the
+  // centered text block — especially a wide handbook-group line — can't
+  // collide with the icons.
+  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null) ? 20 : 0;
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
@@ -989,67 +922,50 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
-  // ── Bottom-right row: coin shares · cake birthday · allergy chips ─────────
-  // Allergies are safety-critical: tiny grayscale emojis turn to mud on a
-  // monochrome thermal printer, so allergens print as solid-ink chips with
-  // bold inverted text (e.g. [NUTS] [DAIRY]) — unmissable at a glance.
+  // ── Bottom-right row: coin shares · cake birthday · allergy icons ─────────
+  // Icons only along the bottom edge — no words. Allergens render as emoji
+  // glyphs, sized up so they stay recognizable on 1-bit thermal output.
   if (hasAllergy || isBirthday || awanaShares != null) {
-    const EMOJI_SIZE      = 16;
-    const BDAY_EMOJI_SIZE = 26;
+    const EMOJI_SIZE         = 16;
+    const ALLERGY_EMOJI_SIZE = 22;
+    const BDAY_EMOJI_SIZE    = 26;
     const EMOJI_FONT_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
-    const CHIP_FONT   = 'bold 8px Arial, sans-serif';
-    const CHIP_PAD_X  = 3;
-    const CHIP_H      = 12;
     const PAD     = 6;
     const SPACING = 3;
 
-    // Build ordered item list, leftmost first:
-    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy chips
-    const items = [];
+    // Build ordered glyph list, leftmost first:
+    //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy icons
+    const glyphs = [];
     if (awanaShares != null) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
-      items.push({ kind: 'emoji', ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
+      glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
     }
     if (isBirthday) {
-      items.push({ kind: 'emoji', ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
     }
     allergyTokens.forEach(function(t) {
-      items.push({ kind: 'chip', text: t });
+      glyphs.push({ ch: ALLERGY_EMOJI[t] || '\u26A0', size: ALLERGY_EMOJI_SIZE });
     });
 
-    // Measure each item under its own font so we can right-anchor the row.
+    // Measure each glyph under its own font so we can right-anchor the row.
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     let totalW = 0;
-    items.forEach(function(it, i) {
-      if (it.kind === 'emoji') {
-        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
-        it.w = ctx.measureText(it.ch).width;
-      } else {
-        ctx.font = CHIP_FONT;
-        it.w = ctx.measureText(it.text).width + CHIP_PAD_X * 2;
-      }
-      totalW += it.w;
-      if (i < items.length - 1) totalW += SPACING;
+    glyphs.forEach(function(g, i) {
+      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      g.w = ctx.measureText(g.ch).width;
+      totalW += g.w;
+      if (i < glyphs.length - 1) totalW += SPACING;
     });
 
     let ex = BX + BW - PAD - totalW;
     const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
-    items.forEach(function(it) {
-      if (it.kind === 'emoji') {
-        ctx.font = `${it.size}px ${EMOJI_FONT_STACK}`;
-        ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
-        ctx.fillText(it.ch, ex, ey);
-      } else {
-        ctx.fillStyle = COLOR.chipBg;
-        roundedRect(ctx, ex, ey - CHIP_H + 2, it.w, CHIP_H, 3);
-        ctx.fill();
-        ctx.font = CHIP_FONT;
-        ctx.fillStyle = COLOR.chipText;
-        ctx.fillText(it.text, ex + CHIP_PAD_X, ey - 2);
-      }
-      ex += it.w + SPACING;
+    glyphs.forEach(function(g) {
+      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
+      ctx.fillText(g.ch, ex, ey);
+      ex += g.w + SPACING;
     });
 
     // Reset text state for any subsequent drawing
@@ -1247,7 +1163,7 @@ app.post('/label', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const rawGroup = record.HandbookGroup || '';
+    const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
   } else {
@@ -1304,6 +1220,14 @@ app.post('/print', async (req, res) => {
     return res.status(400).json({ error: 'name or firstName is required' });
   }
 
+  // Duplicate check-in retry (client timeout/retry, double-tap, overlapping
+  // detection paths) — the label already printed, so just acknowledge it.
+  const dupKey = `${firstName} ${lastName}`.toLowerCase().trim();
+  if (isDuplicatePrint(dupKey)) {
+    console.log(`[print] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
+    return res.json({ success: true, duplicate: true });
+  }
+
   // Reload CSV on every request so mid-event additions are always picked up.
   // If the file is locked or missing, loadClubbers() returns [] and logs a
   // warning — this request continues with a basic label.
@@ -1318,7 +1242,7 @@ app.post('/print', async (req, res) => {
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const _rawGroup = record.HandbookGroup || '';
+    const _rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
     console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}`);
@@ -1357,6 +1281,7 @@ app.post('/print', async (req, res) => {
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
+    recordPrint(dupKey);
 
     if (pusher) {
       pusher.trigger('awana-channel', 'checkin', {
@@ -1463,7 +1388,7 @@ app.get('/preview', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const rawGroup = record.HandbookGroup || '';
+    const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
   }
@@ -1509,7 +1434,7 @@ app.post('/reprint', async (req, res) => {
     if (record) {
       const allergySource = record.Allergies || record.Notes || '';
       allergyTokens = parseAllergies(allergySource);
-      const rawGroup = record.HandbookGroup || '';
+      const rawGroup = record.HandbookGroup || record.Group || '';
       handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
       birthday = isBirthdayWeek(record.Birthdate);
     }

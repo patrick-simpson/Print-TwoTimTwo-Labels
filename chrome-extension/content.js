@@ -2,8 +2,14 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.7.2';
+  const EXTENSION_VERSION = '3.8.0';
   const PRINT_COOLDOWN = 2000;
+  // POST /print is synchronous on the server: PowerShell + a cold printer can
+  // take 15-30 s (the server retries the spooler internally). This must sit
+  // ABOVE that worst case — aborting a print that is still succeeding and
+  // retrying it is exactly what double-printed labels. The server also
+  // suppresses same-name duplicates as a second layer of defence.
+  const PRINT_TIMEOUT_MS = 35000;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -279,7 +285,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item),
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
     }).then(function(r) {
       if (r.ok) {
         if (dedupKey) markPrinted(item.name);
@@ -1030,7 +1036,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
       }).then(function(r) {
         if (r.ok) { setStatus('\u2705'); playSuccess(); }
         else { setStatus('\u274C'); playError(); }
@@ -1866,7 +1872,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(p),
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
       }).then(function(response) {
         if (response.ok) return true;
         throw new Error('HTTP ' + response.status);
