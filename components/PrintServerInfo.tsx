@@ -169,28 +169,11 @@ export const PrintServerInfo: React.FC = () => {
         </h3>
         <p className="text-sm text-gray-500 mb-3">
           Labels are designed for monochrome thermal printers — solid black ink only, no colors
-          or grays that dither into noise. Each club gets its own identity pattern on the left
-          edge of the label plus a matching font personality, so volunteers can tell clubs apart
-          at arm's length. The club logo from the check-in page still prints in the left icon
-          panel; if no logo is available, the label falls back to a bold club monogram badge
-          (P, C, S, T&amp;T, TR, J) so the icon zone never disappears.
+          or grays that dither into noise. Each club gets its own font personality, and the club
+          logo from the check-in page prints in the left icon panel; if no logo is available,
+          the label falls back to a bold club monogram badge (P, C, S, T&amp;T, TR, J) so the
+          icon zone never disappears.
         </p>
-        <div className="flex flex-wrap gap-2 text-xs">
-          {([
-            ['Puggles', 'dots',     '⠿'],
-            ['Cubbies', 'solid bar', '▮'],
-            ['Sparks',  'zigzag',   '〿'],
-            ['T&T',     'rungs',    '☰'],
-            ['Trek',    'hatch',    '⫽'],
-            ['Journey', 'chevrons', '⌃'],
-          ] as [string, string, string][]).map(([club, pattern, glyph]) => (
-            <span key={club} className="inline-flex items-center gap-1.5 border border-gray-200 rounded px-2 py-1 bg-white">
-              <span className="font-mono text-gray-900">{glyph}</span>
-              <span className="font-semibold text-gray-700">{club}</span>
-              <span className="text-gray-400">{pattern}</span>
-            </span>
-          ))}
-        </div>
       </div>
 
       {/* ── Optional: CSV enrichment ──────────────────────────────────────── */}
@@ -210,8 +193,8 @@ export const PrintServerInfo: React.FC = () => {
           <div className="bg-red-50 border border-red-200 rounded p-2 flex items-start gap-2">
             <i className="fa fa-exclamation-triangle text-red-500 mt-0.5 flex-shrink-0"></i>
             <div>
-              <strong className="text-red-700 block mb-0.5">Allergy chips</strong>
-              <span className="text-gray-600">Bold black chips in the bottom-right corner — NUTS, DAIRY, GLUTEN, EGG, DYE detected automatically</span>
+              <strong className="text-red-700 block mb-0.5">Allergy icons</strong>
+              <span className="text-gray-600">Icons in the bottom-right corner — 🥜 nuts, 🥛 dairy, 🌾 gluten, 🥚 egg, 💧 dye detected automatically</span>
             </div>
           </div>
           <div className="bg-yellow-50 border border-yellow-200 rounded p-2 flex items-start gap-2">

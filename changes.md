@@ -1,4 +1,28 @@
-﻿## [3.7.2] - 2026-06-11
+﻿## [3.8.0] - 2026-07-11
+Field-test fixes: duplicate label printed for the first check-in of the night; label redesign per feedback (no left stripe, allergy icons instead of words, handbook group restored).
+
+### Bug fix: same child's label printed twice
+First real-machine test: Micah's label printed twice, Sophia's once.
+- **Root cause:** POST `/print` is synchronous on the server — PowerShell startup plus a cold printer can take 15–30 s (the server retries the spooler internally, up to ~31 s worst case). The extension aborted the request after only **5 s** and retried; the first request was still succeeding, so the retry printed a second copy. The first print of the night is the cold one, which is why only Micah duplicated.
+- **Server fix (root cause):** `/print` now suppresses any request for a name that already printed successfully within 25 s and acknowledges it as `{success, duplicate}` — a client retry, double-tap, or overlapping detection path can never double-print. Deliberate reprints via `/reprint` are not gated.
+- **Extension fix:** `/print` request timeout raised from 5 s to 35 s (above the server's worst case) so a slow-but-successful print is never aborted and re-sent.
+
+### Label design (print-server/server.js), per field feedback
+- **Left identity stripe removed.** The 3.7.1 per-club pattern stripe (zigzag/rungs/dots…) read as a printing artifact on real labels ("weird looking bar"). Club identity remains via the logo/monogram icon panel and club fonts.
+- **Allergy words → icons.** The bold `[NUTS]`-style text chips are replaced with emoji icons (🥜 🥛 🌾 🥚 💧) at 22 pt — no words along the bottom of the label. Unknown tokens fall back to ⚠.
+- **Bottom icon row can't collide with text.** The centered text block now reserves 20 pt of bottom space whenever the coin/cake/allergy row is present, so a wide handbook-group line no longer overlaps the icons.
+
+### Bug fix: handbook group missing from labels
+Enriched labels printed allergies but no handbook-group line.
+- Enrichment now falls back to the generic `Group` CSV column when `HandbookGroup` is absent (TwoTimTwo exports the grouping under a plain "Group"-style header), at all four sites (/print, /label, /preview, /reprint). "All" still suppresses the line.
+- Added `handbook` and `handbook time` header aliases to the CSV header map.
+- The server now logs **every** parsed CSV column on load (not just recognized ones), so a renamed TwoTimTwo header is visible in the console instead of silently dropping enrichment.
+
+### Website
+- "Per-club label design" section: stripe-pattern description and legend removed.
+- Allergy tile: "Allergy chips" → "Allergy icons" with the emoji legend.
+
+## [3.7.2] - 2026-06-11
 Club logos guaranteed: monogram badge fallback when the client doesn't supply a logo image.
 
 ### Why
