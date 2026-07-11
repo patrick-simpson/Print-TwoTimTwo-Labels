@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '3.9.0';
+  const EXTENSION_VERSION = '4.0.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -97,9 +97,50 @@
       sessionStorage.setItem(REMOTE_KNOWN_KEY, JSON.stringify(Array.from(knownClubbers)));
       if (rosterDirty) {
         sessionStorage.setItem(REMOTE_ROSTER_KEY, JSON.stringify(ROSTER_CACHE));
+        persistRosterLocal();
         rosterDirty = false;
       }
     } catch (e) { /* ignore quota errors */ }
+  }
+
+  // ── Offline roster cache ────────────────────────────────────────────────────
+  // The scraped roster is persisted to chrome.storage.local (survives tab
+  // closes and browser restarts) so widget search and label printing still
+  // work if TwoTimTwo or the venue Wi-Fi goes down mid-event and the page
+  // can no longer render its .clubber list.
+  var ROSTER_LOCAL_KEY = 'awana_rosterCacheLocal';
+  var ROSTER_LOCAL_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // two weeks
+
+  function persistRosterLocal() {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+    try {
+      var entries = Object.keys(ROSTER_CACHE).slice(0, 400).map(function(k) {
+        var m = ROSTER_CACHE[k];
+        return { displayName: m.displayName, clubName: m.clubName || '', clubImageData: m.clubImageData || null };
+      });
+      var payload = {};
+      payload[ROSTER_LOCAL_KEY] = { ts: Date.now(), entries: entries };
+      chrome.storage.local.set(payload);
+    } catch (e) { /* storage full — non-critical */ }
+  }
+
+  function restoreRosterFromLocal() {
+    if (Object.keys(ROSTER_CACHE).length > 0) return; // live roster present
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return;
+    chrome.storage.local.get(ROSTER_LOCAL_KEY, function(result) {
+      var saved = result && result[ROSTER_LOCAL_KEY];
+      if (!saved || !Array.isArray(saved.entries)) return;
+      if (Date.now() - (saved.ts || 0) > ROSTER_LOCAL_MAX_AGE_MS) return;
+      if (Object.keys(ROSTER_CACHE).length > 0) return; // roster appeared meanwhile
+      saved.entries.forEach(function(m) {
+        if (!m || !m.displayName) return;
+        ROSTER_CACHE[m.displayName.toLowerCase()] = {
+          displayName: m.displayName, clubName: m.clubName || '',
+          clubImageData: m.clubImageData || null, element: null
+        };
+      });
+      console.log('[Awana] Restored ' + saved.entries.length + ' roster entries from local cache (offline mode)');
+    });
   }
 
   function markPrinted(name) {
@@ -1052,6 +1093,32 @@
 
     walkInRow.append(guestInput, walkInPrintBtn);
 
+    // ── Tonight's check-ins (reprint) ──
+    var tonightHeader = document.createElement('div');
+    Object.assign(tonightHeader.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+    var tonightLabel = sectionLabel('Tonight');
+    tonightLabel.style.flex = '1';
+    var tonightCount = document.createElement('span');
+    tonightCount.id = 'awana-tonight-count';
+    Object.assign(tonightCount.style, { fontSize: '10px', color: '#94a3b8' });
+    var tonightRefresh = document.createElement('button');
+    tonightRefresh.textContent = '\u21BB';
+    tonightRefresh.title = 'Refresh list';
+    Object.assign(tonightRefresh.style, {
+      fontSize: '11px', padding: '0 6px', background: '#f1f5f9',
+      border: '1px solid #e2e8f0', borderRadius: '4px', cursor: 'pointer',
+      color: '#475569', lineHeight: '16px'
+    });
+    tonightRefresh.addEventListener('click', loadTonight);
+    tonightHeader.append(tonightLabel, tonightCount, tonightRefresh);
+
+    var tonightList = document.createElement('div');
+    tonightList.id = 'awana-tonight-list';
+    Object.assign(tonightList.style, {
+      display: 'flex', flexDirection: 'column', gap: '2px',
+      maxHeight: '132px', overflowY: 'auto'
+    });
+
     // Queue badge
     var queueBadge = document.createElement('div');
     queueBadge.id = 'awana-queue-badge';
@@ -1370,6 +1437,13 @@
         if (el && el.isConnected) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           el.click();
+        } else {
+          // Offline roster entry (no live DOM row): print the label anyway so
+          // the kid isn't stuck at the door — do the TwoTimTwo check-in once
+          // the site is reachable again.
+          console.log('[Awana] ' + name + ' not on the live page — printing label only (cached roster)');
+          markPrinted(name);
+          doPrint(name, meta.clubName || '', meta.clubImageData || null);
         }
       }
     }
@@ -1484,13 +1558,14 @@
     });
 
     // Panel layout, most-used first: search + Quick Mode on top, then the
-    // per-night toggles, printing controls, walk-in printing, and finally
-    // status lines and help.
+    // per-night toggles, printing controls, walk-in printing, tonight's
+    // reprint list, and finally status lines and help.
     panelBody.append(
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
       divider(), walkInLabel, walkInRow, walkInClubRow,
+      divider(), tonightHeader, tonightList,
       queueBadge, csvStatus, csvWarningBanner, updateRow,
       divider(), soundRow, helpBtn
     );
@@ -1509,7 +1584,7 @@
       localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
     }
 
-    pill.addEventListener('click', function() { applyMinimized(false); });
+    pill.addEventListener('click', function() { applyMinimized(false); loadTonight(); });
     closeBtn.addEventListener('click', function() { applyMinimized(true); });
     applyMinimized(isMinimized);
 
@@ -1529,10 +1604,27 @@
             notice.textContent = 'Update available: v' + data.version + ' (reload extension)';
           }
         } else if (data.latestVersion && data.latestVersion !== data.version) {
-          // Server itself is outdated
-          if (notice) {
+          // Server itself is outdated — offer one-click update. The server
+          // exits with a special code and the launcher re-runs the installer.
+          if (notice && notice.dataset.updating !== '1') {
             notice.style.display = 'block';
-            notice.textContent = 'Server update v' + data.latestVersion + ' available \u2014 restart server to apply';
+            notice.textContent = '';
+            var msg = document.createElement('span');
+            msg.textContent = 'Server update v' + data.latestVersion + ' available ';
+            var updBtn = document.createElement('button');
+            updBtn.textContent = 'Update now';
+            Object.assign(updBtn.style, {
+              fontSize: '10px', padding: '2px 8px', marginLeft: '6px',
+              background: '#f59e0b', color: '#fff', border: 'none',
+              borderRadius: '4px', cursor: 'pointer', fontWeight: '700'
+            });
+            updBtn.addEventListener('click', function() {
+              notice.dataset.updating = '1';
+              notice.textContent = 'Updating \u2014 the server will restart itself (about a minute)...';
+              fetch(PRINT_SERVER + '/update-now', { method: 'POST', signal: AbortSignal.timeout(5000) })
+                .catch(function() { /* server exits before responding sometimes — expected */ });
+            });
+            notice.append(msg, updBtn);
           }
         }
         // CSV warnings
@@ -1604,6 +1696,78 @@
 
   function clearStatus() {
     setTimeout(function() { setStatus(''); }, STATUS_TIMEOUT);
+  }
+
+  // ── Tonight's check-ins list (widget reprint) ──────────────────────────────
+  // Pulls today's print history from the server and renders the most recent
+  // prints with a one-tap reprint button — rescues torn/jammed/lost labels
+  // without leaving the check-in page.
+  function loadTonight() {
+    var list = document.getElementById('awana-tonight-list');
+    var count = document.getElementById('awana-tonight-count');
+    if (!list) return;
+    fetch(PRINT_SERVER + '/history/today', { signal: AbortSignal.timeout(3000) })
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(entries) {
+        if (count) count.textContent = entries.length ? entries.length + ' printed' : '';
+        while (list.firstChild) list.removeChild(list.firstChild);
+        if (!entries.length) {
+          var empty = document.createElement('div');
+          Object.assign(empty.style, { fontSize: '11px', color: '#94a3b8', padding: '2px 0' });
+          empty.textContent = 'No check-ins yet tonight';
+          list.appendChild(empty);
+          return;
+        }
+        entries.slice(0, 8).forEach(function(e) {
+          var fullName = ((e.firstName || '') + ' ' + (e.lastName || '')).trim();
+          var row = document.createElement('div');
+          Object.assign(row.style, {
+            display: 'flex', alignItems: 'center', gap: '6px',
+            fontSize: '11px', padding: '3px 6px', background: '#f8fafc',
+            borderRadius: '4px'
+          });
+          var nameSpan = document.createElement('span');
+          nameSpan.style.flex = '1';
+          nameSpan.style.fontWeight = '600';
+          nameSpan.textContent = fullName;
+          var timeSpan = document.createElement('span');
+          timeSpan.style.color = '#94a3b8';
+          try {
+            timeSpan.textContent = new Date(e.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          } catch (err) { timeSpan.textContent = ''; }
+          var reBtn = document.createElement('button');
+          reBtn.textContent = 'Reprint';
+          Object.assign(reBtn.style, {
+            fontSize: '10px', padding: '2px 8px', background: '#f1f5f9',
+            border: '1px solid #e2e8f0', borderRadius: '4px', cursor: 'pointer',
+            color: '#475569', fontWeight: '600'
+          });
+          reBtn.addEventListener('click', function() {
+            reBtn.disabled = true;
+            reBtn.textContent = '...';
+            fetch(PRINT_SERVER + '/reprint', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: fullName }),
+              signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
+            }).then(function(r) {
+              reBtn.disabled = false;
+              reBtn.textContent = 'Reprint';
+              if (r.ok) { setStatus('\u2705'); playSuccess(); } else { setStatus('\u274C'); playError(); }
+              clearStatus();
+            }).catch(function() {
+              reBtn.disabled = false;
+              reBtn.textContent = 'Reprint';
+              setStatus('\u274C'); playError(); clearStatus();
+            });
+          });
+          row.append(nameSpan, timeSpan, reBtn);
+          list.appendChild(row);
+        });
+      })
+      .catch(function() {
+        if (count) count.textContent = '';
+      });
   }
 
   function watchCheckins() {
@@ -1902,6 +2066,7 @@
         playSuccess();
         clearStatus();
         flushQueue();
+        loadTonight();
         console.log('[Awana] Silent print sent to server');
         return true;
       }).catch(function(err) {
@@ -2191,9 +2356,13 @@
   }
   fetchPrinters();
   watchCheckins();
+  loadTonight();
   // Establish the roster baseline on load (or re-populate ROSTER_CACHE after a
   // reload that preserved baselineScanned via sessionStorage).
   setTimeout(scanClubberList, 500);
+  // If the page produced no roster (site down, offline reload), fall back to
+  // the copy cached in chrome.storage.local so search still works.
+  setTimeout(restoreRosterFromLocal, 2000);
   // Safety-net scan every 5 s in case the MutationObserver misses a DOM change.
   setInterval(scanClubberList, SCAN_INTERVAL_MS);
   // Peak-window auto-refresh
@@ -2202,6 +2371,12 @@
   checkForExtensionUpdate();
   // Periodically check server health for CSV warnings + update notices
   setInterval(checkForExtensionUpdate, 60000);
+  // Keep the Tonight list fresh while the panel is expanded (other stations
+  // print too — their check-ins should show up here for reprints).
+  setInterval(function() {
+    var panel = document.getElementById('awana-panel');
+    if (panel && panel.style.display !== 'none') loadTonight();
+  }, 60000);
   updateQueueBadge();
 
   // Flush any queued prints on startup

@@ -100,6 +100,14 @@ const HEADER_MAP = {
   'handbook_group': 'HandbookGroup',
   'handbook':       'HandbookGroup',
   'handbook time':  'HandbookGroup',
+  'med release':      'MedRelease',
+  'medrelease':       'MedRelease',
+  'med_release':      'MedRelease',
+  'medical release':  'MedRelease',
+  'media release':    'MedRelease',
+  'mediarelease':     'MedRelease',
+  'photo release':    'MedRelease',
+  'photo permission': 'MedRelease',
   'club':           'Club',
   'group':          'Group',
   'color':          'Color',
@@ -512,6 +520,15 @@ const ALLERGY_EMOJI = {
   'DYE':    '\uD83D\uDCA7',  // 💧 food dye / artificial coloring sensitivity
 };
 
+// ── Med Release parser ────────────────────────────────────────────────────────
+// The roster's Med Release column is y/n. Only an explicit "no" flags the
+// label with a crossed-out camera (do-not-photograph) icon — blank, missing,
+// or unrecognized values print nothing, so rosters without the column are
+// unaffected.
+function parseNoPhoto(value) {
+  return /^(n|no|false|0)$/i.test(String(value == null ? '' : value).trim());
+}
+
 // ── Unique temp file path ─────────────────────────────────────────────────────
 // Date.now() alone can collide when two prints land in the same millisecond
 // (double-tap on the check-in screen) — one request would then delete the
@@ -669,12 +686,13 @@ const SCALE = DPI / 72;            // convert pt → px
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = '', awanaShares = null
+  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
+  noPhoto       = !!noPhoto;
   // null / undefined / non-finite → no badge. Negative numbers are coerced
   // to nothing as well so a malformed payload doesn't print "🪙 -3".
   if (awanaShares !== null && awanaShares !== undefined) {
@@ -813,7 +831,7 @@ async function generateLabel(
   // Reserve room for the bottom-right icon row (coin/cake/allergy) so the
   // centered text block — especially a wide handbook-group line — can't
   // collide with the icons.
-  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null) ? 20 : 0;
+  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null || noPhoto) ? 20 : 0;
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
@@ -921,7 +939,7 @@ async function generateLabel(
   // ── Bottom-right row: coin shares · cake birthday · allergy icons ─────────
   // Icons only along the bottom edge — no words. Allergens render as emoji
   // glyphs, sized up so they stay recognizable on 1-bit thermal output.
-  if (hasAllergy || isBirthday || awanaShares != null) {
+  if (hasAllergy || isBirthday || awanaShares != null || noPhoto) {
     const EMOJI_SIZE         = 16;
     const ALLERGY_EMOJI_SIZE = 22;
     const BDAY_EMOJI_SIZE    = 26;
@@ -943,6 +961,10 @@ async function generateLabel(
     allergyTokens.forEach(function(t) {
       glyphs.push({ ch: ALLERGY_EMOJI[t] || '\u26A0', size: ALLERGY_EMOJI_SIZE });
     });
+    if (noPhoto) {
+      // Camera emoji with a slash drawn over it — "do not photograph".
+      glyphs.push({ ch: '\uD83D\uDCF7', size: ALLERGY_EMOJI_SIZE, slash: true });
+    }
 
     // Measure each glyph under its own font so we can right-anchor the row.
     ctx.textAlign = 'left';
@@ -961,6 +983,18 @@ async function generateLabel(
       ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
       ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
       ctx.fillText(g.ch, ex, ey);
+      if (g.slash) {
+        // Diagonal bar corner-to-corner across the glyph box
+        ctx.save();
+        ctx.strokeStyle = COLOR.name;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ex + 1, ey + 1);
+        ctx.lineTo(ex + g.w - 1, ey - g.size + 3);
+        ctx.stroke();
+        ctx.restore();
+      }
       ex += g.w + SPACING;
     });
 
@@ -1155,17 +1189,19 @@ app.post('/label', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName);
 
-  let allergyTokens, handbookGroup, birthday;
+  let allergyTokens, handbookGroup, birthday, noPhoto;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
+    noPhoto = parseNoPhoto(record.MedRelease);
   } else {
     allergyTokens = [];
     handbookGroup = '';
     birthday = false;
+    noPhoto = false;
   }
 
   // Step Up Night eligibility — only kicks in when the client says it's
@@ -1178,7 +1214,7 @@ app.post('/label', async (req, res) => {
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares
+      stepUp, stepUpNextClub, awanaShares, noPhoto
     );
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
@@ -1232,7 +1268,7 @@ app.post('/print', async (req, res) => {
   // Attempt to enrich the label with data from the CSV
   const record = findClubber(firstName, lastName);
 
-  let allergyTokens, handbookGroup, birthday;
+  let allergyTokens, handbookGroup, birthday, noPhoto;
   if (record) {
     // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
@@ -1241,13 +1277,15 @@ app.post('/print', async (req, res) => {
     const _rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
-    console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}`);
+    noPhoto       = parseNoPhoto(record.MedRelease);
+    console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}${noPhoto ? ' | NO PHOTO' : ''}`);
   } else {
     // Child not in CSV (new visitor, typo, or CSV unavailable) — print a basic
     // label using only the data from the POST request. No crash, no skip.
     allergyTokens = [];
     handbookGroup = '';
     birthday      = false;
+    noPhoto       = false;
     if (firstName || lastName) {
       console.log(`[csv] '${firstName} ${lastName}' not found in CSV — printing basic label`);
     }
@@ -1272,7 +1310,7 @@ app.post('/print', async (req, res) => {
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares
+      stepUp, stepUpNextClub, awanaShares, noPhoto
     );
     pngPath = result.pngPath;
 
@@ -1291,7 +1329,7 @@ app.post('/print', async (req, res) => {
     // Log to print history
     addHistoryEntry({
       firstName, lastName, clubName, clubImageData,
-      printer: effectivePrinter, success: true
+      printer: effectivePrinter, success: true, visitor: !!visitor
     });
 
     res.json({ success: true });
@@ -1341,6 +1379,7 @@ function addHistoryEntry(entry) {
     clubImageData: entry.clubImageData || null,
     printer: entry.printer || '',
     success: entry.success,
+    visitor: !!entry.visitor,
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -1357,6 +1396,52 @@ app.get('/history/today', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const todayEntries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
   res.json(todayEntries);
+});
+
+// ── Tonight at a glance ───────────────────────────────────────────────────────
+// Aggregates today's print history + the roster into the numbers a director
+// needs during the event: kids checked in per club, visitors, and the safety
+// flags for everyone currently in the building (allergies, birthdays,
+// no-photo kids). Each child counts once no matter how many reprints.
+app.get('/stats/tonight', (req, res) => {
+  const history = loadHistory();
+  const today = new Date().toISOString().slice(0, 10);
+  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
+
+  const byClub = {};
+  const seen = new Set();
+  let visitors = 0;
+  const allergyKids = [];
+  const birthdayKids = [];
+  const noPhotoKids = [];
+
+  entries.forEach(e => {
+    const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) return;
+    seen.add(key);
+    const club = (e.clubName || '').trim() || 'No club';
+    byClub[club] = (byClub[club] || 0) + 1;
+    if (e.visitor) visitors++;
+
+    const record = findClubber(e.firstName, e.lastName);
+    if (!record) return;
+    const tokens = parseAllergies(record.Allergies || record.Notes || '');
+    if (tokens.length) allergyKids.push({ name, allergies: tokens });
+    if (isBirthdayWeek(record.Birthdate)) birthdayKids.push(name);
+    if (parseNoPhoto(record.MedRelease)) noPhotoKids.push(name);
+  });
+
+  res.json({
+    date: today,
+    prints: entries.length,
+    checkedIn: seen.size,
+    visitors,
+    byClub,
+    allergyKids,
+    birthdayKids,
+    noPhotoKids
+  });
 });
 
 // ── Label preview ────────────────────────────────────────────────────────────
@@ -1378,17 +1463,19 @@ app.get('/preview', async (req, res) => {
   // Enrich from CSV if available
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName);
-  let allergyTokens = [], handbookGroup = '', birthday = false;
+  let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
+    noPhoto = parseNoPhoto(record.MedRelease);
   }
 
   try {
-    const result = await generateLabel(firstName, lastName, clubName, null, allergyTokens, handbookGroup, birthday);
+    const result = await generateLabel(firstName, lastName, clubName, null, allergyTokens, handbookGroup, birthday,
+      false, false, '', null, noPhoto);
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
     // Clean up temp file
@@ -1424,19 +1511,21 @@ app.post('/reprint', async (req, res) => {
   try {
     clubbers = loadClubbers();
     const record = findClubber(entry.firstName, entry.lastName);
-    let allergyTokens = [], handbookGroup = '', birthday = false;
+    let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
     if (record) {
       const allergySource = record.Allergies || record.Notes || '';
       allergyTokens = parseAllergies(allergySource);
       const rawGroup = record.HandbookGroup || record.Group || '';
       handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
       birthday = isBirthdayWeek(record.Birthdate);
+      noPhoto = parseNoPhoto(record.MedRelease);
     }
 
     const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
     const result = await generateLabel(
       entry.firstName, entry.lastName, entry.clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday
+      allergyTokens, handbookGroup, birthday,
+      false, false, '', null, noPhoto
     );
     pngPath = result.pngPath;
 
@@ -1542,6 +1631,21 @@ app.get('/health', async (req, res) => {
     uptime: Math.round(process.uptime()),
     warnings
   });
+});
+
+// ── One-click update ──────────────────────────────────────────────────────────
+// Exits with code 99, which launch-awana.bat treats as "re-run the update
+// check": it downloads the latest installer, refreshes the project, and
+// starts the new server. Guarded so a stray call when no update exists can't
+// bounce the server mid-event for nothing.
+app.post('/update-now', (req, res) => {
+  if (!latestVersion || latestVersion === SERVER_VERSION) {
+    return res.status(409).json({ error: 'Already on the latest version', version: SERVER_VERSION });
+  }
+  console.log(`[update] Update to v${latestVersion} requested — exiting so the launcher can update`);
+  res.json({ ok: true, updatingTo: latestVersion });
+  // Let the response flush before the process exits.
+  setTimeout(() => process.exit(99), 500);
 });
 
 // ── Config endpoints ─────────────────────────────────────────────────────────

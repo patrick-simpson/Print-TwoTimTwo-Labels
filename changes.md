@@ -1,4 +1,31 @@
-﻿## [3.9.0] - 2026-07-11
+﻿## [4.0.0] - 2026-07-11
+Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
+
+### One-tap reprints in the widget (chrome-extension/content.js)
+New **Tonight** section in the widget lists today's prints (name, time) with a Reprint button per row — rescues torn/jammed/lost labels without leaving the check-in page. Refreshes when the panel opens, after every successful print, and once a minute while expanded. Uses the existing `/history/today` + `/reprint` endpoints.
+
+### Tonight at a glance (print-server)
+- New `GET /stats/tonight`: unique kids checked in, labels printed, visitors, per-club counts, plus safety flags for everyone in the building — allergy kids (with tokens), birthday-week kids, and no-photo kids. Each child counts once regardless of reprints.
+- Dashboard gets a "Tonight at a Glance" card: per-club chips and color-coded allergy / no-photo / birthday rows, refreshed every 15 s.
+- Print history entries now record the `visitor` flag so visitor counts are accurate.
+
+### Offline roster cache (chrome-extension/content.js)
+The scraped roster (names, clubs, logos) is persisted to `chrome.storage.local` (2-week TTL, 400-entry cap) and restored automatically when the page can't render its roster — site down, Wi-Fi drop, offline reload. Widget search keeps working, and selecting a cached kid with no live page row prints the label anyway (label-only; do the TwoTimTwo check-in when the site is back). Combined with the existing print queue, a mid-event outage no longer stops the door.
+
+### One-click self-update
+- New `POST /update-now`: the server exits with code 99 after confirming an update exists.
+- `launch-awana.bat` treats exit 99 as "re-run the update check" — it downloads the latest installer and restarts on the new version (the launcher already updates on every launch; this adds mid-season one-click updates).
+- The widget's update notice and the dashboard banner both grow an **Update now** button.
+
+### Med Release → no-photo label icon (print-server/server.js)
+- New CSV column `MedRelease` (aliases: Med/Medical/Media/Photo Release, Photo Permission) parsed as y/n. Only an explicit "n"/"no"/"false"/"0" flags the child — blank or missing prints nothing.
+- Flagged kids get a **crossed-out camera** (camera emoji + drawn slash) in the label's bottom-right icon row, and appear in `/stats/tonight` + the dashboard as NO PHOTOS.
+- `clubbers-template.csv` updated with the new column; enrichment logs show `NO PHOTO`.
+
+### Website redesigned from scratch
+New single-page site (App.tsx + Nav/Hero/Features/InstallGuide/Simulator/Faq components, PrintServerInfo removed): hero with a CSS mock of the real 4×2 label, 3-step "How it works", v4 feature grid, 4-step install guide with copy-to-clipboard command and connection test, the working check-in simulator (now with a functional name filter) styled as a browser mock, and a volunteer FAQ. Inter font, brand green palette, fully responsive.
+
+## [3.9.0] - 2026-07-11
 Housekeeping release: sibling check-in disabled for now, widget panel reorganized, dead code removed.
 
 ### Sibling check-in disabled (chrome-extension/content.js)
