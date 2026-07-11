@@ -32,6 +32,8 @@ migrated_prompt_history/
 # Real clubber data (personal info -- never commit)
 clubbers*.csv
 !print-server/clubbers-template.csv
+print-server/print-history.json
+print-server/attendance-log.json
 
 # Example/test files
 example.html

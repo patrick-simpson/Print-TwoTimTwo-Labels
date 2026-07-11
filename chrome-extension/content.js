@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '4.0.0';
+  const EXTENSION_VERSION = '4.1.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -192,7 +192,9 @@
   function isAwanaStoreNight() {
     if (storeMode === 'on')  return true;
     if (storeMode === 'off') return false;
-    return scanCalendarFor(/store/i);
+    // \b word boundaries: "Store Night" / "Awana Store" match, but a heading
+    // like "Restore Hope Night" must not turn on the coin badge.
+    return scanCalendarFor(/\bstore\b/i);
   }
 
   // Share-balance cache. Populated by fetchShareBalances() when a Store

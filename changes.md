@@ -1,4 +1,23 @@
-﻿## [4.0.0] - 2026-07-11
+﻿## [4.1.0] - 2026-07-11
+Automated post-check-in celebration stickers (birthday + attendance milestones) and a Store Night auto-detection fix.
+
+### Birthday celebration sticker (print-server/server.js)
+During a child's birthday week, an extra festive 4×2 sticker ("🎉 HAPPY BIRTHDAY! 🎂" + big name + "from your Awana family") auto-prints right after the main label — on top of the existing 🍰 icon. Always on, no toggle.
+
+### Attendance milestone stickers (print-server/server.js)
+- New persistent `attendance-log.json` (normalized name → sorted unique local dates, atomic writes, never truncated) records one attendance per child per night. Only a successful `POST /print` records attendance — reprints, previews, and duplicate retries never inflate it.
+- Every 5th total night (5, 10, 15, …) prints a "N NIGHTS AT AWANA!" sticker; consecutive-week streaks of 3/5/10/15/20 ISO weeks print "N WEEKS IN A ROW!". At most ONE milestone sticker per child per night (total nights wins over streak) so the printer never spits a stack at one kid.
+- Bonus stickers print after the check-in response is already sent and each step has its own try/catch + temp-file cleanup — a sticker failure can never fail a check-in or skip attendance logging.
+- The ISO-week helper inside `isBirthdayWeek` was extracted to a shared `getISOWeek()` so birthdays and streaks agree on week boundaries (no behavior change).
+- New test endpoints: `GET /preview/birthday?name=First+Last` and `GET /preview/milestone?name=First+Last&kind=total|streak&n=10` stream the sticker PNG without printing or touching the log.
+
+### Store Night detection fix (chrome-extension/content.js)
+Auto-detection matched any calendar heading containing "store" as a substring, so e.g. "Restore Hope Night" would wrongly turn on the 🪙 share badge. Now `/\bstore\b/i` — "Store Night" and "Awana Store" still match, "restore"/"bookstore" don't. The manual Store Night on/off override is unchanged.
+
+### Website (components/Features.tsx)
+Feature grid gains "Birthday stickers" and "Milestone stickers" cards.
+
+## [4.0.0] - 2026-07-11
 Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
 
 ### One-tap reprints in the widget (chrome-extension/content.js)

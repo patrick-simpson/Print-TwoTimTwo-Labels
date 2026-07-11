@@ -438,6 +438,20 @@ function isSteppingUp(record, clubName) {
   return grade === STEP_UP_GRADUATING_GRADE[k];
 }
 
+// ── ISO week number ───────────────────────────────────────────────────────────
+// Returns { year, week } for a date using the ISO-8601 convention (weeks run
+// Mon–Sun; week 1 contains the year's first Thursday). Shared by the
+// birthday-week check and the attendance streak computation so both agree on
+// what "the same week" means.
+function getISOWeek(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return { year: d.getFullYear(), week: weekNum };
+}
+
 // ── Birthday-week check ───────────────────────────────────────────────────────
 // Returns true if the child's next birthday falls within the next 7 days
 // (inclusive of today). Handles year-wrapping correctly: if today is Dec 30
@@ -467,16 +481,7 @@ function isBirthdayWeek(birthdateStr) {
     today.setHours(0, 0, 0, 0);
 
     // Check if birthday is in the same ISO week as today
-    const getWeekNumber = (date) => {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-      const yearStart = new Date(d.getFullYear(), 0, 1);
-      const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-      return { year: d.getFullYear(), week: weekNum };
-    };
-
-    const todayWeek = getWeekNumber(today);
+    const todayWeek = getISOWeek(today);
 
     // Test the birthday in both this calendar year and the next. The old
     // code rolled an already-passed birthday forward a year before comparing,
@@ -486,13 +491,100 @@ function isBirthdayWeek(birthdateStr) {
     // (e.g. today Dec 29 in ISO week 1, birthday Jan 2).
     for (const yr of [today.getFullYear(), today.getFullYear() + 1]) {
       const candidate = new Date(yr, bday.getMonth(), bday.getDate());
-      const w = getWeekNumber(candidate);
+      const w = getISOWeek(candidate);
       if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
     }
     return false;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
     return false;
+  }
+}
+
+// ── Attendance log ────────────────────────────────────────────────────────────
+// Persistent per-child attendance history powering the milestone stickers:
+// attendance-log.json maps normalized "first last" → ["YYYY-MM-DD", ...]
+// (unique, sorted, local dates). Grows one short line per child per night, so
+// even a multi-year season stays tiny. Unlike print-history.json this is
+// never truncated — totals must survive the whole season.
+const ATTENDANCE_FILE = path.join(__dirname, 'attendance-log.json');
+
+// Local calendar date (not UTC) — an evening event near midnight UTC must
+// still count as the local club night.
+function localDateStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function loadAttendanceLog() {
+  try {
+    if (fs.existsSync(ATTENDANCE_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(ATTENDANCE_FILE, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('[attendance] Failed to load attendance log:', e.message);
+  }
+  return {};
+}
+
+function saveAttendanceLog(log) {
+  try {
+    // Atomic write — a crash mid-save must not corrupt a whole season of
+    // attendance history (same pattern as saveHistory).
+    const tmpPath = ATTENDANCE_FILE + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(log, null, 2), 'utf8');
+    fs.renameSync(tmpPath, ATTENDANCE_FILE);
+  } catch (e) {
+    console.warn('[attendance] Failed to save attendance log:', e.message);
+  }
+}
+
+// Consecutive ISO weeks (ending with the current week) that contain at least
+// one attendance date. One club night per week is the norm, so "weeks in a
+// row" — not "nights in a row" — is the streak volunteers actually mean.
+function computeStreakWeeks(dates) {
+  const weekKeys = new Set();
+  for (const s of dates) {
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) continue;
+    const w = getISOWeek(new Date(+m[1], +m[2] - 1, +m[3]));
+    weekKeys.add(`${w.year}-${w.week}`);
+  }
+  let streak = 0;
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  while (streak < weekKeys.size) {
+    const w = getISOWeek(cursor);
+    if (!weekKeys.has(`${w.year}-${w.week}`)) break;
+    streak++;
+    cursor.setDate(cursor.getDate() - 7);
+  }
+  return streak;
+}
+
+// Records tonight's attendance for a child and returns the aggregates the
+// milestone stickers need. Never throws — any failure logs a warning and
+// returns safe defaults so a check-in can't be affected.
+// Only POST /print calls this (after a successful physical print); /reprint,
+// /label and /preview must never inflate attendance.
+function recordAttendance(firstName, lastName) {
+  try {
+    const key = `${firstName || ''} ${lastName || ''}`.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!key) return { isNewTonight: false, totalNights: 0, streakWeeks: 0 };
+
+    const log = loadAttendanceLog();
+    const existing = Array.isArray(log[key]) ? log[key].filter(d => typeof d === 'string') : [];
+    const today = localDateStr();
+    const isNewTonight = !existing.includes(today);
+    const dates = isNewTonight ? [...new Set([...existing, today])].sort() : existing;
+    if (isNewTonight) {
+      log[key] = dates;
+      saveAttendanceLog(log);
+    }
+    return { isNewTonight, totalNights: dates.length, streakWeeks: computeStreakWeeks(dates) };
+  } catch (e) {
+    console.warn('[attendance] Failed to record attendance:', e.message);
+    return { isNewTonight: false, totalNights: 0, streakWeeks: 0 };
   }
 }
 
@@ -1009,6 +1101,115 @@ async function generateLabel(
   return { pngPath, buffer };
 }
 
+// ── Celebration stickers ──────────────────────────────────────────────────────
+// Bonus 4×2 stickers auto-printed after the main check-in label: a festive
+// birthday sticker during a child's birthday week, and attendance milestone
+// stickers (total nights / weeks-in-a-row streaks). Standalone renderers —
+// deliberately independent of generateLabel() so the main label path can
+// never be destabilized by sticker changes. Same canvas geometry and
+// thermal-first palette: solid black on white only.
+const STICKER_EMOJI_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+// Text face first so letters render in Arial; emoji glyphs fall through to
+// the emoji fonts (Arial has none).
+const STICKER_TEXT_STACK = `Arial, ${STICKER_EMOJI_STACK}`;
+
+function newStickerCanvas() {
+  const canvas = createCanvas(PX_W, PX_H);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(SCALE, SCALE);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, PAGE_W, PAGE_H);
+  // Festive framed border sets stickers apart from the plain check-in label
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 2.5;
+  roundedRect(ctx, BX, BY, BW, BH, CORNER);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  roundedRect(ctx, BX + 4, BY + 4, BW - 8, BH - 8, CORNER - 4);
+  ctx.stroke();
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  return { canvas, ctx };
+}
+
+function finishSticker(canvas) {
+  const pngPath = tmpFilePath('awana', 'png');
+  const buffer = canvas.toBuffer('image/png');
+  fs.writeFileSync(pngPath, buffer);
+  return { pngPath, buffer };
+}
+
+function generateBirthdaySticker(firstName) {
+  const { canvas, ctx } = newStickerCanvas();
+  const cx = PAGE_W / 2;
+  const maxW = BW - 28;
+
+  const banner = '🎉 HAPPY BIRTHDAY! 🎂';  // 🎉 ... 🎂
+  const bannerSize = fitFontSize(ctx, banner, 'bold', maxW, 20, 12, STICKER_TEXT_STACK);
+  const bannerY = BY + 14;
+  ctx.font = `bold ${bannerSize}px ${STICKER_TEXT_STACK}`;
+  ctx.fillText(banner, cx, bannerY);
+
+  const footer = 'from your Awana family';
+  const footerSize = 11;
+  const footerY = BY + BH - footerSize - 12;
+  ctx.font = `italic ${footerSize}px ${STICKER_TEXT_STACK}`;
+  ctx.fillText(footer, cx, footerY);
+
+  // Big first name centered in the space between banner and footer
+  const name = String(firstName || '').trim() || 'Friend';
+  const nameSize = fitFontSize(ctx, name, 'bold', maxW, 46, 18, STICKER_TEXT_STACK);
+  const nameFont = `bold ${nameSize}px ${STICKER_TEXT_STACK}`;
+  ctx.font = nameFont;
+  const safeName = truncateTextCanvas(ctx, name, nameFont, maxW);
+  const bandTop = bannerY + bannerSize;
+  ctx.fillText(safeName, cx, bandTop + (footerY - bandTop - nameSize) / 2);
+
+  return finishSticker(canvas);
+}
+
+function generateMilestoneSticker(firstName, kind, n) {
+  const { canvas, ctx } = newStickerCanvas();
+  const cx = PAGE_W / 2;
+  const maxW = BW - 28;
+
+  // Huge number flanked by stars — the number IS the celebration
+  const numText = `⭐ ${n} ⭐`;  // ⭐ N ⭐
+  const numSize = fitFontSize(ctx, numText, 'bold', maxW, 52, 24, STICKER_TEXT_STACK);
+  const numY = BY + 10;
+  ctx.font = `bold ${numSize}px ${STICKER_TEXT_STACK}`;
+  ctx.fillText(numText, cx, numY);
+
+  const headline = kind === 'streak' ? 'WEEKS IN A ROW!' : 'NIGHTS AT AWANA!';
+  const headSize = fitFontSize(ctx, headline, 'bold', maxW, 19, 12, STICKER_TEXT_STACK);
+  const headY = numY + numSize + 4;
+  ctx.font = `bold ${headSize}px ${STICKER_TEXT_STACK}`;
+  ctx.fillText(headline, cx, headY);
+
+  // Name centered in the band left under the headline
+  const name = String(firstName || '').trim() || 'Friend';
+  const nameSize = fitFontSize(ctx, name, 'bold', maxW, 24, 12, STICKER_TEXT_STACK);
+  const nameFont = `bold ${nameSize}px ${STICKER_TEXT_STACK}`;
+  ctx.font = nameFont;
+  const safeName = truncateTextCanvas(ctx, name, nameFont, maxW);
+  const bandTop = headY + headSize;
+  ctx.fillText(safeName, cx, bandTop + (BY + BH - 8 - bandTop - nameSize) / 2);
+
+  return finishSticker(canvas);
+}
+
+// Milestone selection: at most ONE milestone sticker per child per night so
+// the printer doesn't spit a stack of paper at one kid. Total-nights wins
+// over streaks when both land on the same night.
+const STREAK_MILESTONES = new Set([3, 5, 10, 15, 20]);
+
+function pickMilestone(totalNights, streakWeeks) {
+  if (totalNights >= 5 && totalNights % 5 === 0) return { kind: 'total', n: totalNights };
+  if (STREAK_MILESTONES.has(streakWeeks)) return { kind: 'streak', n: streakWeeks };
+  return null;
+}
+
 // ── Print a PNG image silently via PowerShell System.Drawing ─────────────────
 // The script is written to a temp .ps1 file and run with -File (not -Command)
 // to avoid multiline quoting issues.  The image path is stored on the
@@ -1333,6 +1534,44 @@ app.post('/print', async (req, res) => {
     });
 
     res.json({ success: true });
+
+    // ── Bonus celebration stickers ────────────────────────────────────────
+    // Printed after the response is flushed so a slow or jammed bonus print
+    // can never time out the check-in. Attendance is recorded first and
+    // independently — a sticker failure must never skip attendance logging,
+    // and no failure here can reach the client (already answered).
+    const attendance = recordAttendance(firstName, lastName);
+
+    if (birthday) {
+      let stickerPath = null;
+      try {
+        const sticker = generateBirthdaySticker(firstName);
+        stickerPath = sticker.pngPath;
+        printImage(stickerPath, effectivePrinter);
+        console.log(`[sticker] Birthday sticker printed for ${firstName} ${lastName}`);
+      } catch (e) {
+        console.warn('[sticker] Birthday sticker failed (check-in unaffected):', e.message);
+      } finally {
+        if (stickerPath) fs.unlink(stickerPath, () => {});
+      }
+    }
+
+    if (attendance.isNewTonight) {
+      const milestone = pickMilestone(attendance.totalNights, attendance.streakWeeks);
+      if (milestone) {
+        let stickerPath = null;
+        try {
+          const sticker = generateMilestoneSticker(firstName, milestone.kind, milestone.n);
+          stickerPath = sticker.pngPath;
+          printImage(stickerPath, effectivePrinter);
+          console.log(`[sticker] Milestone sticker printed for ${firstName} ${lastName}: ${milestone.n} ${milestone.kind === 'streak' ? 'weeks in a row' : 'total nights'}`);
+        } catch (e) {
+          console.warn('[sticker] Milestone sticker failed (check-in unaffected):', e.message);
+        } finally {
+          if (stickerPath) fs.unlink(stickerPath, () => {});
+        }
+      }
+    }
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
@@ -1482,6 +1721,45 @@ app.get('/preview', async (req, res) => {
     fs.unlink(result.pngPath, () => {});
   } catch (err) {
     console.error('[preview] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Celebration sticker previews ─────────────────────────────────────────────
+// Render-and-stream endpoints for field-testing the bonus stickers from a
+// browser without touching the printer or the attendance log.
+//   GET /preview/birthday?name=First+Last
+//   GET /preview/milestone?name=First+Last&kind=total|streak&n=10
+function previewFirstName(req) {
+  const { name, firstName } = req.query;
+  if (firstName) return String(firstName).trim();
+  if (name) return String(name).trim().split(/\s+/)[0] || 'Preview';
+  return 'Preview';
+}
+
+app.get('/preview/birthday', (req, res) => {
+  try {
+    const result = generateBirthdaySticker(previewFirstName(req));
+    res.set('Content-Type', 'image/png');
+    res.send(result.buffer);
+    fs.unlink(result.pngPath, () => {});
+  } catch (err) {
+    console.error('[preview] Birthday sticker error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/preview/milestone', (req, res) => {
+  const kind = req.query.kind === 'streak' ? 'streak' : 'total';
+  const parsed = parseInt(req.query.n, 10);
+  const n = (Number.isFinite(parsed) && parsed > 0) ? parsed : 5;
+  try {
+    const result = generateMilestoneSticker(previewFirstName(req), kind, n);
+    res.set('Content-Type', 'image/png');
+    res.send(result.buffer);
+    fs.unlink(result.pngPath, () => {});
+  } catch (err) {
+    console.error('[preview] Milestone sticker error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
