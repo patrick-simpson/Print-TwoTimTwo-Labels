@@ -1,4 +1,23 @@
-﻿## [4.0.0] - 2026-07-11
+﻿## [4.1.0] - 2026-07-11
+Welcome-screen (check-in display) integration hardened: a documented broadcast contract with tests, Pusher visibility in health/diagnostics, a one-click end-to-end test button, hot-reloading Pusher config, and a security fix so the Pusher secret never leaves the server.
+
+### Check-in broadcast contract (print-server/CONTRACT.md, checkin-payload.js)
+- The exact payload sent to the [Awana-Check-in-Display](https://github.com/patrick-simpson/Awana-Check-in-Display) welcome screen (`firstName`, `club`, `isBirthday`, `isFirstTimer` — nothing else, ever) is now a documented contract with a pure payload-builder module and `node:test` contract tests (`npm test` in print-server/). The display repo mirrors the same tests, so either side breaking the shape fails its build instead of silently blanking the lobby TV.
+- `/reprint` documented as intentionally NOT broadcasting — a reprint should not re-celebrate a kid on the big screen.
+
+### Welcome-screen visibility & test button (print-server/server.js, public/index.html)
+- `GET /health` now includes a `pusher` block: configured, cluster, trigger count, last broadcast time, last error. Diagnostics gains a "Welcome screen broadcast" check.
+- Successful broadcasts are logged, not just failures.
+- New `POST /test-checkin` fires a contract-shaped "Test" event; the dashboard Settings tab gets a **Test Welcome Screen** button so pairing can be verified end-to-end without printing a label.
+- Pusher settings saved from the dashboard now apply immediately — no server restart.
+
+### Security: Pusher secret redaction (print-server/server.js)
+`GET /config` used to return the raw config.json — including `pusherSecret` — to any device on the LAN, and `POST /config` logged it to the console. The secret is now masked in both places, and the mask can't round-trip back into config.json when the settings form is re-saved.
+
+### Docs (README.md)
+New "Joyful Welcome Screen" section: what it does, 4-step Pusher pairing guide, and the note that broadcasts require the standalone print server (the Electron tray app's embedded server does not broadcast).
+
+## [4.0.0] - 2026-07-11
 Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
 
 ### One-tap reprints in the widget (chrome-extension/content.js)

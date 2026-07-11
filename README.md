@@ -68,6 +68,37 @@ Check-in happens on TwoTimTwo.com
    Label prints automatically
 ```
 
+## Joyful Welcome Screen (lobby TV display)
+
+The print server can pair with the
+[Awana-Check-in-Display](https://github.com/patrick-simpson/Awana-Check-in-Display)
+signage app: every time a label prints, the lobby TV celebrates the kid
+with a banner and confetti (birthday and first-timer variants included).
+Only the first name, club, birthday-week flag, and visitor flag are ever
+broadcast — see [print-server/CONTRACT.md](./print-server/CONTRACT.md).
+
+### Pairing setup
+
+1. Create a free app at [pusher.com](https://pusher.com/channels) (Channels,
+   any name, pick a cluster like `us2`).
+2. On the print server dashboard (`http://localhost:3456`) → **Settings** →
+   Pusher Integration: enter the App ID, Key, Secret, and Cluster from the
+   Pusher dashboard, then Save (applies immediately, no restart needed).
+3. On the display (`https://patrick-simpson.github.io/Awana-Check-in-Display/`)
+   open the settings gear and enter the same **Key** and **Cluster** (the
+   display never needs the secret).
+4. Back on the print server dashboard, click **Test Welcome Screen** — a
+   "Test" banner should appear on the display within a second.
+
+Notes:
+- Broadcasts require the **standalone print server** (the installer /
+  PowerShell setup). The Electron tray app's embedded server does not
+  broadcast.
+- Reprints intentionally do not re-trigger the welcome screen.
+- `GET /health` includes a `pusher` block (configured, trigger count, last
+  error) for troubleshooting; Diagnostics has a "Welcome screen broadcast"
+  check.
+
 ## Advanced Options
 
 ### Command-Line Parameters

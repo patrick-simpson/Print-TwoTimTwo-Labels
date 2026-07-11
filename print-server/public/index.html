@@ -221,6 +221,11 @@
                   <input type="text" id="settings-pusher-secret" placeholder="**********">
                 </div>
               </div>
+              <p style="font-size:11px; color:#64748b; margin-top:8px">The saved secret shows as dots — leave it unchanged to keep the current one. The welcome screen display must use the same app's Key and Cluster.</p>
+              <div style="display:flex; align-items:center; gap:10px; margin-top:8px">
+                <button class="btn btn-secondary" onclick="testWelcomeScreen()">Test Welcome Screen</button>
+                <span id="test-checkin-status" style="font-size:12px"></span>
+              </div>
             </div>
             <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
             <div id="settings-status" style="font-size:12px;color:#22c55e;display:none">Settings saved</div>
@@ -507,6 +512,28 @@ function saveSettings() {
       el.style.display = 'block';
       setTimeout(function() { el.style.display = 'none'; }, 3000);
     }
+  });
+}
+
+// Welcome-screen test broadcast — fires a "Test" check-in over Pusher so
+// the display pairing can be verified without printing a label.
+function testWelcomeScreen() {
+  var el = document.getElementById('test-checkin-status');
+  el.style.color = '#64748b';
+  el.textContent = 'Sending...';
+  fetch(BASE + '/test-checkin', { method: 'POST' }).then(function(r) {
+    return r.json().then(function(data) { return { ok: r.ok, data: data }; });
+  }).then(function(res) {
+    if (res.ok) {
+      el.style.color = '#22c55e';
+      el.textContent = 'Sent! "Test" should appear on the welcome screen within a second.';
+    } else {
+      el.style.color = '#ef4444';
+      el.textContent = res.data.error || 'Broadcast failed';
+    }
+  }).catch(function() {
+    el.style.color = '#ef4444';
+    el.textContent = 'Request failed — is the server running?';
   });
 }
 

@@ -50,6 +50,7 @@ const FEATURES: { icon: string; title: string; body: string; isNew?: boolean }[]
   { icon: '🔁', title: 'One-tap reprints', body: 'Tonight’s check-ins are listed right in the widget — tap Reprint when a label tears or wanders off.', isNew: true },
   { icon: '📊', title: 'Live dashboard', body: 'Tonight at a glance: per-club counts, visitors, and every allergy or no-photo kid in the building.', isNew: true },
   { icon: '📴', title: 'Offline-ready', body: 'The roster is cached locally, prints queue while the server is unreachable, and search keeps working if the Wi-Fi drops.', isNew: true },
+  { icon: '🎉', title: 'Welcome screen', body: 'Pair with the lobby TV display: every check-in celebrates the kid by first name — with birthday and first-timer confetti.', isNew: true },
 ];
 
 export const Features: React.FC = () => (

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '4.0.0';
+  const EXTENSION_VERSION = '4.1.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit

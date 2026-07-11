@@ -13,6 +13,7 @@ process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejecti
 const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
+const { CHECKIN_CHANNEL, CHECKIN_EVENT, buildCheckinPayload } = require('./checkin-payload');
 const { createCanvas, loadImage } = require('canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
@@ -36,19 +37,53 @@ try {
   console.warn('[config] Failed to load config.json:', e.message);
 }
 
-const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret) 
-  ? new Pusher({
-      appId:   config.pusherAppId,
-      key:     config.pusherKey,
-      secret:  config.pusherSecret,
-      cluster: config.pusherCluster || 'us2',
-    })
-  : null;
+// Broadcast telemetry, surfaced via /health and /diagnostics so a silent
+// welcome-screen outage is visible without watching the console.
+const pusherStats = {
+  configured: false,
+  cluster: null,
+  triggerCount: 0,
+  lastTriggerAt: null,
+  lastError: null,
+};
 
-if (pusher) {
-  console.log(`[pusher] Initialized with App ID: ${config.pusherAppId}`);
-} else {
-  console.log('[pusher] Not configured (Joyful Welcome Screen disabled)');
+// Re-created by POST /config so new credentials apply without a restart.
+let pusher = null;
+function initPusher(cfg) {
+  pusher = (cfg.pusherAppId && cfg.pusherKey && cfg.pusherSecret)
+    ? new Pusher({
+        appId:   cfg.pusherAppId,
+        key:     cfg.pusherKey,
+        secret:  cfg.pusherSecret,
+        cluster: cfg.pusherCluster || 'us2',
+      })
+    : null;
+  pusherStats.configured = !!pusher;
+  pusherStats.cluster = pusher ? (cfg.pusherCluster || 'us2') : null;
+  if (pusher) {
+    console.log(`[pusher] Initialized with App ID: ${cfg.pusherAppId}`);
+  } else {
+    console.log('[pusher] Not configured (Joyful Welcome Screen disabled)');
+  }
+}
+initPusher(config);
+
+// Fire a Check-in Broadcast Contract v1 event (see CONTRACT.md). Never
+// throws — a Pusher outage must not break label printing.
+function broadcastCheckin({ firstName, clubName, birthday, visitor }, source = 'print') {
+  if (!pusher) return;
+  const payload = buildCheckinPayload({ firstName, clubName, birthday, visitor });
+  pusher.trigger(CHECKIN_CHANNEL, CHECKIN_EVENT, payload)
+    .then(() => {
+      pusherStats.triggerCount += 1;
+      pusherStats.lastTriggerAt = new Date().toISOString();
+      pusherStats.lastError = null;
+      console.log(`[pusher] ${source}: broadcast ${payload.firstName} (${payload.club || 'no club'})`);
+    })
+    .catch(e => {
+      pusherStats.lastError = e.message;
+      console.warn('[pusher] trigger failed:', e.message);
+    });
 }
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
@@ -1317,14 +1352,7 @@ app.post('/print', async (req, res) => {
     printImage(pngPath, effectivePrinter);
     recordPrint(dupKey);
 
-    if (pusher) {
-      pusher.trigger('awana-channel', 'checkin', {
-        firstName,
-        club: clubName,
-        isBirthday: !!birthday,
-        isFirstTimer: !!visitor,
-      }).catch(e => console.warn('[pusher] trigger failed:', e.message));
-    }
+    broadcastCheckin({ firstName, clubName, birthday, visitor });
 
     // Log to print history
     addHistoryEntry({
@@ -1487,6 +1515,10 @@ app.get('/preview', async (req, res) => {
 });
 
 // ── Reprint ──────────────────────────────────────────────────────────────────
+// NOTE: reprints deliberately do NOT broadcast to the welcome-screen
+// display (no broadcastCheckin call). The kid already got their banner on
+// the original print; reprints also bypass the 25s duplicate gate, so
+// broadcasting here could re-celebrate or spam the screen. See CONTRACT.md.
 app.post('/reprint', async (req, res) => {
   const { name, index } = req.body || {};
   const history = loadHistory();
@@ -1544,6 +1576,36 @@ app.post('/reprint', async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
+// ── Welcome-screen test broadcast ────────────────────────────────────────────
+// Fires a contract-shaped test event so the display pairing can be verified
+// end-to-end without printing a physical label. Waits for the Pusher API
+// response so the dashboard gets a real success/failure answer.
+app.post('/test-checkin', async (req, res) => {
+  if (!pusher) {
+    return res.status(409).json({
+      error: 'Pusher is not configured — enter the App ID, Key, Secret, and Cluster in Settings and save first.',
+    });
+  }
+  const payload = buildCheckinPayload({
+    firstName: 'Test',
+    clubName: 'Sparks',
+    birthday: false,
+    visitor: false,
+  });
+  try {
+    await pusher.trigger(CHECKIN_CHANNEL, CHECKIN_EVENT, payload);
+    pusherStats.triggerCount += 1;
+    pusherStats.lastTriggerAt = new Date().toISOString();
+    pusherStats.lastError = null;
+    console.log('[pusher] test-checkin: broadcast sent');
+    res.json({ success: true, payload });
+  } catch (e) {
+    pusherStats.lastError = e.message;
+    console.warn('[pusher] test-checkin failed:', e.message);
+    res.status(502).json({ error: e.message });
   }
 });
 
@@ -1629,6 +1691,8 @@ app.get('/health', async (req, res) => {
     version: SERVER_VERSION,
     latestVersion: latestVersion,
     uptime: Math.round(process.uptime()),
+    // Welcome-screen broadcast status (never includes key/secret)
+    pusher: { ...pusherStats },
     warnings
   });
 });
@@ -1650,10 +1714,18 @@ app.post('/update-now', (req, res) => {
 
 // ── Config endpoints ─────────────────────────────────────────────────────────
 
+// Sentinel returned in place of secrets by GET /config. POST /config
+// ignores it so a settings form that round-trips the GET response can't
+// overwrite the real secret with the mask.
+const SECRET_MASK = '••••••••';
+
 app.get('/config', (req, res) => {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      // Never expose the Pusher secret to LAN clients; the dashboard only
+      // needs to know whether one is set.
+      if (config.pusherSecret) config.pusherSecret = SECRET_MASK;
       res.json(config);
     } else {
       res.json({ printerName: PRINTER_NAME, checkinUrl: '' });
@@ -1677,11 +1749,16 @@ app.post('/config', (req, res) => {
     if (checkinUrl !== undefined) config.checkinUrl = checkinUrl;
     if (pusherAppId !== undefined) config.pusherAppId = pusherAppId;
     if (pusherKey !== undefined) config.pusherKey = pusherKey;
-    if (pusherSecret !== undefined) config.pusherSecret = pusherSecret;
+    // Ignore the GET /config mask so round-tripped forms keep the real secret
+    if (pusherSecret !== undefined && pusherSecret !== SECRET_MASK) config.pusherSecret = pusherSecret;
     if (pusherCluster !== undefined) config.pusherCluster = pusherCluster;
-    
+
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
-    console.log('[config] Saved:', JSON.stringify(config));
+    const logged = { ...config };
+    if (logged.pusherSecret) logged.pusherSecret = SECRET_MASK;
+    console.log('[config] Saved:', JSON.stringify(logged));
+    // Apply new Pusher credentials immediately — no restart needed
+    initPusher(config);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1728,6 +1805,16 @@ app.get('/diagnostics', async (req, res) => {
   } catch (e) {
     results.push({ test: 'Label rendering', passed: false, detail: e.message });
   }
+
+  // 5. Welcome-screen broadcast (configuration only — no live event fired;
+  //    use POST /test-checkin or the dashboard button for an end-to-end test)
+  results.push({
+    test: 'Welcome screen broadcast',
+    passed: pusherStats.configured,
+    detail: pusherStats.configured
+      ? `cluster ${pusherStats.cluster}, ${pusherStats.triggerCount} sent${pusherStats.lastError ? `, last error: ${pusherStats.lastError}` : ''}`
+      : 'Pusher not configured (welcome screen disabled)',
+  });
 
   res.json(results);
 });
