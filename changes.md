@@ -1,4 +1,11 @@
-﻿## [4.1.0] - 2026-07-11
+﻿## [4.1.1] - 2026-07-12
+Dashboard tweak: removed the per-club check-in counts from "Tonight at a Glance" — anyone walking past the check-in table screen could see how many kids were in each club tonight; the total count, visitor count, and allergy/no-photo/birthday flags still show.
+
+### Dashboard (print-server/public/index.html)
+- Dropped the `tonight-clubs` chip row (`Sparks 12`, `Cubbies 8`, etc.) and its rendering code; the safety flags list now shows its own "No check-ins yet tonight" placeholder when empty so the card never looks blank.
+- `GET /stats/tonight` is unchanged — `byClub` is still returned by the API for anyone building their own dashboard, it's just no longer rendered here.
+
+## [4.1.0] - 2026-07-11
 Welcome-screen (check-in display) integration hardened: a documented broadcast contract with tests, Pusher visibility in health/diagnostics, a one-click end-to-end test button, hot-reloading Pusher config, and a security fix so the Pusher secret never leaves the server.
 
 ### Check-in broadcast contract (print-server/CONTRACT.md, checkin-payload.js)
