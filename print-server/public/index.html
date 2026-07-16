@@ -140,6 +140,28 @@
     </div>
   </div>
 
+  <!-- Night Status -->
+  <div class="card">
+    <div class="card-header">
+      <span>Night Status</span>
+      <button class="btn btn-primary btn-sm" id="canary-btn" onclick="runCanary()">Test Night Systems</button>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div id="night-status" class="diag-list" style="padding:8px 16px">
+        <div class="empty">Loading...</div>
+      </div>
+      <div id="canary-result" style="display:none;padding:8px 16px;border-top:1px solid #f1f5f9;font-size:12px"></div>
+    </div>
+  </div>
+
+  <!-- Print failures -->
+  <div id="failures-card" class="card" style="display:none">
+    <div class="card-header" style="background:#fef2f2;color:#991b1b">Print Failures Tonight</div>
+    <div class="card-body">
+      <div id="failures-list" class="warnings"></div>
+    </div>
+  </div>
+
   <!-- Warnings -->
   <div id="warnings-card" class="card" style="display:none">
     <div class="card-header" style="background:#fffbeb;color:#92400e">Warnings</div>
@@ -346,6 +368,8 @@ function loadHealth() {
     } else {
       warnCard.style.display = 'none';
     }
+
+    renderNightStatus(data);
   }).catch(function() {
     document.getElementById('status-badge').innerHTML = '<span class="status-dot err"></span> Offline';
     var tl = document.getElementById('traffic-light');
@@ -404,15 +428,15 @@ function loadRoster() {
 // Load print history
 function loadHistory() {
   fetch(BASE + '/history/today').then(function(r) { return r.json(); }).then(function(entries) {
-    document.getElementById('print-count').textContent = entries.length;
+    document.getElementById('print-count').textContent = entries.filter(function(e) { return e.success !== false; }).length;
     var tbody = document.getElementById('history-body');
     if (!entries.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty">No prints today</td></tr>';
       return;
     }
     tbody.innerHTML = entries.slice(0, 30).map(function(e, i) {
-      return '<tr>' +
-        '<td><strong>' + (e.firstName || '') + ' ' + (e.lastName || '') + '</strong></td>' +
+      return '<tr' + (e.success === false ? ' style="background:#fef2f2"' : '') + '>' +
+        '<td><strong>' + (e.firstName || '') + ' ' + (e.lastName || '') + '</strong>' + (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') + '</td>' +
         '<td>' + (e.clubName || '--') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + (e.printer || 'default') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + formatTime(e.timestamp) + '</td>' +
@@ -508,6 +532,91 @@ function saveSettings() {
       setTimeout(function() { el.style.display = 'none'; }, 3000);
     }
   });
+}
+
+// Night Status — event-bus + selector health from the extended /health payload
+function statusRow(icon, label, detail) {
+  return '<div class="diag-item"><span class="diag-icon">' + icon + '</span><span>' + label + '</span><span class="diag-detail">' + (detail || '') + '</span></div>';
+}
+
+function renderNightStatus(h) {
+  var el = document.getElementById('night-status');
+  var rows = '';
+
+  rows += statusRow(h.clubNight ? '🌙' : '💤',
+    h.clubNight ? 'Club night window — live broadcasts active' : 'Outside club-night window — broadcasts idle',
+    '');
+
+  var p = h.pusher || {};
+  if (!p.configured) {
+    rows += statusRow('⚪', 'Event bus (Pusher)', 'not configured');
+  } else if (p.lastPublishOk === null) {
+    rows += statusRow('🟡', 'Event bus (Pusher)', 'configured — nothing published yet');
+  } else if (p.lastPublishOk) {
+    rows += statusRow('✅', 'Event bus (Pusher)', 'last publish (' + (p.lastEvent || '?') + ') at ' + formatTime(p.lastPublishAt));
+  } else {
+    rows += statusRow('❌', 'Event bus (Pusher)', (p.lastError || 'publish failed') + ' at ' + formatTime(p.lastPublishAt));
+  }
+
+  var st = h.selectorSelfTest;
+  if (!st) {
+    rows += statusRow('🟡', 'Check-in page selectors', 'no report yet — is the check-in page open?');
+  } else if (st.ok) {
+    rows += statusRow('✅', 'Check-in page selectors', 'verified ' + formatTime(st.at));
+  } else {
+    var failedChecks = (st.results || []).filter(function(r) { return !r.passed; }).map(function(r) { return r.check; });
+    rows += statusRow('❌', 'Check-in page selectors', 'FAILING: ' + (failedChecks.join(', ') || 'unknown') + ' at ' + formatTime(st.at));
+  }
+
+  var c = h.lastCanary;
+  if (!c) {
+    rows += statusRow('🟡', 'Last canary test', 'never run — use "Test Night Systems"');
+  } else {
+    var allPass = (c.stages || []).every(function(s) { return s.passed; });
+    rows += statusRow(allPass ? '✅' : '❌', 'Last canary test',
+      (c.stages || []).map(function(s) { return s.stage + (s.passed ? ' ✓' : ' ✗'); }).join(' · ') + ' at ' + formatTime(c.at));
+  }
+
+  if (h.csv && h.csv.updatedAt) {
+    var ageH = (Date.now() - new Date(h.csv.updatedAt).getTime()) / 3600000;
+    rows += statusRow(ageH > 24 ? '🟡' : '✅', 'Roster CSV', h.csv.count + ' kids, updated ' + (ageH < 1 ? 'under an hour ago' : Math.round(ageH) + 'h ago'));
+  } else {
+    rows += statusRow('❌', 'Roster CSV', 'missing');
+  }
+
+  el.innerHTML = rows;
+
+  var failCard = document.getElementById('failures-card');
+  if (h.printFailures > 0) {
+    failCard.style.display = 'block';
+    fetch(BASE + '/failures').then(function(r) { return r.json(); }).then(function(list) {
+      document.getElementById('failures-list').innerHTML = list.map(function(f) {
+        return '<div class="warning-item" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">' +
+          '<strong>' + f.name + '</strong> (' + (f.club || 'no club') + ') at ' + formatTime(f.at) + ' — ' + f.error + '</div>';
+      }).join('');
+    }).catch(function() {});
+  } else {
+    failCard.style.display = 'none';
+  }
+}
+
+function runCanary() {
+  var btn = document.getElementById('canary-btn');
+  var out = document.getElementById('canary-result');
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  out.style.display = 'block';
+  out.textContent = 'Printing a TEST label and pinging the event bus...';
+  fetch(BASE + '/canary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      out.innerHTML = (res.stages || []).map(function(s) {
+        return (s.passed ? '✅' : '❌') + ' <strong>' + s.stage + '</strong> — ' + (s.detail || '');
+      }).join('<br>');
+      loadHealth();
+    })
+    .catch(function() { out.textContent = 'Canary failed — could not reach the server.'; })
+    .finally(function() { btn.disabled = false; btn.textContent = 'Test Night Systems'; });
 }
 
 // Diagnostics

@@ -13,6 +13,7 @@ process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejecti
 const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
+const events  = require('./events');
 const { createCanvas, loadImage } = require('canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
@@ -36,7 +37,33 @@ try {
   console.warn('[config] Failed to load config.json:', e.message);
 }
 
-const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret) 
+// ── Church configuration ──────────────────────────────────────────────────────
+// Per-church knobs (check-in URL, club-night windows, event-bus channel) live
+// in church-config.json next to this script. Baked KVBC defaults keep the
+// server fully functional when the file is missing or malformed, and let a
+// fork swap churches by editing one JSON file instead of source.
+const CHURCH_CONFIG_FILE = path.join(__dirname, 'church-config.json');
+const CHURCH_DEFAULTS = {
+  churchName: 'KVBC Church',
+  subdomain: 'kvbchurch',
+  checkinUrl: 'https://kvbchurch.twotimtwo.com/clubber/checkin',
+  pusherChannel: 'awana-channel',
+  sharesClubIds: [2, 3, 4, 5, 6],
+  clubNights: [{ dow: 3, start: '17:30', end: '20:00' }],
+  canaryLeadMinutes: 20,
+};
+let churchConfig = { ...CHURCH_DEFAULTS };
+try {
+  if (fs.existsSync(CHURCH_CONFIG_FILE)) {
+    Object.assign(churchConfig, JSON.parse(fs.readFileSync(CHURCH_CONFIG_FILE, 'utf8')));
+    console.log(`[church] Loaded church-config.json (${churchConfig.churchName})`);
+  }
+} catch (e) {
+  console.warn('[church] Failed to load church-config.json — using baked defaults:', e.message);
+}
+const EVENT_CHANNEL = churchConfig.pusherChannel || 'awana-channel';
+
+const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret)
   ? new Pusher({
       appId:   config.pusherAppId,
       key:     config.pusherKey,
@@ -50,6 +77,51 @@ if (pusher) {
 } else {
   console.log('[pusher] Not configured (Joyful Welcome Screen disabled)');
 }
+
+// ── Tonight's event buffer ────────────────────────────────────────────────────
+// The last ~50 checkin events, persisted so a mid-event server restart doesn't
+// lose the recap replay window. Only today's events survive a reload.
+const EVENT_BUFFER_FILE = path.join(__dirname, 'events-buffer.json');
+const EVENT_BUFFER_MAX = 50;
+let eventBuffer = [];
+try {
+  if (fs.existsSync(EVENT_BUFFER_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(EVENT_BUFFER_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    if (Array.isArray(raw)) {
+      eventBuffer = raw.filter(e => e && typeof e.at === 'string' && e.at.startsWith(today));
+      if (eventBuffer.length) console.log(`[events] Restored ${eventBuffer.length} checkin event(s) from tonight's buffer`);
+    }
+  }
+} catch (e) { /* corrupt buffer — start fresh */ }
+
+function pushEventToBuffer(checkinEvent) {
+  eventBuffer.push(checkinEvent);
+  if (eventBuffer.length > EVENT_BUFFER_MAX) eventBuffer.splice(0, eventBuffer.length - EVENT_BUFFER_MAX);
+  try {
+    const tmp = EVENT_BUFFER_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(eventBuffer), 'utf8');
+    fs.renameSync(tmp, EVENT_BUFFER_FILE);
+  } catch (e) { /* persistence is best-effort */ }
+}
+
+// ── Print-failure tracking ────────────────────────────────────────────────────
+// The server used to record only successes; a jammed printer was invisible
+// beyond the extension's toast. Failures now land in history (ok:false), in
+// this in-memory list for the dashboard, and on the event bus as an `ops`
+// event (type/club/at only — never a name on Pusher).
+const printFailures = [];  // { name, club, at, error } — name stays LOCAL only
+const PRINT_FAILURES_MAX = 20;
+
+function recordPrintFailure(name, club, error) {
+  printFailures.unshift({ name, club: club || '', at: new Date().toISOString(), error: String(error || '').slice(0, 200) });
+  if (printFailures.length > PRINT_FAILURES_MAX) printFailures.length = PRINT_FAILURES_MAX;
+  events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('print-failure', club));
+}
+
+// ── Selector self-test + canary state ────────────────────────────────────────
+let lastSelfTest = null;   // { ok, results, extensionVersion, at } — posted by the extension
+let lastCanary   = null;   // { at, stages } — result of the last POST /canary
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
 const PAGE_W  = 4 * 72;  // 288 pt
@@ -686,7 +758,8 @@ const SCALE = DPI / 72;            // convert pt → px
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false
+  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
+  testBanner = false
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
@@ -1003,6 +1076,27 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
+  // ── TEST overlay (canary labels) ──────────────────────────────────────────
+  // A bold diagonal band so a canary print can never be mistaken for a real
+  // check-in label. Solid black band + white text stays crisp on 1-bit
+  // thermal output.
+  if (testBanner) {
+    ctx.save();
+    ctx.translate(PAGE_W / 2, PAGE_H / 2);
+    ctx.rotate(-0.18);
+    const bandW = PAGE_W * 1.2;
+    const bandH = 30;
+    ctx.fillStyle = COLOR.name;
+    ctx.fillRect(-bandW / 2, -bandH / 2, bandW, bandH);
+    ctx.font = 'bold 20px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = COLOR.bg;
+    ctx.fillText('TEST — NOT A CHECK-IN', 0, 1);
+    ctx.restore();
+    ctx.textBaseline = 'top';
+  }
+
   // Write PNG
   const buffer = canvas.toBuffer('image/png');
   fs.writeFileSync(pngPath, buffer);
@@ -1317,14 +1411,13 @@ app.post('/print', async (req, res) => {
     printImage(pngPath, effectivePrinter);
     recordPrint(dupKey);
 
-    if (pusher) {
-      pusher.trigger('awana-channel', 'checkin', {
-        firstName,
-        club: clubName,
-        isBirthday: !!birthday,
-        isFirstTimer: !!visitor,
-      }).catch(e => console.warn('[pusher] trigger failed:', e.message));
-    }
+    // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
+    // plus a fresh tally so displays update within seconds of the check-in.
+    const checkinEvent = events.buildCheckin({
+      firstName, club: clubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+    });
+    events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
+    pushEventToBuffer(checkinEvent);
 
     // Log to print history
     addHistoryEntry({
@@ -1332,11 +1425,18 @@ app.post('/print', async (req, res) => {
       printer: effectivePrinter, success: true, visitor: !!visitor
     });
 
+    publishTally();
+
     res.json({ success: true });
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
     console.error('[print] Error:', err.message);
+    addHistoryEntry({
+      firstName, lastName, clubName, clubImageData,
+      printer: effectivePrinter, success: false, visitor: !!visitor
+    });
+    recordPrintFailure(`${firstName} ${lastName}`.trim(), clubName, err.message);
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
@@ -1403,10 +1503,11 @@ app.get('/history/today', (req, res) => {
 // needs during the event: kids checked in per club, visitors, and the safety
 // flags for everyone currently in the building (allergies, birthdays,
 // no-photo kids). Each child counts once no matter how many reprints.
-app.get('/stats/tonight', (req, res) => {
+function computeTonightStats() {
   const history = loadHistory();
   const today = new Date().toISOString().slice(0, 10);
-  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
+  // Failed prints stay in history for the dashboard but never count a kid in.
+  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false);
 
   const byClub = {};
   const seen = new Set();
@@ -1432,7 +1533,7 @@ app.get('/stats/tonight', (req, res) => {
     if (parseNoPhoto(record.MedRelease)) noPhotoKids.push(name);
   });
 
-  res.json({
+  return {
     date: today,
     prints: entries.length,
     checkedIn: seen.size,
@@ -1441,7 +1542,11 @@ app.get('/stats/tonight', (req, res) => {
     allergyKids,
     birthdayKids,
     noPhotoKids
-  });
+  };
+}
+
+app.get('/stats/tonight', (req, res) => {
+  res.json(computeTonightStats());
 });
 
 // ── Label preview ────────────────────────────────────────────────────────────
@@ -1541,10 +1646,137 @@ app.post('/reprint', async (req, res) => {
     res.json({ success: true, name: `${entry.firstName} ${entry.lastName}` });
   } catch (err) {
     console.error('[reprint] Error:', err.message);
+    addHistoryEntry({
+      firstName: entry.firstName, lastName: entry.lastName,
+      clubName: entry.clubName, clubImageData: entry.clubImageData,
+      printer: effectivePrinter, success: false
+    });
+    recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
   }
+});
+
+// ── Event-bus publishers ──────────────────────────────────────────────────────
+// Interval publishers are gated by the church-config club-night window so the
+// channel stays quiet the other ~165 hours a week. Every publisher is wrapped:
+// a Pusher outage can never disturb printing.
+
+function publishTally() {
+  try {
+    const st = computeTonightStats();
+    events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn));
+  } catch (e) { console.warn('[events] tally publish skipped:', e.message); }
+}
+
+function publishRecap() {
+  try {
+    if (!eventBuffer.length) return;
+    events.publish(pusher, EVENT_CHANNEL, 'recap', events.buildRecap(eventBuffer));
+  } catch (e) { console.warn('[events] recap publish skipped:', e.message); }
+}
+
+function publishBirthdays() {
+  try {
+    const entries = [];
+    for (const r of clubbers) {
+      if (!isBirthdayWeek(r.Birthdate)) continue;
+      const bd = parseBirthdate(r.Birthdate);
+      if (!bd) continue;
+      // First name + club + calendar month/day ONLY — no last name, no year.
+      entries.push({
+        firstName: r.FirstName || '',
+        club: r.Club || '',
+        month: bd.getMonth() + 1,
+        day: bd.getDate(),
+      });
+    }
+    events.publish(pusher, EVENT_CHANNEL, 'birthdays', events.buildBirthdays(entries));
+  } catch (e) { console.warn('[events] birthdays publish skipped:', e.message); }
+}
+
+function onClubNight(fn) {
+  return () => {
+    try {
+      if (!events.isClubNightNow(churchConfig.clubNights)) return;
+      fn();
+    } catch (e) { /* scheduler must never die */ }
+  };
+}
+
+setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
+setInterval(onClubNight(publishTally), 60 * 1000);
+setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+
+// ── Selector self-test receiver ───────────────────────────────────────────────
+// The extension probes the TwoTimTwo DOM (roster rows, names, #lastCheckin,
+// club icons) every 10 minutes and posts the result here so silent selector
+// drift is visible on the dashboard before it eats a club night. A transition
+// into hard failure publishes an ops event (type/at only — no PII).
+app.post('/selftest', (req, res) => {
+  const body = req.body || {};
+  const wasOk = !lastSelfTest || lastSelfTest.ok !== false;
+  lastSelfTest = {
+    ok: body.ok !== false,
+    results: Array.isArray(body.results)
+      ? body.results.slice(0, 20).map(r => ({
+          check: String(r && r.check || '').slice(0, 60),
+          passed: !!(r && r.passed),
+          detail: String(r && r.detail || '').slice(0, 120),
+        }))
+      : [],
+    extensionVersion: String(body.extensionVersion || '').slice(0, 20),
+    at: new Date().toISOString(),
+  };
+  if (!lastSelfTest.ok && wasOk) {
+    console.warn('[selftest] Extension reports selector failure — check-in page markup may have changed');
+    events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('selector-fail'));
+  }
+  res.json({ ok: true });
+});
+
+// ── Canary — end-to-end night-systems test ────────────────────────────────────
+// Stage 1 prints a real label with a TEST overlay (unique name defeats the
+// duplicate window; excluded from history, stats, tally, and the checkin
+// event). Stage 2 publishes a canary event so displays can confirm the pipe.
+app.post('/canary', async (req, res) => {
+  const stages = [];
+  const canaryName = 'Canary ' + new Date().toTimeString().slice(0, 8);
+
+  let pngPath = null;
+  try {
+    const result = await generateLabel(
+      canaryName, '', 'Test', null, [], '', false, false,
+      false, '', null, false, true  // testBanner
+    );
+    pngPath = result.pngPath;
+    const printerName = (req.body && req.body.printerName && String(req.body.printerName).trim()) || PRINTER_NAME;
+    printImage(pngPath, printerName);
+    stages.push({ stage: 'print', passed: true, detail: `TEST label sent to ${printerName || 'default printer'}` });
+  } catch (err) {
+    stages.push({ stage: 'print', passed: false, detail: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+
+  const published = await events.publish(pusher, EVENT_CHANNEL, 'canary', events.buildCanary());
+  stages.push({
+    stage: 'pusher',
+    passed: published,
+    detail: pusher ? (published ? `canary event on ${EVENT_CHANNEL}` : 'publish failed') : 'Pusher not configured',
+  });
+
+  lastCanary = { at: new Date().toISOString(), stages };
+  console.log(`[canary] ${stages.map(s => `${s.stage}:${s.passed ? 'ok' : 'FAIL'}`).join(' ')}`);
+  res.json({ ok: stages.every(s => s.passed), stages });
+});
+
+// ── Church config (read-only) ─────────────────────────────────────────────────
+// The extension fetches this once at startup so club-night windows, the
+// check-in URL, and shares club ids live in one place instead of hardcodes.
+app.get('/config/church', (req, res) => {
+  res.json(churchConfig);
 });
 
 // ── Enhanced health check ────────────────────────────────────────────────────
@@ -1623,14 +1855,29 @@ function checkForUpdates() {
 // Override health endpoint with enhanced version
 app.get('/health', async (req, res) => {
   const warnings = await checkPrinterWarnings();
+  let csvUpdatedAt = null;
+  try {
+    csvUpdatedAt = fs.statSync(path.join(__dirname, 'clubbers.csv')).mtime.toISOString();
+  } catch { /* no CSV yet */ }
   res.json({
     status: 'ok',
     printer: PRINTER_NAME || '(default)',
     version: SERVER_VERSION,
     latestVersion: latestVersion,
     uptime: Math.round(process.uptime()),
-    warnings
+    warnings,
+    clubNight: events.isClubNightNow(churchConfig.clubNights),
+    pusher: events.getPublishState(),
+    selectorSelfTest: lastSelfTest,
+    lastCanary,
+    printFailures: printFailures.length,
+    csv: { count: clubbers.length, updatedAt: csvUpdatedAt }
   });
+});
+
+// Recent print failures for the dashboard (names stay local — never on Pusher)
+app.get('/failures', (req, res) => {
+  res.json(printFailures);
 });
 
 // ── One-click update ──────────────────────────────────────────────────────────
@@ -1779,6 +2026,11 @@ startListening();
 // Check for updates on startup and periodically
 checkForUpdates();
 setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);
+
+// Publish the birthday roster once at startup so displays that boot before
+// the first club-night interval still get the list. Delayed a few seconds so
+// the CSV is loaded and Pusher has settled.
+setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
 
 // Pre-warm: send a blank label to the printer to eliminate cold-start delay.
 // Off by default — enable via config.json { "prewarmPrinter": true }

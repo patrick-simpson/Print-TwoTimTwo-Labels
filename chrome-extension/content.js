@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '4.0.0';
+  const EXTENSION_VERSION = '4.1.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -943,7 +943,47 @@
       doPrint('Test Child', 'Sparks', null);
     });
 
-    controls.append(modeSelect, statusEl, testBtn);
+    // Night-systems canary: exercises the whole pipeline — server → TEST
+    // label print → Pusher canary event — plus this page's selectors.
+    var nightTestBtn = document.createElement('button');
+    nightTestBtn.textContent = 'Night Test';
+    Object.assign(nightTestBtn.style, {
+      fontSize: '11px', padding: '5px 10px',
+      background: '#eef2ff', border: '1px solid #c7d2fe',
+      borderRadius: '6px', cursor: 'pointer',
+      fontWeight: '600', color: '#4338ca',
+      transition: 'background 0.15s ease'
+    });
+    nightTestBtn.addEventListener('mouseenter', function() { nightTestBtn.style.background = '#e0e7ff'; });
+    nightTestBtn.addEventListener('mouseleave', function() { nightTestBtn.style.background = '#eef2ff'; });
+    nightTestBtn.addEventListener('click', function() {
+      nightTestBtn.disabled = true;
+      nightTestBtn.textContent = 'Testing...';
+      var selectorsOk = runSelectorSelfTest();
+      fetch(PRINT_SERVER + '/canary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerName: selectedPrinterName || undefined }),
+        signal: AbortSignal.timeout(45000)
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          var lines = (res.stages || []).map(function(s) {
+            return (s.passed ? '✅' : '❌') + ' ' + s.stage + (s.detail ? ' — ' + s.detail : '');
+          });
+          lines.unshift((selectorsOk ? '✅' : '❌') + ' page selectors');
+          alert('Night systems test:\n\n' + lines.join('\n'));
+        })
+        .catch(function() {
+          alert('Night systems test:\n\n' + (selectorsOk ? '✅' : '❌') + ' page selectors\n❌ server — could not reach the print server');
+        })
+        .finally(function() {
+          nightTestBtn.disabled = false;
+          nightTestBtn.textContent = 'Night Test';
+        });
+    });
+
+    controls.append(modeSelect, statusEl, testBtn, nightTestBtn);
 
     // Printer row
     var printerRow = document.createElement('div');
@@ -2261,6 +2301,77 @@
     } catch (e) { console.log('[Awana] autoRefresh error:', e); }
   }
 
+  // ── Selector self-test ───────────────────────────────────────────────────────
+  // The whole detection pipeline hangs off a handful of TwoTimTwo DOM
+  // selectors. If the site ships a redesign, everything fails SILENTLY — the
+  // widget still shows green and nobody notices until kids stop getting
+  // labels. This probes the live DOM every 10 minutes, reports to the server
+  // (dashboard Night Status card), and throws a loud page banner on hard
+  // failure. Modal selectors (#checkin-modal, button#checkin) only exist
+  // while a modal is open, so they're verified passively by the driven
+  // check-in paths, not here.
+  var SELFTEST_INTERVAL_MS = 10 * 60 * 1000;
+  var selectorBannerShown = false;
+
+  function runSelectorSelfTest() {
+    var results = [];
+    try {
+      var clubberEls = document.querySelectorAll('.clubber');
+      results.push({ check: '.clubber roster rows', passed: clubberEls.length > 0, detail: clubberEls.length + ' row(s)' });
+
+      var namesOk = false, iconsOk = false;
+      if (clubberEls.length > 0) {
+        for (var i = 0; i < clubberEls.length; i++) {
+          if (clubberEls[i].querySelector('.name')) { namesOk = true; break; }
+        }
+        for (var j = 0; j < clubberEls.length; j++) {
+          if (clubberEls[j].querySelector('.club img')) { iconsOk = true; break; }
+        }
+        results.push({ check: '.clubber .name', passed: namesOk, detail: namesOk ? '' : 'no .name inside any .clubber row' });
+        // Missing icons only degrade the label (monogram fallback) — soft check.
+        results.push({ check: '.club img icons', passed: iconsOk, detail: iconsOk ? '' : 'no club icons found (labels fall back to monograms)' });
+      }
+
+      var lastCheckinOk = !!document.querySelector('#lastCheckin');
+      results.push({ check: '#lastCheckin', passed: lastCheckinOk, detail: lastCheckinOk ? '' : 'local check-in detection is blind' });
+
+      // Hard failure = the load-bearing selectors are gone while the page has
+      // real content (an empty roster after everyone checks in is normal).
+      var pageHasContent = document.body && document.body.children.length > 3;
+      var hard = pageHasContent && (!lastCheckinOk || (clubberEls.length > 0 && !namesOk));
+      var ok = !hard;
+
+      fetch(PRINT_SERVER + '/selftest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: ok, results: results, extensionVersion: EXTENSION_VERSION }),
+        signal: AbortSignal.timeout(3000)
+      }).catch(function() { /* server offline — dashboard will show stale */ });
+
+      if (hard && !selectorBannerShown) {
+        selectorBannerShown = true;
+        var banner = document.createElement('div');
+        banner.id = 'awana-selector-banner';
+        banner.textContent = '⚠ AWANA PRINTER: the check-in page layout has changed — automatic label printing may be broken. Use the widget search or walk-in printing, and check the dashboard.';
+        Object.assign(banner.style, {
+          position: 'fixed', top: '0', left: '0', right: '0', zIndex: '2147483647',
+          background: '#dc2626', color: '#fff', fontWeight: '700',
+          fontSize: '14px', padding: '10px 16px', textAlign: 'center',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.35)'
+        });
+        document.body.appendChild(banner);
+      } else if (!hard && selectorBannerShown) {
+        selectorBannerShown = false;
+        var existing = document.getElementById('awana-selector-banner');
+        if (existing) existing.remove();
+      }
+      return ok;
+    } catch (e) {
+      console.log('[Awana] Selector self-test error:', e);
+      return true; // a broken probe must not cry wolf
+    }
+  }
+
   // ── Quick Mode: one-click check-in interceptor ──────────────────────────────
   // When Quick Mode is ON, intercept clicks on .clubber elements. Let the native
   // click flow through (TwoTimTwo opens its modal), then auto-dismiss the modal.
@@ -2371,6 +2482,9 @@
   checkForExtensionUpdate();
   // Periodically check server health for CSV warnings + update notices
   setInterval(checkForExtensionUpdate, 60000);
+  // Selector self-test: first probe after the page settles, then every 10 min
+  setTimeout(runSelectorSelfTest, 15000);
+  setInterval(runSelectorSelfTest, SELFTEST_INTERVAL_MS);
   // Keep the Tonight list fresh while the panel is expanded (other stations
   // print too — their check-ins should show up here for reprints).
   setInterval(function() {

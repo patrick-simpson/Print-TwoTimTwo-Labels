@@ -1,4 +1,28 @@
-﻿## [4.0.0] - 2026-07-11
+﻿## [4.1.0] - 2026-07-16
+Event bus + night reliability: the print server becomes the single publisher for the whole Awana app family (check-in display + countdown app), with contract-pinned payloads, self-testing selectors, an end-to-end canary, and visible print failures.
+
+### Event bus — new pinned contract (CONTRACT.md + contract-vectors.json)
+The print server now publishes five event types on the Pusher channel (only it holds the secret; displays subscribe with the public key). Payload builders live in `print-server/events.js` — pure, structurally incapable of leaking PII (first names only, ever):
+- **`checkin` v2** — existing four fields plus `id` (uuid) + `at` (ISO) so displays can dedupe live vs replay. Consumers treat both as optional, so deploy order doesn't matter.
+- **`recap`** (every 2 min during club hours) — the last ≤15 check-ins, so a display that reconnects mid-event still celebrates the kids it missed. Buffer persists across a server restart (`events-buffer.json`, today-only).
+- **`tally`** (each check-in + every 60 s) — per-club checked-in counts, zero PII. Drives the countdown app's live GameTimeView counts.
+- **`birthdays`** (startup + every 10 min on club night) — this week's birthday kids as `{firstName, club, month, day}` (no year, no last name). Kills the countdown app's manual CSV upload chore.
+- **`ops`** (`print-failure` / `selector-fail` / `canary`) — operator telemetry: type/club/at only, never a name.
+Interval publishers are gated by the club-night window in the new `print-server/church-config.json` (per-church knobs: check-in URL, Pusher channel, club nights, shares club ids — baked KVBC defaults if missing). New `GET /config/church` serves it; `npm run test:contracts` (zero-dep Node script, 91 assertions) pins every payload shape against the canonical vectors.
+
+### Selector self-test (chrome-extension/content.js + POST /selftest)
+The extension probes the load-bearing TwoTimTwo selectors (`.clubber`, `.name`, `#lastCheckin`, club icons) 15 s after load and every 10 min, and reports to the server. A hard failure (site redesign) throws a loud red page banner instead of failing silently, and the server publishes an `ops: selector-fail` event on the transition. Modal selectors are verified passively by the driven check-in paths (they only exist while a modal is open).
+
+### Canary — "Test Night Systems" (POST /canary)
+One click before doors open proves the whole pipeline: stage 1 prints a real label with a bold diagonal **TEST — NOT A CHECK-IN** band (unique `Canary HH:MM:SS` name defeats the duplicate window; excluded from history, stats, tally, and the checkin event), stage 2 publishes a `canary` event on the bus. Buttons on the dashboard (Night Status card) and in the widget (**Night Test**, which also re-runs the selector probe).
+
+### Print failures are now visible (#15)
+The server previously recorded only successes — a jammed printer was invisible. Failed `/print`/`/reprint` calls now land in history (`success:false`, shown struck-red in the dashboard table, excluded from stats), in a `GET /failures` list (last 20, names stay local), and on the bus as `ops: print-failure` (club only). `/stats/tonight` logic extracted to `computeTonightStats()` and shared with the tally publisher.
+
+### Night Status dashboard card
+New card on the dashboard: club-night window state, event-bus publish health (last event + timestamp or error), selector self-test result, last canary stages, roster freshness — plus the canary button. `/health` gains `clubNight`, `pusher`, `selectorSelfTest`, `lastCanary`, `printFailures`, and `csv` fields.
+
+## [4.0.0] - 2026-07-11
 Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
 
 ### One-tap reprints in the widget (chrome-extension/content.js)
