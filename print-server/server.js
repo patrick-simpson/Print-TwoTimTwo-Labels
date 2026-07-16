@@ -18,6 +18,7 @@ const { createCanvas, loadImage } = require('canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
@@ -759,7 +760,7 @@ async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
   stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-  testBanner = false
+  testBanner = false, extras = {}
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
@@ -775,11 +776,14 @@ async function generateLabel(
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
-  // and parents can spot graduating kids at a glance.
+  // and parents can spot graduating kids at a glance. First-timer labels
+  // can borrow the same inverted palette (extras.inverted) so a visitor
+  // pops out of a stack of white labels — palette only, the icon panel
+  // and text lines keep their normal behavior.
   // Both palettes are thermal-first: a 1-bit printer collapses everything to
   // black or white, so every tone here is either near-black or near-white —
   // no mid-grays that would dither into speckle.
-  const COLOR = stepUp ? {
+  const COLOR = (stepUp || (extras && extras.inverted)) ? {
     bg: '#000000',
     name: '#ffffff',
     last: '#e5e7eb',
@@ -1076,6 +1080,28 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
+  // ── Routing / milestone lines (bottom-left, above the icon row) ──────────
+  // goToLine: late check-in routing from the group schedule ("Go to: Music,
+  // Room 4"). milestoneLine: attendance milestones ("10th club night!").
+  // Anchored bottom-left so they never collide with the bottom-right icons.
+  const extraLines = [];
+  if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
+  if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
+  if (extraLines.length) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    let ly = BY + BH - 6;
+    for (const line of extraLines.reverse()) {
+      ctx.font = `${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
+      ctx.fillStyle = COLOR.group;
+      const maxW = BW * 0.55;
+      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), (hasIcon ? DIVIDER_X + 8 : BX + 8), ly);
+      ly -= 13;
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+  }
+
   // ── TEST overlay (canary labels) ──────────────────────────────────────────
   // A bold diagonal band so a canary print can never be mistaken for a real
   // check-in label. Solid black band + white text stays crisp on 1-bit
@@ -1161,6 +1187,108 @@ $pd.Dispose()
   } finally {
     fs.unlink(psPath, () => {});
   }
+}
+
+// ── Attendance ledger (#30) ───────────────────────────────────────────────────
+// Print history rolls over every ~2 nights (MAX_HISTORY=200), so milestones
+// need their own compact ledger: one dates[] per kid, one entry per day,
+// season-scoped (Awana years start Aug 1). Written atomically like history.
+const ATTENDANCE_FILE = path.join(__dirname, 'attendance.json');
+const MILESTONES = [5, 10, 25, 50];
+
+function seasonStartISO(now = new Date()) {
+  const year = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${year}-08-01`;
+}
+
+function loadAttendance() {
+  try {
+    if (fs.existsSync(ATTENDANCE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(ATTENDANCE_FILE, 'utf8'));
+      if (raw && typeof raw === 'object') return raw;
+    }
+  } catch (e) { console.warn('[attendance] Failed to load ledger:', e.message); }
+  return {};
+}
+
+function saveAttendance(ledger) {
+  try {
+    const tmp = ATTENDANCE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(ledger), 'utf8');
+    fs.renameSync(tmp, ATTENDANCE_FILE);
+  } catch (e) { console.warn('[attendance] Failed to save ledger:', e.message); }
+}
+
+// Upsert tonight for this kid; returns their night count within the season.
+function recordAttendance(firstName, lastName) {
+  const nameKey = `${firstName} ${lastName}`.toLowerCase().trim();
+  if (!nameKey) return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const ledger = loadAttendance();
+  const entry = ledger[nameKey] && Array.isArray(ledger[nameKey].dates)
+    ? ledger[nameKey]
+    : { name: `${firstName} ${lastName}`.trim(), dates: [] };
+  if (!entry.dates.includes(today)) entry.dates.push(today);
+  ledger[nameKey] = entry;
+  saveAttendance(ledger);
+  const start = seasonStartISO();
+  return entry.dates.filter(d => d >= start).length;
+}
+
+function milestoneLineFor(count) {
+  return MILESTONES.includes(count) ? `⭐ ${count}th club night tonight!` : '';
+}
+
+// ── Group schedule (#28) ──────────────────────────────────────────────────────
+// Where each club goes first, and when — drives the "Go to:" routing line on
+// late check-ins. Rows live in config.json: { club, startTime "HH:MM",
+// location, room }. Grace defaults to 10 minutes past the club's start.
+function scheduleRows() {
+  return Array.isArray(config.schedule) ? config.schedule : [];
+}
+
+function scheduleRowFor(clubName) {
+  const key = clubKey(clubName);
+  if (!key) return null;
+  return scheduleRows().find(r => r && clubKey(r.club) === key) || null;
+}
+
+function lateGoToLine(clubName, now = new Date()) {
+  const row = scheduleRowFor(clubName);
+  if (!row || !row.startTime) return '';
+  const start = events.parseHM(row.startTime);
+  if (start === null) return '';
+  const graceMin = Number.isFinite(Number(config.lateGraceMin)) ? Number(config.lateGraceMin) : 10;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins <= start + graceMin) return '';
+  const where = [row.location, row.room].filter(Boolean).join(', ');
+  return where ? `Go to: ${where}` : '';
+}
+
+// ── Phone check-in queue (#17b) ───────────────────────────────────────────────
+// A phone on the LAN posts a check-in request; the extension (which has the
+// authenticated TwoTimTwo session) long-polls for pending actions and drives
+// the real check-in in the browser. The label then flows through the normal
+// detection path — the phone page NEVER prints directly, so the existing
+// dedup guarantees a single label. PIN-over-HTTP is LAN-trust only.
+let pendingActions = [];      // { id, name, at, status, detail }
+let pendingWaiters = [];      // long-poll responders
+const PENDING_MAX = 100;
+const PENDING_WAITERS_MAX = 4;
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+function prunePendingActions() {
+  const cutoff = Date.now() - PENDING_TTL_MS;
+  pendingActions = pendingActions.filter(a => new Date(a.at).getTime() >= cutoff).slice(-PENDING_MAX);
+}
+
+function wakePendingWaiters() {
+  const waiters = pendingWaiters.splice(0);
+  const pending = pendingActions.filter(a => a.status === 'pending');
+  waiters.forEach(w => {
+    clearTimeout(w.timer);
+    try { w.res.json({ actions: pending }); } catch { /* client gone */ }
+  });
 }
 
 // ── Express server ────────────────────────────────────────────────────────────
@@ -1398,18 +1526,56 @@ app.post('/print', async (req, res) => {
   }
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
+  // Wave 2 extras: late-arrival routing from the group schedule (#28),
+  // attendance milestones (#30), and the inverted first-timer palette (#27).
+  const extras = {};
+  const goTo = lateGoToLine(clubName);
+  if (goTo) extras.goToLine = goTo;
+  if (visitor && config.firstTimerInverted !== false) extras.inverted = true;
+
   let pngPath = null;
+  let connectPngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
+
+    // Attendance is recorded before rendering so the milestone prints on
+    // the very night it's earned. Never blocks the label on a ledger error.
+    let milestoneLine = '';
+    try {
+      milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
+    } catch { /* ledger trouble must not stop the print */ }
+    if (milestoneLine) extras.milestoneLine = milestoneLine;
+
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares, noPhoto
+      stepUp, stepUpNextClub, awanaShares, noPhoto,
+      false, extras
     );
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
     recordPrint(dupKey);
+
+    // Connect card (#27): visitors optionally get a second label pointing
+    // their family to the club's time and place. Failure here never fails
+    // the check-in — the main label already printed.
+    if (visitor && config.connectCard) {
+      try {
+        const row = scheduleRowFor(clubName);
+        const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
+        const card = await generateLabel(
+          firstName, lastName, clubName, clubImageBuffer,
+          [], "We're so glad you're here!", false, true,
+          false, '', null, false,
+          false, where ? { goToLine: where } : {}
+        );
+        connectPngPath = card.pngPath;
+        printImage(connectPngPath, effectivePrinter);
+      } catch (e) {
+        console.warn('[print] Connect card failed (non-critical):', e.message);
+      }
+    }
 
     // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
     // plus a fresh tally so displays update within seconds of the check-in.
@@ -1440,6 +1606,7 @@ app.post('/print', async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
+    if (connectPngPath) fs.unlink(connectPngPath, () => {});
   }
 });
 
@@ -1911,28 +2078,149 @@ app.get('/config', (req, res) => {
 });
 
 app.post('/config', (req, res) => {
-  const { 
-    printerName, checkinUrl, 
-    pusherAppId, pusherKey, pusherSecret, pusherCluster 
+  const {
+    printerName, checkinUrl,
+    pusherAppId, pusherKey, pusherSecret, pusherCluster,
+    phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin
   } = req.body || {};
   try {
-    const config = {};
+    const next = {};
     if (fs.existsSync(CONFIG_FILE)) {
-      Object.assign(config, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
+      Object.assign(next, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
     }
-    if (printerName !== undefined) config.printerName = printerName;
-    if (checkinUrl !== undefined) config.checkinUrl = checkinUrl;
-    if (pusherAppId !== undefined) config.pusherAppId = pusherAppId;
-    if (pusherKey !== undefined) config.pusherKey = pusherKey;
-    if (pusherSecret !== undefined) config.pusherSecret = pusherSecret;
-    if (pusherCluster !== undefined) config.pusherCluster = pusherCluster;
-    
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
-    console.log('[config] Saved:', JSON.stringify(config));
+    if (printerName !== undefined) next.printerName = printerName;
+    if (checkinUrl !== undefined) next.checkinUrl = checkinUrl;
+    if (pusherAppId !== undefined) next.pusherAppId = pusherAppId;
+    if (pusherKey !== undefined) next.pusherKey = pusherKey;
+    if (pusherSecret !== undefined) next.pusherSecret = pusherSecret;
+    if (pusherCluster !== undefined) next.pusherCluster = pusherCluster;
+    if (phonePin !== undefined) next.phonePin = String(phonePin).slice(0, 12);
+    if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
+    if (connectCard !== undefined) next.connectCard = !!connectCard;
+    if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
+    if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
+
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+    // Keep the live process in sync so schedule/PIN/toggle changes apply
+    // without a restart (Pusher creds still need one — noted in the UI).
+    Object.assign(config, next);
+    console.log('[config] Saved');
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Group schedule (#28) ──────────────────────────────────────────────────────
+app.get('/config/schedule', (req, res) => {
+  res.json({ schedule: scheduleRows(), lateGraceMin: Number.isFinite(Number(config.lateGraceMin)) ? Number(config.lateGraceMin) : 10 });
+});
+
+app.post('/config/schedule', (req, res) => {
+  const { schedule, lateGraceMin } = req.body || {};
+  if (!Array.isArray(schedule)) return res.status(400).json({ error: 'schedule must be an array' });
+  const rows = schedule.slice(0, 12).map(r => ({
+    club: String(r && r.club || '').slice(0, 30),
+    startTime: /^\d{1,2}:\d{2}$/.test(String(r && r.startTime || '')) ? String(r.startTime) : '',
+    location: String(r && r.location || '').slice(0, 40),
+    room: String(r && r.room || '').slice(0, 20),
+  })).filter(r => r.club);
+  try {
+    const next = fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {};
+    next.schedule = rows;
+    if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+    Object.assign(config, next);
+    res.json({ ok: true, schedule: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Phone check-in (#17b) ─────────────────────────────────────────────────────
+// LAN-only trust model: the PIN rides plain HTTP on the venue network. It
+// gates casual misuse, not a hostile network — documented in docs/SETUP.md.
+function phonePinOk(req) {
+  const pin = String(config.phonePin || '');
+  if (!pin) return true; // no PIN configured — open on the LAN
+  const supplied = String((req.body && req.body.pin) || req.headers['x-awana-pin'] || '');
+  return supplied === pin;
+}
+
+app.get('/phone', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'phone.html'));
+});
+
+// Roster + tonight's checked-in set for the phone page.
+app.post('/phone/roster', (req, res) => {
+  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  clubbers = loadClubbers();
+  const checkedIn = new Set(
+    loadHistory()
+      .filter(e => e.timestamp && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)) && e.success !== false)
+      .map(e => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim())
+  );
+  const kids = clubbers.map(r => {
+    const name = `${r.FirstName || ''} ${r.LastName || ''}`.trim();
+    return { name, club: r.Club || '', checkedIn: checkedIn.has(name.toLowerCase()) };
+  }).filter(k => k.name);
+  res.json({ kids });
+});
+
+app.post('/phone/checkin', (req, res) => {
+  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  prunePendingActions();
+  // One pending action per kid — a double-tap must not double-drive.
+  const existing = pendingActions.find(a => a.name.toLowerCase() === name.toLowerCase() && a.status === 'pending');
+  if (existing) return res.json({ id: existing.id, queued: true });
+  const action = {
+    id: crypto.randomUUID(),
+    name,
+    at: new Date().toISOString(),
+    status: 'pending',
+    detail: '',
+  };
+  pendingActions.push(action);
+  console.log(`[phone] Check-in queued: ${name}`);
+  wakePendingWaiters();
+  res.json({ id: action.id, queued: true });
+});
+
+// Extension long-poll: returns pending actions immediately if any exist,
+// otherwise holds the request up to 25 s waiting for one.
+app.get('/pending-actions', (req, res) => {
+  prunePendingActions();
+  const pending = pendingActions.filter(a => a.status === 'pending');
+  if (pending.length || pendingWaiters.length >= PENDING_WAITERS_MAX) {
+    return res.json({ actions: pending });
+  }
+  const waiter = { res, timer: null };
+  waiter.timer = setTimeout(() => {
+    pendingWaiters = pendingWaiters.filter(w => w !== waiter);
+    try { res.json({ actions: [] }); } catch { /* client gone */ }
+  }, 25000);
+  req.on('close', () => {
+    clearTimeout(waiter.timer);
+    pendingWaiters = pendingWaiters.filter(w => w !== waiter);
+  });
+  pendingWaiters.push(waiter);
+});
+
+app.post('/pending-actions/:id/result', (req, res) => {
+  const action = pendingActions.find(a => a.id === req.params.id);
+  if (!action) return res.status(404).json({ error: 'unknown action' });
+  action.status = (req.body && req.body.ok) ? 'done' : 'failed';
+  action.detail = String((req.body && req.body.detail) || '').slice(0, 200);
+  console.log(`[phone] ${action.name}: ${action.status}${action.detail ? ' — ' + action.detail : ''}`);
+  res.json({ ok: true });
+});
+
+app.get('/phone/status/:id', (req, res) => {
+  const action = pendingActions.find(a => a.id === req.params.id);
+  if (!action) return res.status(404).json({ error: 'unknown action' });
+  res.json({ status: action.status, detail: action.detail });
 });
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
@@ -1991,6 +2279,12 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start up ──────────────────────────────────────────────────────────────────
+// The full server is also requireable (#16): the Electron app requires this
+// module and calls startListening() so its users get the whole feature set —
+// roster enrichment, dedup, history, Pusher, phone check-in — instead of the
+// slim fallback renderer. `require.main` guards the side effects so a bare
+// `require` never auto-binds the port.
+
 // Clean up any temp files a crashed previous run left behind
 sweepOrphanedTempFiles();
 
@@ -2020,8 +2314,14 @@ function startListening(attempt = 1) {
       console.error('[startup] Server error:', err.message);
     }
   });
+  return server;
 }
-startListening();
+
+module.exports = { app, startListening };
+
+if (require.main === module) {
+  startListening();
+}
 
 // Check for updates on startup and periodically
 checkForUpdates();

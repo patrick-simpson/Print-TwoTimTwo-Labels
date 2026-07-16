@@ -1,5 +1,5 @@
-# Awana Label Print Server -- All-in-One Installer
-# Version    : 4.1.0
+﻿# Awana Label Print Server -- All-in-One Installer
+# Version    : 4.2.0
 # Updated    : 2026-04-17
 #
 # This script:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "4.1.0"
+$ScriptVersion = "4.2.0"
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -691,6 +691,22 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
     # Save config
     $cfg | ConvertTo-Json | Set-Content $configPath
     Write-Host "[OK] Settings saved." -ForegroundColor Green
+}
+
+# --- 7b. Firewall rule for phone check-in (idempotent) ---
+# Phones on the venue Wi-Fi reach http://<laptop-ip>:3456/phone; Windows
+# blocks inbound 3456 by default. Rule add is best-effort — no admin, no rule,
+# phone check-in simply stays unavailable (everything else works).
+try {
+    $fwRule = Get-NetFirewallRule -DisplayName "Awana Print Server (TCP 3456)" -ErrorAction SilentlyContinue
+    if (-not $fwRule) {
+        New-NetFirewallRule -DisplayName "Awana Print Server (TCP 3456)" `
+            -Direction Inbound -Protocol TCP -LocalPort 3456 -Action Allow `
+            -Profile Private,Domain -ErrorAction Stop | Out-Null
+        Write-Host "Firewall rule added: phones on this network can use /phone check-in." -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "Could not add firewall rule (needs admin). Phone check-in from other devices may be blocked." -ForegroundColor DarkYellow
 }
 
 # --- 8. Start server and open browser ---

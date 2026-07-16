@@ -125,6 +125,26 @@ function startServer(config) {
     serverInstance.close();
     serverInstance = null;
   }
+  // #16: prefer the FULL print server (roster enrichment, dedup, history,
+  // Pusher event bus, phone check-in) packaged under resources/print-server.
+  // If it can't load — node-canvas packaging is the usual suspect — fall
+  // back to the slim HTML-renderer server so labels still print.
+  try {
+    const fullServerDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'print-server')
+      : path.join(__dirname, '..', 'print-server');
+    const fullServerPath = path.join(fullServerDir, 'server.js');
+    if (fs.existsSync(fullServerPath)) {
+      if (config.printerName) process.env.PRINTER_NAME = config.printerName;
+      const full = require(fullServerPath);
+      serverInstance = full.startListening();
+      console.log('[server] Full print server started from', fullServerDir);
+      return;
+    }
+    console.warn('[server] Full server not found at', fullServerPath, '— using slim fallback');
+  } catch (e) {
+    console.warn('[server] Full server failed to load (' + e.message + ') — using slim fallback');
+  }
   const createServer = require('./src/server');
   serverInstance = createServer(config.printerName, pdfWindow, PORT);
 }

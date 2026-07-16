@@ -1,4 +1,36 @@
-﻿## [4.1.0] - 2026-07-16
+﻿## [4.2.0] - 2026-07-16
+Check-in features wave: phone check-in, sibling suggestions, first-timer treatment, late-arrival routing, attendance milestones, Electron/server consolidation, and a docs rewrite.
+
+### Phone check-in (#17b) — new `/phone` page
+Volunteers on the club Wi-Fi open `http://<laptop-ip>:3456/phone` (PIN-gated, set on the dashboard), search the roster, and tap **Check in**. The request queues on the server (`POST /phone/checkin` → pending-actions); the extension long-polls `GET /pending-actions` (25 s hold), drives the real TwoTimTwo check-in in the browser (click row → modal → verify the row vanishes), and reports back (`POST /pending-actions/:id/result`). The phone never prints directly — the label flows through normal detection, so dedup still guarantees exactly one label. The phone shows live status ("Working… → Checked in"). `install-and-run.ps1` adds an idempotent TCP-3456 firewall rule. LAN-trust only (PIN over HTTP) — documented in docs/SETUP.md.
+
+### Sibling suggestions re-enabled, panel-only (#26)
+After each check-in the family lookup runs again and an **"Also here tonight?"** panel offers the kid's siblings — one tap drives their check-in. NEVER auto-batches (the quick-mode auto path stays retired). Kill switch: dashboard → "Allow driven check-ins" (also disables phone-driven check-ins).
+
+### First-timer treatment (#27)
+Visitor labels now use the inverted (black) palette so they pop out of a stack — palette only, icons and text behave normally (generalized from the Step Up ternary; toggle on the dashboard). Optional **connect card**: a second label for visitors pointing the family to the club's time/location from the group schedule.
+
+### Late-arrival routing (#28)
+New dashboard **Group Schedule** editor (club, start time, location, room; `GET/POST /config/schedule`). A check-in later than start + grace (default 10 min, configurable) adds a bold **"Go to: Music, Rm 4"** line to the label, bottom-left, clear of the icon row.
+
+### Attendance milestones (#30)
+New compact `attendance.json` ledger (one dates[] per kid, atomic writes) — print history rolls over every ~2 nights, so milestones needed their own store. The 5th/10th/25th/50th club night within the season (Aug 1 boundary) prints "⭐ Nth club night tonight!" on the label. Canary/test prints never count.
+
+### Extension + server consolidation (#16)
+- Deleted dead `electron-app/src/checkin-script.js` (never injected — Electron opens the check-in page in the default browser).
+- `server.js` is now requireable: `module.exports = { app, startListening }` with a `require.main` guard.
+- The Electron tray app prefers the FULL print server (packaged via electron-builder `extraResources`, including node-canvas); the slim HTML-renderer server remains as an explicit fallback if canvas fails to load. Electron installs now get roster enrichment, dedup, history, Pusher, and phone check-in.
+
+### Roster-diff hardening (#17a) + confirmation feed
+The safety-net roster scan is now adaptive — every 2 s inside the club-night window (from `/config/church`), 5 s otherwise — and converted from `setInterval` to a self-rescheduling `setTimeout` so a slow scan can never stack. New **Last prints** feed pinned at the top of the widget panel: the last 5 labels with their detection source (🖱 local / 📡 remote / 📱 phone / ⌨ manual) and ✓ printed / 📦 queued state (#29 polish).
+
+### Church config in one place (#50 slice)
+The extension fetches `/config/church` once at startup: shares club ids and club-night windows replace hardcodes (baked KVBC fallbacks preserved).
+
+### Docs rewrite (#33)
+README rewritten around the extension + Electron (bookmarklet-era copy retired from the top); new `docs/NIGHT-OF.md` print-and-tape one-pager and `docs/SETUP.md` full setup guide (incl. the phone-check-in trust model); TROUBLESHOOTING gains phone-check-in and selector-banner sections.
+
+## [4.1.0] - 2026-07-16
 Event bus + night reliability: the print server becomes the single publisher for the whole Awana app family (check-in display + countdown app), with contract-pinned payloads, self-testing selectors, an end-to-end canary, and visible print failures.
 
 ### Event bus — new pinned contract (CONTRACT.md + contract-vectors.json)

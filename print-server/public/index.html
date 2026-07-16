@@ -244,6 +244,42 @@
                 </div>
               </div>
             </div>
+            <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label style="color:#4caf50">Check-in Features</label>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:8px">
+                <div>
+                  <label>Phone check-in PIN</label>
+                  <input type="text" id="settings-phone-pin" placeholder="blank = no PIN">
+                  <p style="font-size:10px;color:#94a3b8">Phones on this Wi-Fi open http://&lt;this-pc-ip&gt;:3456/phone</p>
+                </div>
+                <div>
+                  <label>Late grace (minutes)</label>
+                  <input type="number" id="settings-late-grace" min="0" max="120" placeholder="10">
+                  <p style="font-size:10px;color:#94a3b8">Past a club's start + grace, labels add a "Go to:" line</p>
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; font-size:12px">
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-ft-inverted"> Visitor labels use the inverted (black) palette
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-connect-card"> Print a second "connect card" label for visitors
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-driven-checkin" checked> Allow driven check-ins (phone page + sibling suggestions)
+                </label>
+              </div>
+            </div>
+
+            <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label style="color:#4caf50">Group Schedule (drives late "Go to:" routing)</label>
+              <table style="margin-top:8px" id="schedule-table">
+                <thead><tr><th>Club</th><th>Start</th><th>Location</th><th>Room</th><th></th></tr></thead>
+                <tbody id="schedule-body"></tbody>
+              </table>
+              <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="addScheduleRow()">Add club row</button>
+            </div>
+
             <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
             <div id="settings-status" style="font-size:12px;color:#22c55e;display:none">Settings saved</div>
           </div>
@@ -477,6 +513,32 @@ function loadPreview() {
 }
 
 // Settings
+function scheduleRowHtml(row) {
+  row = row || {};
+  return '<tr>' +
+    '<td><input type="text" class="sched-club" value="' + (row.club || '') + '" placeholder="Sparks" style="width:90px"></td>' +
+    '<td><input type="text" class="sched-start" value="' + (row.startTime || '') + '" placeholder="18:30" style="width:60px"></td>' +
+    '<td><input type="text" class="sched-loc" value="' + (row.location || '') + '" placeholder="Music" style="width:110px"></td>' +
+    '<td><input type="text" class="sched-room" value="' + (row.room || '') + '" placeholder="Rm 4" style="width:60px"></td>' +
+    '<td><button class="btn btn-secondary btn-sm" onclick="this.closest(\'tr\').remove()">✕</button></td>' +
+    '</tr>';
+}
+
+function addScheduleRow(row) {
+  document.getElementById('schedule-body').insertAdjacentHTML('beforeend', scheduleRowHtml(row));
+}
+
+function readScheduleRows() {
+  return Array.from(document.querySelectorAll('#schedule-body tr')).map(function(tr) {
+    return {
+      club: tr.querySelector('.sched-club').value.trim(),
+      startTime: tr.querySelector('.sched-start').value.trim(),
+      location: tr.querySelector('.sched-loc').value.trim(),
+      room: tr.querySelector('.sched-room').value.trim()
+    };
+  }).filter(function(r) { return r.club; });
+}
+
 function loadSettings() {
   // Load config
   fetch(BASE + '/config').then(function(r) { return r.json(); }).then(function(config) {
@@ -485,6 +547,14 @@ function loadSettings() {
     document.getElementById('settings-pusher-cluster').value = config.pusherCluster || 'us2';
     document.getElementById('settings-pusher-key').value = config.pusherKey || '';
     document.getElementById('settings-pusher-secret').value = config.pusherSecret || '';
+    document.getElementById('settings-phone-pin').value = config.phonePin || '';
+    document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
+    document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
+    document.getElementById('settings-connect-card').checked = !!config.connectCard;
+    document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
+    var body = document.getElementById('schedule-body');
+    body.innerHTML = '';
+    (config.schedule || []).forEach(addScheduleRow);
 
     // Load printers for dropdown
     return fetch(BASE + '/printers');
@@ -517,21 +587,33 @@ function saveSettings() {
   fetch(BASE + '/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      printerName: printerName, 
+    body: JSON.stringify({
+      printerName: printerName,
       checkinUrl: checkinUrl,
       pusherAppId: pusherAppId,
       pusherCluster: pusherCluster,
       pusherKey: pusherKey,
-      pusherSecret: pusherSecret
+      pusherSecret: pusherSecret,
+      phonePin: document.getElementById('settings-phone-pin').value.trim(),
+      lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
+      firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
+      connectCard: document.getElementById('settings-connect-card').checked,
+      enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked
     })
   }).then(function(r) {
-    if (r.ok) {
+    if (!r.ok) throw new Error('config save failed');
+    return fetch(BASE + '/config/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedule: readScheduleRows() })
+    });
+  }).then(function(r) {
+    if (r && r.ok) {
       var el = document.getElementById('settings-status');
       el.style.display = 'block';
       setTimeout(function() { el.style.display = 'none'; }, 3000);
     }
-  });
+  }).catch(function() { alert('Saving settings failed — is the server running?'); });
 }
 
 // Night Status — event-bus + selector health from the extended /health payload
