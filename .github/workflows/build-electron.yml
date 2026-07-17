@@ -74,9 +74,34 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-ChildItem installer -Filter *.exe | Select-Object -First 1
-          Start-Process -FilePath $exe.FullName -ArgumentList '/S' -Wait
-          $installed = "$env:LOCALAPPDATA\Programs\Awana Label Printer\Awana Label Printer.exe"
-          if (-not (Test-Path $installed)) { throw "App not found after install: $installed" }
+          $proc = Start-Process -FilePath $exe.FullName -ArgumentList '/S' -PassThru -Wait
+          Write-Host "Installer process exit code: $($proc.ExitCode)"
+
+          # electron-builder's one-click NSIS installer is a self-extracting
+          # stub that can hand off the real file copy to a detached child and
+          # return before that child finishes — a single Test-Path right after
+          # -Wait returns is a race (reproduced on two different runners).
+          # Poll for the app instead of assuming the exact path.
+          $deadline = (Get-Date).AddSeconds(60)
+          $installed = $null
+          while ((Get-Date) -lt $deadline) {
+            $found = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Filter 'Awana Label Printer.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $installed = $found.FullName; break }
+            Start-Sleep -Seconds 3
+          }
+
+          if (-not $installed) {
+            Write-Host "---- Diagnostics: $env:LOCALAPPDATA\Programs ----"
+            Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -ErrorAction SilentlyContinue |
+              Select-Object FullName | Format-Table -AutoSize | Out-String | Write-Host
+            Write-Host "---- Diagnostics: uninstall registry entries ----"
+            Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -like '*Awana*' } | Format-List | Out-String | Write-Host
+            throw "App exe never appeared under `$env:LOCALAPPDATA\Programs after 60s (installer exit code: $($proc.ExitCode))"
+          }
+
+          Write-Host "Installed app found at: $installed"
+          "INSTALLED_EXE=$installed" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # Pre-seed config so the app starts the server instead of waiting in the
       # first-run wizard. launchOnBoot off so the runner image stays clean.
@@ -87,7 +112,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           @{ printerName = 'Microsoft Print to PDF'; checkinUrl = 'https://example.com/'; launchOnBoot = $false } |
             ConvertTo-Json | Set-Content "$dir\config.json"
-          Start-Process "$env:LOCALAPPDATA\Programs\Awana Label Printer\Awana Label Printer.exe" -ArgumentList '--auto-start'
+          Start-Process "$env:INSTALLED_EXE" -ArgumentList '--auto-start'
 
       - name: Verify FULL server is up and serving
         shell: pwsh
