@@ -1,4 +1,7 @@
-﻿## [5.0.0] - 2026-07-17
+﻿## [5.0.1] - 2026-07-17
+CI-only fix: the release pipeline's Windows install smoke test had a race — the one-click NSIS installer's silent stub can return from `Start-Process -Wait` before a detached child finishes copying files, so a single `Test-Path` check immediately after install intermittently (reproduced on two separate CI runners) reported the app missing even though the build itself was fine. `.github/workflows/build-electron.yml` now polls for the installed exe (up to 60s) and dumps directory/registry diagnostics if it still doesn't appear, instead of a one-shot check right after `-Wait` returns. No app behavior changes in this release.
+
+## [5.0.0] - 2026-07-17
 The Windows app (`Awana-Label-Printer-Setup.exe`) becomes the single supported install path — download, run, pick a printer, done. The PowerShell script install is deprecated (still works this release; migrated automatically).
 
 ### Print server is now truly portable (root cause of the "slim fallback" problem)
