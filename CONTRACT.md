@@ -2,15 +2,18 @@
 
 This document pins the payload schemas for every event on the shared Pusher
 channel **`awana-channel`**. The **print server in this repo is the ONLY
-publisher** (it holds the Pusher secret); the consumer apps —
-[Awana-Check-in-Display](https://github.com/patrick-simpson/Awana-Check-in-Display)
-and [KVBC-Awana-Countdown](https://github.com/patrick-simpson/KVBC-Awana-Countdown) —
-subscribe with the public key only.
+publisher** (it holds the Pusher secret); the consumer is
+[Awana-Check-in-Display](https://github.com/patrick-simpson/Awana-Check-in-Display) —
+both its signage page and its presentation page (`/countdown.html`, which
+absorbed the retired KVBC-Awana-Countdown app) — subscribing with the
+public key only.
 
 The machine-readable version of this contract is
 [`contract-vectors.json`](./contract-vectors.json) — **this repo holds the
-canonical copy**, mirrored byte-identical into each consumer repo. Each repo's
-tests validate against its own copy, so any drift breaks a build somewhere.
+canonical copy**, mirrored byte-identical into the consumer repo at
+`src/lib/__fixtures__/contract-vectors.json`. Each repo's tests validate
+against its own copy, and the consumer repo's CI byte-compares its mirror
+against this repo's canonical file, so any drift breaks a build somewhere.
 
 ## The privacy rule
 
@@ -96,7 +99,8 @@ exact key sets, correct types, PII structurally impossible, plus the
 
 1. Update `contract-vectors.json` **here first** (canonical copy).
 2. Update the builders + `test-contracts.cjs`, keep them green.
-3. Mirror the vectors file byte-identical into both consumer repos and update
-   their sanitizers/tests in the same change.
+3. Mirror the vectors file byte-identical into Awana-Check-in-Display
+   (`src/lib/__fixtures__/contract-vectors.json`) and update its
+   sanitizers/tests in the same change.
 4. New fields must be optional for consumers for at least one release cycle so
    deploy order never matters.

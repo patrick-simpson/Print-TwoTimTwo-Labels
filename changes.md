@@ -1,4 +1,13 @@
-﻿## [4.2.0] - 2026-07-16
+﻿## [4.2.1] - 2026-07-17
+KVBC-Awana-Countdown retirement housekeeping (docs only — no behavior change).
+
+### CONTRACT.md consumer list updated
+The countdown consumer is now Awana-Check-in-Display's `/countdown.html` (the presentation tool absorbed from the retired KVBC-Awana-Countdown repo). The mirror instructions now name the single live mirror (`src/lib/__fixtures__/contract-vectors.json` in the display repo). Verified during the same sweep: this repo never consumed the old repo's `shared/*.json` URLs — the group schedule is dashboard-edited local config (`church-config.json`) — so no code repoint was needed.
+
+### Drift protection (in the display repo)
+Awana-Check-in-Display CI now byte-compares its mirrored `contract-vectors.json` against this repo's canonical copy (raw.githubusercontent.com) on every CI/deploy run plus a weekly cron, so a canonical change here that isn't re-mirrored breaks their build instead of silently drifting. The `note` field inside `contract-vectors.json` still mentions KVBC-Awana-Countdown; it is left byte-locked on purpose — editing it would break mirror parity, and cleaning it up requires the two-repo canonical-first re-mirror dance this entry describes.
+
+## [4.2.0] - 2026-07-16
 Check-in features wave: phone check-in, sibling suggestions, first-timer treatment, late-arrival routing, attendance milestones, Electron/server consolidation, and a docs rewrite.
 
 ### Phone check-in (#17b) — new `/phone` page
