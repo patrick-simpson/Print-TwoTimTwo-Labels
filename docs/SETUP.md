@@ -1,19 +1,20 @@
 # Setup guide
 
-Two supported installs — pick one per station:
-
-| | Chrome extension + server (recommended) | Electron tray app |
-|---|---|---|
-| Install | `install-and-run.ps1` + load `chrome-extension/` | NSIS installer (`npm run dist` in `electron-app/`) |
-| Detection | In-page (instant, all paths) | Same (the tray app now hosts the full server; the extension does detection) |
-| Best for | The main check-in laptop | Secondary stations that only print |
-
 ## 1. Print server (the main laptop)
 
-Run `install-and-run.ps1` (right-click → Run with PowerShell). It
-installs Node, downloads the project, walks through printer/URL
-config, adds the firewall rule for phone check-in, creates the
-desktop launcher, and starts the server on port **3456**.
+Install the Windows app: download **Awana-Label-Printer-Setup.exe**
+from the [latest release](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest),
+run it (SmartScreen: *More info → Run anyway*), pick your printer and
+check-in URL. The app lives in the system tray, hosts the full server
+on port **3456**, starts with Windows, auto-updates, and can print a
+test label from Settings. When Windows asks about network access,
+click **Allow** (needed for phone check-in); or use Settings →
+*Enable Phone Check-in (firewall)*.
+
+Upgrading from the legacy `install-and-run.ps1` install: the app
+imports your config and roster from `C:\output` on first run and
+offers to remove the old shortcuts. The script path still works but
+is deprecated.
 
 ## 2. Chrome extension
 

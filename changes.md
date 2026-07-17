@@ -1,4 +1,19 @@
-﻿## [4.2.1] - 2026-07-17
+﻿## [5.0.0] - 2026-07-17
+The Windows app (`Awana-Label-Printer-Setup.exe`) becomes the single supported install path — download, run, pick a printer, done. The PowerShell script install is deprecated (still works this release; migrated automatically).
+
+### Print server is now truly portable (root cause of the "slim fallback" problem)
+Swapped `canvas` for `@napi-rs/canvas`: prebuilt ABI-stable N-API binaries load identically under plain Node and inside packaged Electron, killing the native-module failure that silently degraded installs to the feature-poor slim server (which is now **deleted** — a server failure shows a visible error box + red tray state instead of quietly printing worse labels). Also ~40 MB of deps instead of ~300 MB. Writable files (config.json, clubbers.csv, history, attendance, event buffer) moved behind `AWANA_DATA_DIR` (Electron sets it to `%APPDATA%\Awana Label Printer`; legacy installs keep writing next to server.js). A bare `require()` of server.js now has zero side effects — sweep/roster-load/publish-timers/prewarm run in `startListening()`, and the legacy VERSION-poll self-update only runs when launched directly (it used to run inside Electron and would have tried to patch files inside the packaged resources).
+
+### Auto-update via electron-updater + smoke-tested releases
+The app checks GitHub Releases, downloads in the background, and installs on quit or via the tray's "Restart to update" (never forces a restart mid-club-night). `/update-now` delegates to the shell via the new `setUpdateHandler()` export (legacy installs keep the exit-99 launcher dance). CI now: installs print-server deps **before** packaging (the old workflow shipped an empty `node_modules` — the packaged full server could never load), runs a headless label-render smoke test with PNG artifacts, builds the installer, silent-installs it on a Windows runner and asserts the FULL server answers `/health` + `/preview` with the tagged version — and only then attaches the exe + `latest.yml` + blockmap to the release.
+
+### Foolproof first run + migration from script installs
+First launch imports config/roster/history from `C:\output\Print-TwoTimTwo-Labels\print-server`, prefills the wizard, and offers to remove the old desktop/Startup shortcuts. If something else holds port 3456 (usually the old auto-start launcher), the app names the process and offers a one-click stop — killing the launcher's cmd tree so it can't respawn. New: launch-on-boot toggle (silent `--auto-start`, no browser pop), "Print Test Label" button (uses `/canary`'s TEST-banner label), live health panel (roster count/age, printer warnings, phone-check-in URL), and an "Enable Phone Check-in" button that adds the firewall rule via a UAC prompt (the per-user installer can't add it silently — first-run relies on Windows' Allow prompt, now called out in the wizard).
+
+### Website/docs
+InstallGuide leads with a download button (`releases/latest/download/Awana-Label-Printer-Setup.exe`, fixed artifact name) + SmartScreen "More info → Run anyway" callout; the `irm | iex` command moved into a collapsed "Previous install method" section. README/SETUP/TROUBLESHOOTING updated (new .exe troubleshooting section); deprecation banner added to `install-and-run.ps1`. Also fixed a pre-existing garbled `Write-Host` in the installer's port-check catch block that would have crashed the trap handler.
+
+## [4.2.1] - 2026-07-17
 KVBC-Awana-Countdown retirement housekeeping (docs only — no behavior change).
 
 ### CONTRACT.md consumer list updated

@@ -6,14 +6,15 @@ When a child checks in during Awana, automatically print a 4" × 2" label to you
 
 ## Quick Start — Download the Installer (Recommended)
 
-**[👉 Download Awana-Label-Printer-Setup.exe](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest)**
+**[👉 Download Awana-Label-Printer-Setup.exe](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Awana-Label-Printer-Setup.exe)**
 
-1. Download the `.exe` file
-2. Double-click to install (one-click, no setup wizard)
-3. The app launches and guides you through first-time setup
-4. Done — server runs silently in your system tray
+1. Download the `.exe` file (if SmartScreen shows "Windows protected your PC", click **More info → Run anyway**)
+2. Double-click to install (one-click, per-user, no admin needed)
+3. The app launches and guides you through first-time setup: pick your printer, confirm the check-in URL, print a test label
+4. Done — the server runs silently in your system tray, starts with Windows, and **updates itself** from GitHub Releases
 
-No PowerShell, no Node.js install, no terminal window. This is the easiest way to get started.
+No PowerShell, no Node.js install, no terminal window. Upgrading from the old script install at `C:\output`?
+The app imports your printer, check-in URL, and roster automatically on first run and offers to remove the old shortcuts.
 
 > **More docs:** [docs/SETUP.md](docs/SETUP.md) (full setup incl. phone check-in),
 > [docs/NIGHT-OF.md](docs/NIGHT-OF.md) (print-and-tape one-pager for club night),
@@ -29,7 +30,11 @@ No PowerShell, no Node.js install, no terminal window. This is the easiest way t
 
 ---
 
-## Alternative: PowerShell Script (Fallback)
+## Alternative: PowerShell Script (Deprecated)
+
+> **Deprecated:** the script install still works in this release but will be removed in a future
+> version — use the `.exe` installer above. Existing script installs keep auto-updating and are
+> migrated automatically the first time the new app runs.
 
 If you prefer the terminal-based setup or need a portable version:
 

@@ -1,6 +1,11 @@
 ﻿# Awana Label Print Server -- All-in-One Installer
-# Version    : 4.2.1
+# Version    : 5.0.0
 # Updated    : 2026-04-17
+#
+# DEPRECATED: this script install is superseded by the Windows app installer
+# (Awana-Label-Printer-Setup.exe on the GitHub Releases page). It keeps
+# working for existing installs, but will be removed in a future release.
+# The new app imports this install's config and roster automatically.
 #
 # This script:
 #   1. Checks/upgrades PowerShell to v7+
@@ -25,7 +30,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "4.2.1"
+$ScriptVersion = "5.0.0"
+
+Write-Host ""
+Write-Host "  NOTE: There's now a simpler Windows app installer that replaces this script:" -ForegroundColor Yellow
+Write-Host "  https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest" -ForegroundColor Yellow
+Write-Host "  This script still works, but will be removed in a future release." -ForegroundColor Yellow
+Write-Host ""
 
 # Global error handler: pause before exiting on error so user can see what went wrong
 trap {
@@ -110,7 +121,7 @@ try {
         Write-Host "  [OK] Port is free." -ForegroundColor Green
     }
 } catch {
-    Write-Host "  [WARN] Could not check port (non-critical):     Write-Host "  [WARN] Could not check port (non-critical): $(_)" -ForegroundColor Yellow" -ForegroundColor Yellow
+    Write-Host "  [WARN] Could not check port (non-critical): $_" -ForegroundColor Yellow
 }
 
 # --- 1. Check PowerShell version ---

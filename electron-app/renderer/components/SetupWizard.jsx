@@ -6,6 +6,7 @@ export default function SetupWizard({ onSaved }) {
   const [printers, setPrinters]       = useState(null);  // null = still loading
   const [printerName, setPrinterName] = useState('');
   const [checkinUrl, setCheckinUrl]   = useState(DEFAULT_URL);
+  const [launchOnBoot, setLaunchOnBoot] = useState(true);
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState('');
 
@@ -17,9 +18,12 @@ export default function SetupWizard({ onSaved }) {
         setPrinterName(first);
       }
     }).catch(() => setPrinters([]));
-    // Pre-fill URL from any existing (partial) config
+    // Pre-fill from any existing (partial) config — including data migrated
+    // from an old script install (printer + URL carry over automatically).
     window.awana.getConfig().then(cfg => {
       if (cfg?.checkinUrl) setCheckinUrl(cfg.checkinUrl);
+      if (cfg?.printerName) setPrinterName(cfg.printerName);
+      if (cfg?.launchOnBoot === false) setLaunchOnBoot(false);
     });
   }, []);
 
@@ -28,9 +32,10 @@ export default function SetupWizard({ onSaved }) {
     if (!checkinUrl)  { setError('Please enter a check-in URL.'); return; }
     setSaving(true);
     setError('');
-    const result = await window.awana.saveConfig({ printerName, checkinUrl });
+    const config = { printerName, checkinUrl, launchOnBoot };
+    const result = await window.awana.saveConfig(config);
     if (result?.success) {
-      onSaved({ printerName, checkinUrl });
+      onSaved(config);
     } else {
       setError('Failed to save settings. Please try again.');
       setSaving(false);
@@ -91,6 +96,17 @@ export default function SetupWizard({ onSaved }) {
         />
         <p style={s.hint}>Your church's TwoTimTwo check-in page URL</p>
 
+        {/* Auto-start */}
+        <label style={s.checkboxRow}>
+          <input
+            type="checkbox"
+            checked={launchOnBoot}
+            onChange={e => setLaunchOnBoot(e.target.checked)}
+          />
+          <span style={s.checkboxText}>Start automatically when this PC turns on</span>
+        </label>
+        <p style={s.hint}>Recommended — the printer is ready before the first family arrives.</p>
+
         {error && <p style={s.error}>{error}</p>}
 
         <button
@@ -103,7 +119,8 @@ export default function SetupWizard({ onSaved }) {
       </div>
 
       <p style={s.footer}>
-        Settings are saved — future launches go straight to the system tray.
+        If Windows asks about network access after saving, click <b>Allow</b> —
+        that's what lets phones on your Wi-Fi use phone check-in.
       </p>
     </div>
   );
@@ -123,9 +140,11 @@ const s = {
   select:    { width: '100%', padding: '8px 10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '13px', marginBottom: '4px', boxSizing: 'border-box', backgroundColor: '#fff' },
   input:     { width: '100%', padding: '8px 10px', borderRadius: '5px', border: '1px solid #ccc', fontSize: '12px', marginBottom: '4px', boxSizing: 'border-box' },
   hint:      { margin: '0 0 16px', fontSize: '11px', color: '#999' },
+  checkboxRow: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', cursor: 'pointer' },
+  checkboxText: { fontSize: '13px', color: '#333', fontWeight: '600' },
   loading:   { fontSize: '12px', color: '#999', margin: '0 0 16px' },
   error:     { fontSize: '12px', color: '#c0392b', marginBottom: '12px' },
   btn:       { width: '100%', padding: '11px', backgroundColor: PURPLE, color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
   btnDisabled: { backgroundColor: '#b0b0b0', cursor: 'not-allowed' },
-  footer:    { marginTop: '14px', fontSize: '11px', color: '#aaa', textAlign: 'center' }
+  footer:    { marginTop: '14px', fontSize: '11px', color: '#888', textAlign: 'center' }
 };
