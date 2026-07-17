@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '4.0.0';
+  const EXTENSION_VERSION = '4.2.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -199,7 +199,7 @@
   // Night becomes active. byKey is normalized "first last" → integer.
   var SHARES = { byKey: {}, fetchedAt: 0, fetching: false, lastError: null };
   var SHARES_TTL_MS = 5 * 60 * 1000;
-  var SHARES_CLUB_IDS = [2, 3, 4, 5, 6]; // Cubbies, Sparks, T&T, Trek, Journey
+  // Shares club ids now live in CHURCH_CFG (server church-config.json).
 
   function normalizeName(name) {
     return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -229,7 +229,7 @@
     SHARES.fetching = true;
     var byKey = {};
     var origin = location.origin;  // e.g. https://kvbchurch.twotimtwo.com
-    return Promise.all(SHARES_CLUB_IDS.map(function(id) {
+    return Promise.all(CHURCH_CFG.sharesClubIds.map(function(id) {
       var url = origin + '/report/shekelBalance?club_id=' + id + '&output=csv';
       return fetch(url, { credentials: 'same-origin' })
         .then(function(r) { return r.ok ? r.text() : ''; })
@@ -249,7 +249,7 @@
       SHARES.fetchedAt = Date.now();
       SHARES.lastError = null;
       var count = Object.keys(byKey).length;
-      console.log('[Awana] Loaded share balances:', count, 'kids across', SHARES_CLUB_IDS.length, 'clubs');
+      console.log('[Awana] Loaded share balances:', count, 'kids across', CHURCH_CFG.sharesClubIds.length, 'clubs');
       return byKey;
     }).catch(function(e) {
       SHARES.lastError = e.message;
@@ -436,7 +436,7 @@
       borderRadius: '10px 10px 0 0', display: 'flex', alignItems: 'center',
       justifyContent: 'space-between', fontWeight: '700', fontSize: '13px'
     });
-    header.textContent = 'Check in siblings?';
+    header.textContent = 'Also here tonight?';
 
     var closeX = document.createElement('button');
     Object.assign(closeX.style, {
@@ -943,7 +943,47 @@
       doPrint('Test Child', 'Sparks', null);
     });
 
-    controls.append(modeSelect, statusEl, testBtn);
+    // Night-systems canary: exercises the whole pipeline — server → TEST
+    // label print → Pusher canary event — plus this page's selectors.
+    var nightTestBtn = document.createElement('button');
+    nightTestBtn.textContent = 'Night Test';
+    Object.assign(nightTestBtn.style, {
+      fontSize: '11px', padding: '5px 10px',
+      background: '#eef2ff', border: '1px solid #c7d2fe',
+      borderRadius: '6px', cursor: 'pointer',
+      fontWeight: '600', color: '#4338ca',
+      transition: 'background 0.15s ease'
+    });
+    nightTestBtn.addEventListener('mouseenter', function() { nightTestBtn.style.background = '#e0e7ff'; });
+    nightTestBtn.addEventListener('mouseleave', function() { nightTestBtn.style.background = '#eef2ff'; });
+    nightTestBtn.addEventListener('click', function() {
+      nightTestBtn.disabled = true;
+      nightTestBtn.textContent = 'Testing...';
+      var selectorsOk = runSelectorSelfTest();
+      fetch(PRINT_SERVER + '/canary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerName: selectedPrinterName || undefined }),
+        signal: AbortSignal.timeout(45000)
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          var lines = (res.stages || []).map(function(s) {
+            return (s.passed ? '✅' : '❌') + ' ' + s.stage + (s.detail ? ' — ' + s.detail : '');
+          });
+          lines.unshift((selectorsOk ? '✅' : '❌') + ' page selectors');
+          alert('Night systems test:\n\n' + lines.join('\n'));
+        })
+        .catch(function() {
+          alert('Night systems test:\n\n' + (selectorsOk ? '✅' : '❌') + ' page selectors\n❌ server — could not reach the print server');
+        })
+        .finally(function() {
+          nightTestBtn.disabled = false;
+          nightTestBtn.textContent = 'Night Test';
+        });
+    });
+
+    controls.append(modeSelect, statusEl, testBtn, nightTestBtn);
 
     // Printer row
     var printerRow = document.createElement('div');
@@ -1557,10 +1597,21 @@
         });
     });
 
-    // Panel layout, most-used first: search + Quick Mode on top, then the
-    // per-night toggles, printing controls, walk-in printing, tonight's
-    // reprint list, and finally status lines and help.
+    // Last-5 confirmation feed (#17a/#29): every print this station sent,
+    // with its detection source, pinned at the top of the panel.
+    var feedWrap = document.createElement('div');
+    var feedLabel = sectionLabel('Last prints');
+    var feedList = document.createElement('div');
+    feedList.id = 'awana-feed-list';
+    Object.assign(feedList.style, { display: 'flex', flexDirection: 'column', gap: '1px', fontSize: '11px', color: '#94a3b8' });
+    feedList.textContent = 'No prints yet tonight';
+    feedWrap.append(feedLabel, feedList);
+
+    // Panel layout, most-used first: last-prints feed + search + Quick Mode
+    // on top, then the per-night toggles, printing controls, walk-in
+    // printing, tonight's reprint list, and finally status lines and help.
     panelBody.append(
+      feedWrap, divider(),
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
@@ -1944,7 +1995,8 @@
     // dropped all but the first.
     if (printedNames.has(key)) return;
     markPrinted(fullName);
-    doPrint(fullName, clubName || '', clubImageData || null);
+    doPrint(fullName, clubName || '', clubImageData || null,
+      phoneNamesInFlight.has(key) ? 'phone' : 'remote');
   }
 
   // Re-query a .clubber row by display name. Element references captured
@@ -1994,27 +2046,22 @@
 
     markPrinted(name);
     var club = lookupClub(name);
-    doPrint(name, club.clubName, club.clubImageData);
+    doPrint(name, club.clubName, club.clubImageData, 'local');
 
-    // SIBLING CHECK-IN DISABLED — re-enable by uncommenting this block.
-    // (findSiblings / showSiblingPanel / batchCheckInSiblings are kept intact.)
-    // setTimeout(function() {
-    //   findSiblings(name).then(function(siblings) {
-    //     if (siblings.length === 0) return;
-    //     if (quickModeEnabled) {
-    //       // Auto-check-in all siblings without showing the panel
-    //       var autoSibs = siblings.map(function(sib) {
-    //         return Object.assign({}, sib, { options: {} });
-    //       });
-    //       batchCheckInSiblings(autoSibs);
-    //     } else {
-    //       showSiblingPanel(siblings, name);
-    //     }
-    //   });
-    // }, 500);
+    // Sibling suggest (#26): panel-only — NEVER auto-batch. The volunteer
+    // confirms "Also here tonight?" chips; kill switch: enableDrivenCheckin
+    // in the server config.
+    if (CHURCH_CFG.enableDrivenCheckin !== false) {
+      setTimeout(function() {
+        findSiblings(name).then(function(siblings) {
+          if (siblings.length === 0) return;
+          showSiblingPanel(siblings, name);
+        }).catch(function() { /* sibling lookup is best-effort */ });
+      }, 500);
+    }
   }
 
-  function doPrint(fullName, clubName, imageData) {
+  function doPrint(fullName, clubName, imageData, source) {
     setStatus('\u23F3');
 
     var parts = fullName.split(' ');
@@ -2067,11 +2114,13 @@
         clearStatus();
         flushQueue();
         loadTonight();
+        recordFeed(fullName, source, true);
         console.log('[Awana] Silent print sent to server');
         return true;
       }).catch(function(err) {
         console.log('[Awana] Server unavailable after retry, queuing:', err.message);
         queuePrint(payload);
+        recordFeed(fullName, source, false);
         setStatus('\uD83D\uDCE6'); // 📦 queued icon
         clearStatus();
         return false;
@@ -2261,6 +2310,231 @@
     } catch (e) { console.log('[Awana] autoRefresh error:', e); }
   }
 
+
+  // ── Church config (#50) ─────────────────────────────────────────────────────
+  // Club-night windows, shares club ids, and the driven-check-in kill switch
+  // come from the print server (GET /config/church + /config) with baked KVBC
+  // fallbacks, replacing scattered hardcodes.
+  var CHURCH_CFG = {
+    sharesClubIds: [2, 3, 4, 5, 6],
+    clubNights: [{ dow: 3, start: '17:30', end: '20:00' }],
+    enableDrivenCheckin: true
+  };
+
+  function loadChurchConfig() {
+    fetch(PRINT_SERVER + '/config/church', { signal: AbortSignal.timeout(4000) })
+      .then(function(r) { return r.json(); })
+      .then(function(cfg) {
+        if (Array.isArray(cfg.sharesClubIds) && cfg.sharesClubIds.length) CHURCH_CFG.sharesClubIds = cfg.sharesClubIds;
+        if (Array.isArray(cfg.clubNights) && cfg.clubNights.length) CHURCH_CFG.clubNights = cfg.clubNights;
+        console.log('[Awana] Church config loaded');
+      })
+      .catch(function() { /* baked defaults */ });
+    fetch(PRINT_SERVER + '/config', { signal: AbortSignal.timeout(4000) })
+      .then(function(r) { return r.json(); })
+      .then(function(cfg) {
+        if (cfg && cfg.enableDrivenCheckin === false) CHURCH_CFG.enableDrivenCheckin = false;
+      })
+      .catch(function() { /* default on */ });
+  }
+
+  function parseHM(v) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(String(v || '').trim());
+    if (!m) return null;
+    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  }
+
+  function isInClubWindow() {
+    var now = new Date();
+    var mins = now.getHours() * 60 + now.getMinutes();
+    return CHURCH_CFG.clubNights.some(function(w) {
+      if (!w || Number(w.dow) !== now.getDay()) return false;
+      var st = parseHM(w.start), en = parseHM(w.end);
+      return st !== null && en !== null && mins >= st && mins < en;
+    });
+  }
+
+  // ── Confirmation feed (#17a) + pinned last-5 (#29 polish) ──────────────────
+  // Every print this station sends, newest first, with how it was detected:
+  // local click, remote roster-diff, phone check-in, or manual widget action.
+  var printFeed = []; // { name, source, ok, at }
+  var SOURCE_ICON = { local: '🖱', remote: '📡', phone: '📱', manual: '⌨' };
+
+  function recordFeed(name, source, ok) {
+    printFeed.unshift({ name: name, source: source || 'manual', ok: ok, at: Date.now() });
+    if (printFeed.length > 5) printFeed.length = 5;
+    renderPrintFeed();
+  }
+
+  function renderPrintFeed() {
+    var list = document.getElementById('awana-feed-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!printFeed.length) {
+      list.textContent = 'No prints yet tonight';
+      list.style.color = '#94a3b8';
+      return;
+    }
+    list.style.color = '';
+    printFeed.forEach(function(f) {
+      var row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', padding: '1px 0' });
+      var icon = document.createElement('span');
+      icon.textContent = SOURCE_ICON[f.source] || '⌨';
+      icon.title = f.source;
+      var nm = document.createElement('span');
+      nm.style.fontWeight = '600';
+      nm.style.flex = '1';
+      nm.style.overflow = 'hidden';
+      nm.style.textOverflow = 'ellipsis';
+      nm.style.whiteSpace = 'nowrap';
+      nm.textContent = f.name;
+      var check = document.createElement('span');
+      check.textContent = f.ok ? '✓ printed' : '📦 queued';
+      check.style.color = f.ok ? '#16a34a' : '#f59e0b';
+      row.append(icon, nm, check);
+      list.appendChild(row);
+    });
+  }
+
+  // ── Phone check-in executor (#17b) ──────────────────────────────────────────
+  // The phone page queues actions on the print server; this station (which
+  // holds the authenticated TwoTimTwo session) long-polls for them and drives
+  // the real check-in in the DOM. The label prints via the normal detection
+  // path — never directly — so dedup still guarantees a single label.
+  var phoneActionsInFlight = new Set();  // action ids being driven
+  var phoneNamesInFlight = new Set();    // lowercased names → tag feed source
+
+  function reportPhoneAction(id, ok, detail) {
+    fetch(PRINT_SERVER + '/pending-actions/' + id + '/result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ok: ok, detail: detail || '' }),
+      signal: AbortSignal.timeout(4000)
+    }).catch(function() {});
+  }
+
+  function executePhoneAction(action) {
+    if (phoneActionsInFlight.has(action.id)) return;
+    phoneActionsInFlight.add(action.id);
+    var nameKey = action.name.toLowerCase().trim();
+
+    if (printedNames.has(nameKey)) {
+      reportPhoneAction(action.id, true, 'Already checked in at this station');
+      return;
+    }
+    var el = findClubberElByName(action.name);
+    if (!el) {
+      reportPhoneAction(action.id, false, 'Kid not on the check-in page (already in, or filtered)');
+      return;
+    }
+    console.log('[Awana] Phone check-in: driving ' + action.name);
+    phoneNamesInFlight.add(nameKey);
+    el.click();
+    pollForCheckinButton({ name: action.name, element: el }, [], {}, 30);
+
+    // Success = the row vanishes (TwoTimTwo removes checked-in kids).
+    var deadline = Date.now() + 25000;
+    (function verify() {
+      if (!findClubberElByName(action.name)) {
+        reportPhoneAction(action.id, true, '');
+        setTimeout(function() { phoneNamesInFlight.delete(nameKey); }, 15000);
+        return;
+      }
+      if (Date.now() > deadline) {
+        phoneNamesInFlight.delete(nameKey);
+        reportPhoneAction(action.id, false, 'Row did not clear — check in at the desk');
+        return;
+      }
+      setTimeout(verify, 1000);
+    })();
+  }
+
+  function pollPendingActions() {
+    if (CHURCH_CFG.enableDrivenCheckin === false) {
+      setTimeout(pollPendingActions, 60000);
+      return;
+    }
+    fetch(PRINT_SERVER + '/pending-actions', { signal: AbortSignal.timeout(30000) })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        (data.actions || []).forEach(executePhoneAction);
+        setTimeout(pollPendingActions, 500);
+      })
+      .catch(function() { setTimeout(pollPendingActions, 10000); });
+  }
+
+  // ── Selector self-test ───────────────────────────────────────────────────────
+  // The whole detection pipeline hangs off a handful of TwoTimTwo DOM
+  // selectors. If the site ships a redesign, everything fails SILENTLY — the
+  // widget still shows green and nobody notices until kids stop getting
+  // labels. This probes the live DOM every 10 minutes, reports to the server
+  // (dashboard Night Status card), and throws a loud page banner on hard
+  // failure. Modal selectors (#checkin-modal, button#checkin) only exist
+  // while a modal is open, so they're verified passively by the driven
+  // check-in paths, not here.
+  var SELFTEST_INTERVAL_MS = 10 * 60 * 1000;
+  var selectorBannerShown = false;
+
+  function runSelectorSelfTest() {
+    var results = [];
+    try {
+      var clubberEls = document.querySelectorAll('.clubber');
+      results.push({ check: '.clubber roster rows', passed: clubberEls.length > 0, detail: clubberEls.length + ' row(s)' });
+
+      var namesOk = false, iconsOk = false;
+      if (clubberEls.length > 0) {
+        for (var i = 0; i < clubberEls.length; i++) {
+          if (clubberEls[i].querySelector('.name')) { namesOk = true; break; }
+        }
+        for (var j = 0; j < clubberEls.length; j++) {
+          if (clubberEls[j].querySelector('.club img')) { iconsOk = true; break; }
+        }
+        results.push({ check: '.clubber .name', passed: namesOk, detail: namesOk ? '' : 'no .name inside any .clubber row' });
+        // Missing icons only degrade the label (monogram fallback) — soft check.
+        results.push({ check: '.club img icons', passed: iconsOk, detail: iconsOk ? '' : 'no club icons found (labels fall back to monograms)' });
+      }
+
+      var lastCheckinOk = !!document.querySelector('#lastCheckin');
+      results.push({ check: '#lastCheckin', passed: lastCheckinOk, detail: lastCheckinOk ? '' : 'local check-in detection is blind' });
+
+      // Hard failure = the load-bearing selectors are gone while the page has
+      // real content (an empty roster after everyone checks in is normal).
+      var pageHasContent = document.body && document.body.children.length > 3;
+      var hard = pageHasContent && (!lastCheckinOk || (clubberEls.length > 0 && !namesOk));
+      var ok = !hard;
+
+      fetch(PRINT_SERVER + '/selftest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: ok, results: results, extensionVersion: EXTENSION_VERSION }),
+        signal: AbortSignal.timeout(3000)
+      }).catch(function() { /* server offline — dashboard will show stale */ });
+
+      if (hard && !selectorBannerShown) {
+        selectorBannerShown = true;
+        var banner = document.createElement('div');
+        banner.id = 'awana-selector-banner';
+        banner.textContent = '⚠ AWANA PRINTER: the check-in page layout has changed — automatic label printing may be broken. Use the widget search or walk-in printing, and check the dashboard.';
+        Object.assign(banner.style, {
+          position: 'fixed', top: '0', left: '0', right: '0', zIndex: '2147483647',
+          background: '#dc2626', color: '#fff', fontWeight: '700',
+          fontSize: '14px', padding: '10px 16px', textAlign: 'center',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.35)'
+        });
+        document.body.appendChild(banner);
+      } else if (!hard && selectorBannerShown) {
+        selectorBannerShown = false;
+        var existing = document.getElementById('awana-selector-banner');
+        if (existing) existing.remove();
+      }
+      return ok;
+    } catch (e) {
+      console.log('[Awana] Selector self-test error:', e);
+      return true; // a broken probe must not cry wolf
+    }
+  }
+
   // ── Quick Mode: one-click check-in interceptor ──────────────────────────────
   // When Quick Mode is ON, intercept clicks on .clubber elements. Let the native
   // click flow through (TwoTimTwo opens its modal), then auto-dismiss the modal.
@@ -2363,14 +2637,27 @@
   // If the page produced no roster (site down, offline reload), fall back to
   // the copy cached in chrome.storage.local so search still works.
   setTimeout(restoreRosterFromLocal, 2000);
-  // Safety-net scan every 5 s in case the MutationObserver misses a DOM change.
-  setInterval(scanClubberList, SCAN_INTERVAL_MS);
+  // Safety-net scan in case the MutationObserver misses a DOM change —
+  // adaptive (#17a): 2 s inside the club-night window so remote check-ins
+  // print fast at the door, 5 s the rest of the week. Self-rescheduling
+  // setTimeout instead of setInterval so a slow scan can never stack.
+  (function scheduleScan() {
+    setTimeout(function() {
+      try { scanClubberList(); } catch (e) { /* keep scanning */ }
+      scheduleScan();
+    }, isInClubWindow() ? 2000 : SCAN_INTERVAL_MS);
+  })();
   // Peak-window auto-refresh
   setInterval(autoRefresh, AUTO_REFRESH_INTERVAL_MS);
+  loadChurchConfig();
+  setTimeout(pollPendingActions, 4000);
   syncCsv();
   checkForExtensionUpdate();
   // Periodically check server health for CSV warnings + update notices
   setInterval(checkForExtensionUpdate, 60000);
+  // Selector self-test: first probe after the page settles, then every 10 min
+  setTimeout(runSelectorSelfTest, 15000);
+  setInterval(runSelectorSelfTest, SELFTEST_INTERVAL_MS);
   // Keep the Tonight list fresh while the panel is expanded (other stations
   // print too — their check-ins should show up here for reprints).
   setInterval(function() {

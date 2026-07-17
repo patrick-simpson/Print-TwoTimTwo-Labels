@@ -1,4 +1,60 @@
-﻿## [4.0.0] - 2026-07-11
+﻿## [4.2.0] - 2026-07-16
+Check-in features wave: phone check-in, sibling suggestions, first-timer treatment, late-arrival routing, attendance milestones, Electron/server consolidation, and a docs rewrite.
+
+### Phone check-in (#17b) — new `/phone` page
+Volunteers on the club Wi-Fi open `http://<laptop-ip>:3456/phone` (PIN-gated, set on the dashboard), search the roster, and tap **Check in**. The request queues on the server (`POST /phone/checkin` → pending-actions); the extension long-polls `GET /pending-actions` (25 s hold), drives the real TwoTimTwo check-in in the browser (click row → modal → verify the row vanishes), and reports back (`POST /pending-actions/:id/result`). The phone never prints directly — the label flows through normal detection, so dedup still guarantees exactly one label. The phone shows live status ("Working… → Checked in"). `install-and-run.ps1` adds an idempotent TCP-3456 firewall rule. LAN-trust only (PIN over HTTP) — documented in docs/SETUP.md.
+
+### Sibling suggestions re-enabled, panel-only (#26)
+After each check-in the family lookup runs again and an **"Also here tonight?"** panel offers the kid's siblings — one tap drives their check-in. NEVER auto-batches (the quick-mode auto path stays retired). Kill switch: dashboard → "Allow driven check-ins" (also disables phone-driven check-ins).
+
+### First-timer treatment (#27)
+Visitor labels now use the inverted (black) palette so they pop out of a stack — palette only, icons and text behave normally (generalized from the Step Up ternary; toggle on the dashboard). Optional **connect card**: a second label for visitors pointing the family to the club's time/location from the group schedule.
+
+### Late-arrival routing (#28)
+New dashboard **Group Schedule** editor (club, start time, location, room; `GET/POST /config/schedule`). A check-in later than start + grace (default 10 min, configurable) adds a bold **"Go to: Music, Rm 4"** line to the label, bottom-left, clear of the icon row.
+
+### Attendance milestones (#30)
+New compact `attendance.json` ledger (one dates[] per kid, atomic writes) — print history rolls over every ~2 nights, so milestones needed their own store. The 5th/10th/25th/50th club night within the season (Aug 1 boundary) prints "⭐ Nth club night tonight!" on the label. Canary/test prints never count.
+
+### Extension + server consolidation (#16)
+- Deleted dead `electron-app/src/checkin-script.js` (never injected — Electron opens the check-in page in the default browser).
+- `server.js` is now requireable: `module.exports = { app, startListening }` with a `require.main` guard.
+- The Electron tray app prefers the FULL print server (packaged via electron-builder `extraResources`, including node-canvas); the slim HTML-renderer server remains as an explicit fallback if canvas fails to load. Electron installs now get roster enrichment, dedup, history, Pusher, and phone check-in.
+
+### Roster-diff hardening (#17a) + confirmation feed
+The safety-net roster scan is now adaptive — every 2 s inside the club-night window (from `/config/church`), 5 s otherwise — and converted from `setInterval` to a self-rescheduling `setTimeout` so a slow scan can never stack. New **Last prints** feed pinned at the top of the widget panel: the last 5 labels with their detection source (🖱 local / 📡 remote / 📱 phone / ⌨ manual) and ✓ printed / 📦 queued state (#29 polish).
+
+### Church config in one place (#50 slice)
+The extension fetches `/config/church` once at startup: shares club ids and club-night windows replace hardcodes (baked KVBC fallbacks preserved).
+
+### Docs rewrite (#33)
+README rewritten around the extension + Electron (bookmarklet-era copy retired from the top); new `docs/NIGHT-OF.md` print-and-tape one-pager and `docs/SETUP.md` full setup guide (incl. the phone-check-in trust model); TROUBLESHOOTING gains phone-check-in and selector-banner sections.
+
+## [4.1.0] - 2026-07-16
+Event bus + night reliability: the print server becomes the single publisher for the whole Awana app family (check-in display + countdown app), with contract-pinned payloads, self-testing selectors, an end-to-end canary, and visible print failures.
+
+### Event bus — new pinned contract (CONTRACT.md + contract-vectors.json)
+The print server now publishes five event types on the Pusher channel (only it holds the secret; displays subscribe with the public key). Payload builders live in `print-server/events.js` — pure, structurally incapable of leaking PII (first names only, ever):
+- **`checkin` v2** — existing four fields plus `id` (uuid) + `at` (ISO) so displays can dedupe live vs replay. Consumers treat both as optional, so deploy order doesn't matter.
+- **`recap`** (every 2 min during club hours) — the last ≤15 check-ins, so a display that reconnects mid-event still celebrates the kids it missed. Buffer persists across a server restart (`events-buffer.json`, today-only).
+- **`tally`** (each check-in + every 60 s) — per-club checked-in counts, zero PII. Drives the countdown app's live GameTimeView counts.
+- **`birthdays`** (startup + every 10 min on club night) — this week's birthday kids as `{firstName, club, month, day}` (no year, no last name). Kills the countdown app's manual CSV upload chore.
+- **`ops`** (`print-failure` / `selector-fail` / `canary`) — operator telemetry: type/club/at only, never a name.
+Interval publishers are gated by the club-night window in the new `print-server/church-config.json` (per-church knobs: check-in URL, Pusher channel, club nights, shares club ids — baked KVBC defaults if missing). New `GET /config/church` serves it; `npm run test:contracts` (zero-dep Node script, 91 assertions) pins every payload shape against the canonical vectors.
+
+### Selector self-test (chrome-extension/content.js + POST /selftest)
+The extension probes the load-bearing TwoTimTwo selectors (`.clubber`, `.name`, `#lastCheckin`, club icons) 15 s after load and every 10 min, and reports to the server. A hard failure (site redesign) throws a loud red page banner instead of failing silently, and the server publishes an `ops: selector-fail` event on the transition. Modal selectors are verified passively by the driven check-in paths (they only exist while a modal is open).
+
+### Canary — "Test Night Systems" (POST /canary)
+One click before doors open proves the whole pipeline: stage 1 prints a real label with a bold diagonal **TEST — NOT A CHECK-IN** band (unique `Canary HH:MM:SS` name defeats the duplicate window; excluded from history, stats, tally, and the checkin event), stage 2 publishes a `canary` event on the bus. Buttons on the dashboard (Night Status card) and in the widget (**Night Test**, which also re-runs the selector probe).
+
+### Print failures are now visible (#15)
+The server previously recorded only successes — a jammed printer was invisible. Failed `/print`/`/reprint` calls now land in history (`success:false`, shown struck-red in the dashboard table, excluded from stats), in a `GET /failures` list (last 20, names stay local), and on the bus as `ops: print-failure` (club only). `/stats/tonight` logic extracted to `computeTonightStats()` and shared with the tally publisher.
+
+### Night Status dashboard card
+New card on the dashboard: club-night window state, event-bus publish health (last event + timestamp or error), selector self-test result, last canary stages, roster freshness — plus the canary button. `/health` gains `clubNight`, `pusher`, `selectorSelfTest`, `lastCanary`, `printFailures`, and `csv` fields.
+
+## [4.0.0] - 2026-07-11
 Major release: widget reprints, live "Tonight" stats, offline roster cache, one-click updates, Med Release no-photo labels, and a fully redesigned website.
 
 ### One-tap reprints in the widget (chrome-extension/content.js)

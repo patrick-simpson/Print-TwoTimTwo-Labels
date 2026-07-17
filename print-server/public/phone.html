@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Awana Phone Check-in</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; padding-bottom: 40px; }
+  .header { background: #4caf50; color: #fff; padding: 14px 16px; position: sticky; top: 0; z-index: 10; }
+  .header h1 { font-size: 17px; }
+  .header .sub { font-size: 11px; opacity: 0.85; }
+  .wrap { padding: 12px; max-width: 520px; margin: 0 auto; }
+  input[type="search"], input[type="password"] {
+    width: 100%; padding: 12px 14px; font-size: 16px; border: 1px solid #cbd5e1;
+    border-radius: 10px; background: #fff; outline: none;
+  }
+  .pin-box { display: flex; flex-direction: column; gap: 10px; margin-top: 30vh; text-align: center; }
+  .pin-box label { font-size: 14px; color: #475569; font-weight: 600; }
+  .btn {
+    padding: 12px 16px; border: none; border-radius: 10px; font-size: 15px;
+    font-weight: 700; cursor: pointer; background: #4caf50; color: #fff;
+  }
+  .btn:disabled { opacity: 0.5; }
+  .kid {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 12px 14px; margin-top: 8px;
+  }
+  .kid .name { font-weight: 700; font-size: 15px; }
+  .kid .club { font-size: 11px; color: #64748b; }
+  .kid button { padding: 9px 14px; font-size: 13px; font-weight: 700; border: none; border-radius: 8px; background: #4caf50; color: #fff; }
+  .kid.done { opacity: 0.55; }
+  .kid.done button { background: #94a3b8; }
+  .kid button.busy { background: #f59e0b; }
+  .note { font-size: 12px; color: #64748b; margin: 10px 2px; }
+  .toast {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: #1e293b; color: #fff; padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; display: none; max-width: 92vw; text-align: center;
+  }
+  .err { color: #dc2626; font-size: 13px; font-weight: 600; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Awana Phone Check-in</h1>
+  <div class="sub">Checks the kid in on the door laptop — the label prints there.</div>
+</div>
+
+<div class="wrap" id="pin-screen">
+  <div class="pin-box">
+    <label for="pin">Enter the check-in PIN</label>
+    <input type="password" id="pin" inputmode="numeric" autocomplete="off" placeholder="PIN">
+    <div class="err" id="pin-err"></div>
+    <button class="btn" id="pin-btn">Unlock</button>
+  </div>
+</div>
+
+<div class="wrap" id="main-screen" style="display:none">
+  <input type="search" id="search" placeholder="Search kids by name…" autocomplete="off">
+  <div class="note">Tap Check in — the door laptop does the real check-in and prints the label. Greyed kids are already in.</div>
+  <div id="list"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var PIN = sessionStorage.getItem('awanaPhonePin') || '';
+var KIDS = [];
+
+function toast(msg, ms) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function() { t.style.display = 'none'; }, ms || 3000);
+}
+
+function loadRoster() {
+  return fetch('/phone/roster', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: PIN })
+  }).then(function(r) {
+    if (r.status === 403) throw new Error('pin');
+    return r.json();
+  }).then(function(data) {
+    KIDS = data.kids || [];
+    document.getElementById('pin-screen').style.display = 'none';
+    document.getElementById('main-screen').style.display = 'block';
+    render();
+  });
+}
+
+function unlock() {
+  PIN = document.getElementById('pin').value.trim();
+  loadRoster().then(function() {
+    sessionStorage.setItem('awanaPhonePin', PIN);
+  }).catch(function(e) {
+    document.getElementById('pin-err').textContent =
+      e.message === 'pin' ? 'Wrong PIN — ask the check-in desk.' : 'Cannot reach the print server. Same Wi-Fi?';
+  });
+}
+document.getElementById('pin-btn').addEventListener('click', unlock);
+document.getElementById('pin').addEventListener('keydown', function(e) { if (e.key === 'Enter') unlock(); });
+
+function render() {
+  var q = document.getElementById('search').value.trim().toLowerCase();
+  var list = document.getElementById('list');
+  list.innerHTML = '';
+  var shown = KIDS.filter(function(k) { return !q || k.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 40);
+  shown.forEach(function(k) {
+    var row = document.createElement('div');
+    row.className = 'kid' + (k.checkedIn ? ' done' : '');
+    var left = document.createElement('div');
+    var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k.name;
+    var cl = document.createElement('div'); cl.className = 'club'; cl.textContent = k.club || '';
+    left.appendChild(nm); left.appendChild(cl);
+    var btn = document.createElement('button');
+    btn.textContent = k.checkedIn ? 'Checked in' : 'Check in';
+    btn.disabled = !!k.checkedIn;
+    btn.addEventListener('click', function() { checkIn(k, btn); });
+    row.appendChild(left); row.appendChild(btn);
+    list.appendChild(row);
+  });
+  if (!shown.length) {
+    list.innerHTML = '<div class="note">No kids match. The roster comes from the last CSV sync on the door laptop.</div>';
+  }
+}
+document.getElementById('search').addEventListener('input', render);
+
+function checkIn(kid, btn) {
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.textContent = 'Sending…';
+  fetch('/phone/checkin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: kid.name, pin: PIN })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    if (!data.id) throw new Error(data.error || 'failed');
+    btn.textContent = 'Working…';
+    pollStatus(data.id, kid, btn, 0);
+  }).catch(function(e) {
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.textContent = 'Check in';
+    toast('Could not queue: ' + e.message);
+  });
+}
+
+function pollStatus(id, kid, btn, tries) {
+  if (tries > 45) { // ~90 s — the laptop may be closed
+    btn.textContent = 'No answer';
+    toast('The door laptop is not responding — check in there instead.', 5000);
+    return;
+  }
+  setTimeout(function() {
+    fetch('/phone/status/' + id).then(function(r) { return r.json(); }).then(function(st) {
+      if (st.status === 'done') {
+        kid.checkedIn = true;
+        btn.classList.remove('busy');
+        btn.textContent = 'Checked in';
+        toast(kid.name + ' is checked in — label printing at the door.');
+        render();
+      } else if (st.status === 'failed') {
+        btn.disabled = false;
+        btn.classList.remove('busy');
+        btn.textContent = 'Check in';
+        toast('Check-in failed: ' + (st.detail || 'see the door laptop'), 5000);
+      } else {
+        pollStatus(id, kid, btn, tries + 1);
+      }
+    }).catch(function() { pollStatus(id, kid, btn, tries + 1); });
+  }, 2000);
+}
+
+// Auto-unlock if a PIN is cached (or none is required).
+loadRoster().catch(function() { /* show the PIN screen */ });
+</script>
+</body>
+</html>

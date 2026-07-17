@@ -15,6 +15,18 @@ When a child checks in during Awana, automatically print a 4" × 2" label to you
 
 No PowerShell, no Node.js install, no terminal window. This is the easiest way to get started.
 
+> **More docs:** [docs/SETUP.md](docs/SETUP.md) (full setup incl. phone check-in),
+> [docs/NIGHT-OF.md](docs/NIGHT-OF.md) (print-and-tape one-pager for club night),
+> [TROUBLESHOOTING.md](TROUBLESHOOTING.md), [CONTRACT.md](CONTRACT.md) (event bus).
+
+## What it does on club night
+
+- **Prints automatically** when a kid checks in — on this laptop, another device, or a volunteer's phone (`http://<laptop-ip>:3456/phone`).
+- **Enriched labels**: club fonts + logos, handbook group, allergy/birthday/no-photo icons, store-night share balances, Step Up Night, attendance milestones ("10th club night!"), and a "Go to:" line for late arrivals (from the dashboard's group schedule).
+- **Sibling suggestions**: after a check-in, an "Also here tonight?" panel offers the family's other kids — one tap checks them in too (never automatic).
+- **Broadcasts the party**: the lobby welcome display and the countdown app's live per-club counts are fed from this server's Pusher events (first names only, ever — see CONTRACT.md).
+- **Tells you when it's sick**: selector self-tests, an end-to-end "Night Test" canary, visible print failures, and a Night Status dashboard card.
+
 ---
 
 ## Alternative: PowerShell Script (Fallback)

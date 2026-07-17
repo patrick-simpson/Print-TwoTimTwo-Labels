@@ -13,10 +13,12 @@ process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejecti
 const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
+const events  = require('./events');
 const { createCanvas, loadImage } = require('canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
@@ -36,7 +38,33 @@ try {
   console.warn('[config] Failed to load config.json:', e.message);
 }
 
-const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret) 
+// ── Church configuration ──────────────────────────────────────────────────────
+// Per-church knobs (check-in URL, club-night windows, event-bus channel) live
+// in church-config.json next to this script. Baked KVBC defaults keep the
+// server fully functional when the file is missing or malformed, and let a
+// fork swap churches by editing one JSON file instead of source.
+const CHURCH_CONFIG_FILE = path.join(__dirname, 'church-config.json');
+const CHURCH_DEFAULTS = {
+  churchName: 'KVBC Church',
+  subdomain: 'kvbchurch',
+  checkinUrl: 'https://kvbchurch.twotimtwo.com/clubber/checkin',
+  pusherChannel: 'awana-channel',
+  sharesClubIds: [2, 3, 4, 5, 6],
+  clubNights: [{ dow: 3, start: '17:30', end: '20:00' }],
+  canaryLeadMinutes: 20,
+};
+let churchConfig = { ...CHURCH_DEFAULTS };
+try {
+  if (fs.existsSync(CHURCH_CONFIG_FILE)) {
+    Object.assign(churchConfig, JSON.parse(fs.readFileSync(CHURCH_CONFIG_FILE, 'utf8')));
+    console.log(`[church] Loaded church-config.json (${churchConfig.churchName})`);
+  }
+} catch (e) {
+  console.warn('[church] Failed to load church-config.json — using baked defaults:', e.message);
+}
+const EVENT_CHANNEL = churchConfig.pusherChannel || 'awana-channel';
+
+const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret)
   ? new Pusher({
       appId:   config.pusherAppId,
       key:     config.pusherKey,
@@ -50,6 +78,51 @@ if (pusher) {
 } else {
   console.log('[pusher] Not configured (Joyful Welcome Screen disabled)');
 }
+
+// ── Tonight's event buffer ────────────────────────────────────────────────────
+// The last ~50 checkin events, persisted so a mid-event server restart doesn't
+// lose the recap replay window. Only today's events survive a reload.
+const EVENT_BUFFER_FILE = path.join(__dirname, 'events-buffer.json');
+const EVENT_BUFFER_MAX = 50;
+let eventBuffer = [];
+try {
+  if (fs.existsSync(EVENT_BUFFER_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(EVENT_BUFFER_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    if (Array.isArray(raw)) {
+      eventBuffer = raw.filter(e => e && typeof e.at === 'string' && e.at.startsWith(today));
+      if (eventBuffer.length) console.log(`[events] Restored ${eventBuffer.length} checkin event(s) from tonight's buffer`);
+    }
+  }
+} catch (e) { /* corrupt buffer — start fresh */ }
+
+function pushEventToBuffer(checkinEvent) {
+  eventBuffer.push(checkinEvent);
+  if (eventBuffer.length > EVENT_BUFFER_MAX) eventBuffer.splice(0, eventBuffer.length - EVENT_BUFFER_MAX);
+  try {
+    const tmp = EVENT_BUFFER_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(eventBuffer), 'utf8');
+    fs.renameSync(tmp, EVENT_BUFFER_FILE);
+  } catch (e) { /* persistence is best-effort */ }
+}
+
+// ── Print-failure tracking ────────────────────────────────────────────────────
+// The server used to record only successes; a jammed printer was invisible
+// beyond the extension's toast. Failures now land in history (ok:false), in
+// this in-memory list for the dashboard, and on the event bus as an `ops`
+// event (type/club/at only — never a name on Pusher).
+const printFailures = [];  // { name, club, at, error } — name stays LOCAL only
+const PRINT_FAILURES_MAX = 20;
+
+function recordPrintFailure(name, club, error) {
+  printFailures.unshift({ name, club: club || '', at: new Date().toISOString(), error: String(error || '').slice(0, 200) });
+  if (printFailures.length > PRINT_FAILURES_MAX) printFailures.length = PRINT_FAILURES_MAX;
+  events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('print-failure', club));
+}
+
+// ── Selector self-test + canary state ────────────────────────────────────────
+let lastSelfTest = null;   // { ok, results, extensionVersion, at } — posted by the extension
+let lastCanary   = null;   // { at, stages } — result of the last POST /canary
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
 const PAGE_W  = 4 * 72;  // 288 pt
@@ -686,7 +759,8 @@ const SCALE = DPI / 72;            // convert pt → px
 async function generateLabel(
   firstName, lastName, clubName, clubImageBuffer,
   allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false
+  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
+  testBanner = false, extras = {}
 ) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
@@ -702,11 +776,14 @@ async function generateLabel(
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
-  // and parents can spot graduating kids at a glance.
+  // and parents can spot graduating kids at a glance. First-timer labels
+  // can borrow the same inverted palette (extras.inverted) so a visitor
+  // pops out of a stack of white labels — palette only, the icon panel
+  // and text lines keep their normal behavior.
   // Both palettes are thermal-first: a 1-bit printer collapses everything to
   // black or white, so every tone here is either near-black or near-white —
   // no mid-grays that would dither into speckle.
-  const COLOR = stepUp ? {
+  const COLOR = (stepUp || (extras && extras.inverted)) ? {
     bg: '#000000',
     name: '#ffffff',
     last: '#e5e7eb',
@@ -1003,6 +1080,49 @@ async function generateLabel(
     ctx.textAlign = 'center';
   }
 
+  // ── Routing / milestone lines (bottom-left, above the icon row) ──────────
+  // goToLine: late check-in routing from the group schedule ("Go to: Music,
+  // Room 4"). milestoneLine: attendance milestones ("10th club night!").
+  // Anchored bottom-left so they never collide with the bottom-right icons.
+  const extraLines = [];
+  if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
+  if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
+  if (extraLines.length) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    let ly = BY + BH - 6;
+    for (const line of extraLines.reverse()) {
+      ctx.font = `${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
+      ctx.fillStyle = COLOR.group;
+      const maxW = BW * 0.55;
+      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), (hasIcon ? DIVIDER_X + 8 : BX + 8), ly);
+      ly -= 13;
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+  }
+
+  // ── TEST overlay (canary labels) ──────────────────────────────────────────
+  // A bold diagonal band so a canary print can never be mistaken for a real
+  // check-in label. Solid black band + white text stays crisp on 1-bit
+  // thermal output.
+  if (testBanner) {
+    ctx.save();
+    ctx.translate(PAGE_W / 2, PAGE_H / 2);
+    ctx.rotate(-0.18);
+    const bandW = PAGE_W * 1.2;
+    const bandH = 30;
+    ctx.fillStyle = COLOR.name;
+    ctx.fillRect(-bandW / 2, -bandH / 2, bandW, bandH);
+    ctx.font = 'bold 20px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = COLOR.bg;
+    ctx.fillText('TEST — NOT A CHECK-IN', 0, 1);
+    ctx.restore();
+    ctx.textBaseline = 'top';
+  }
+
   // Write PNG
   const buffer = canvas.toBuffer('image/png');
   fs.writeFileSync(pngPath, buffer);
@@ -1067,6 +1187,108 @@ $pd.Dispose()
   } finally {
     fs.unlink(psPath, () => {});
   }
+}
+
+// ── Attendance ledger (#30) ───────────────────────────────────────────────────
+// Print history rolls over every ~2 nights (MAX_HISTORY=200), so milestones
+// need their own compact ledger: one dates[] per kid, one entry per day,
+// season-scoped (Awana years start Aug 1). Written atomically like history.
+const ATTENDANCE_FILE = path.join(__dirname, 'attendance.json');
+const MILESTONES = [5, 10, 25, 50];
+
+function seasonStartISO(now = new Date()) {
+  const year = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${year}-08-01`;
+}
+
+function loadAttendance() {
+  try {
+    if (fs.existsSync(ATTENDANCE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(ATTENDANCE_FILE, 'utf8'));
+      if (raw && typeof raw === 'object') return raw;
+    }
+  } catch (e) { console.warn('[attendance] Failed to load ledger:', e.message); }
+  return {};
+}
+
+function saveAttendance(ledger) {
+  try {
+    const tmp = ATTENDANCE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(ledger), 'utf8');
+    fs.renameSync(tmp, ATTENDANCE_FILE);
+  } catch (e) { console.warn('[attendance] Failed to save ledger:', e.message); }
+}
+
+// Upsert tonight for this kid; returns their night count within the season.
+function recordAttendance(firstName, lastName) {
+  const nameKey = `${firstName} ${lastName}`.toLowerCase().trim();
+  if (!nameKey) return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const ledger = loadAttendance();
+  const entry = ledger[nameKey] && Array.isArray(ledger[nameKey].dates)
+    ? ledger[nameKey]
+    : { name: `${firstName} ${lastName}`.trim(), dates: [] };
+  if (!entry.dates.includes(today)) entry.dates.push(today);
+  ledger[nameKey] = entry;
+  saveAttendance(ledger);
+  const start = seasonStartISO();
+  return entry.dates.filter(d => d >= start).length;
+}
+
+function milestoneLineFor(count) {
+  return MILESTONES.includes(count) ? `⭐ ${count}th club night tonight!` : '';
+}
+
+// ── Group schedule (#28) ──────────────────────────────────────────────────────
+// Where each club goes first, and when — drives the "Go to:" routing line on
+// late check-ins. Rows live in config.json: { club, startTime "HH:MM",
+// location, room }. Grace defaults to 10 minutes past the club's start.
+function scheduleRows() {
+  return Array.isArray(config.schedule) ? config.schedule : [];
+}
+
+function scheduleRowFor(clubName) {
+  const key = clubKey(clubName);
+  if (!key) return null;
+  return scheduleRows().find(r => r && clubKey(r.club) === key) || null;
+}
+
+function lateGoToLine(clubName, now = new Date()) {
+  const row = scheduleRowFor(clubName);
+  if (!row || !row.startTime) return '';
+  const start = events.parseHM(row.startTime);
+  if (start === null) return '';
+  const graceMin = Number.isFinite(Number(config.lateGraceMin)) ? Number(config.lateGraceMin) : 10;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (mins <= start + graceMin) return '';
+  const where = [row.location, row.room].filter(Boolean).join(', ');
+  return where ? `Go to: ${where}` : '';
+}
+
+// ── Phone check-in queue (#17b) ───────────────────────────────────────────────
+// A phone on the LAN posts a check-in request; the extension (which has the
+// authenticated TwoTimTwo session) long-polls for pending actions and drives
+// the real check-in in the browser. The label then flows through the normal
+// detection path — the phone page NEVER prints directly, so the existing
+// dedup guarantees a single label. PIN-over-HTTP is LAN-trust only.
+let pendingActions = [];      // { id, name, at, status, detail }
+let pendingWaiters = [];      // long-poll responders
+const PENDING_MAX = 100;
+const PENDING_WAITERS_MAX = 4;
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+function prunePendingActions() {
+  const cutoff = Date.now() - PENDING_TTL_MS;
+  pendingActions = pendingActions.filter(a => new Date(a.at).getTime() >= cutoff).slice(-PENDING_MAX);
+}
+
+function wakePendingWaiters() {
+  const waiters = pendingWaiters.splice(0);
+  const pending = pendingActions.filter(a => a.status === 'pending');
+  waiters.forEach(w => {
+    clearTimeout(w.timer);
+    try { w.res.json({ actions: pending }); } catch { /* client gone */ }
+  });
 }
 
 // ── Express server ────────────────────────────────────────────────────────────
@@ -1304,27 +1526,64 @@ app.post('/print', async (req, res) => {
   }
   console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
+  // Wave 2 extras: late-arrival routing from the group schedule (#28),
+  // attendance milestones (#30), and the inverted first-timer palette (#27).
+  const extras = {};
+  const goTo = lateGoToLine(clubName);
+  if (goTo) extras.goToLine = goTo;
+  if (visitor && config.firstTimerInverted !== false) extras.inverted = true;
+
   let pngPath = null;
+  let connectPngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
+
+    // Attendance is recorded before rendering so the milestone prints on
+    // the very night it's earned. Never blocks the label on a ledger error.
+    let milestoneLine = '';
+    try {
+      milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
+    } catch { /* ledger trouble must not stop the print */ }
+    if (milestoneLine) extras.milestoneLine = milestoneLine;
+
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares, noPhoto
+      stepUp, stepUpNextClub, awanaShares, noPhoto,
+      false, extras
     );
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
     recordPrint(dupKey);
 
-    if (pusher) {
-      pusher.trigger('awana-channel', 'checkin', {
-        firstName,
-        club: clubName,
-        isBirthday: !!birthday,
-        isFirstTimer: !!visitor,
-      }).catch(e => console.warn('[pusher] trigger failed:', e.message));
+    // Connect card (#27): visitors optionally get a second label pointing
+    // their family to the club's time and place. Failure here never fails
+    // the check-in — the main label already printed.
+    if (visitor && config.connectCard) {
+      try {
+        const row = scheduleRowFor(clubName);
+        const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
+        const card = await generateLabel(
+          firstName, lastName, clubName, clubImageBuffer,
+          [], "We're so glad you're here!", false, true,
+          false, '', null, false,
+          false, where ? { goToLine: where } : {}
+        );
+        connectPngPath = card.pngPath;
+        printImage(connectPngPath, effectivePrinter);
+      } catch (e) {
+        console.warn('[print] Connect card failed (non-critical):', e.message);
+      }
     }
+
+    // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
+    // plus a fresh tally so displays update within seconds of the check-in.
+    const checkinEvent = events.buildCheckin({
+      firstName, club: clubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+    });
+    events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
+    pushEventToBuffer(checkinEvent);
 
     // Log to print history
     addHistoryEntry({
@@ -1332,14 +1591,22 @@ app.post('/print', async (req, res) => {
       printer: effectivePrinter, success: true, visitor: !!visitor
     });
 
+    publishTally();
+
     res.json({ success: true });
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
     console.error('[print] Error:', err.message);
+    addHistoryEntry({
+      firstName, lastName, clubName, clubImageData,
+      printer: effectivePrinter, success: false, visitor: !!visitor
+    });
+    recordPrintFailure(`${firstName} ${lastName}`.trim(), clubName, err.message);
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
+    if (connectPngPath) fs.unlink(connectPngPath, () => {});
   }
 });
 
@@ -1403,10 +1670,11 @@ app.get('/history/today', (req, res) => {
 // needs during the event: kids checked in per club, visitors, and the safety
 // flags for everyone currently in the building (allergies, birthdays,
 // no-photo kids). Each child counts once no matter how many reprints.
-app.get('/stats/tonight', (req, res) => {
+function computeTonightStats() {
   const history = loadHistory();
   const today = new Date().toISOString().slice(0, 10);
-  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
+  // Failed prints stay in history for the dashboard but never count a kid in.
+  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false);
 
   const byClub = {};
   const seen = new Set();
@@ -1432,7 +1700,7 @@ app.get('/stats/tonight', (req, res) => {
     if (parseNoPhoto(record.MedRelease)) noPhotoKids.push(name);
   });
 
-  res.json({
+  return {
     date: today,
     prints: entries.length,
     checkedIn: seen.size,
@@ -1441,7 +1709,11 @@ app.get('/stats/tonight', (req, res) => {
     allergyKids,
     birthdayKids,
     noPhotoKids
-  });
+  };
+}
+
+app.get('/stats/tonight', (req, res) => {
+  res.json(computeTonightStats());
 });
 
 // ── Label preview ────────────────────────────────────────────────────────────
@@ -1541,10 +1813,137 @@ app.post('/reprint', async (req, res) => {
     res.json({ success: true, name: `${entry.firstName} ${entry.lastName}` });
   } catch (err) {
     console.error('[reprint] Error:', err.message);
+    addHistoryEntry({
+      firstName: entry.firstName, lastName: entry.lastName,
+      clubName: entry.clubName, clubImageData: entry.clubImageData,
+      printer: effectivePrinter, success: false
+    });
+    recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
   }
+});
+
+// ── Event-bus publishers ──────────────────────────────────────────────────────
+// Interval publishers are gated by the church-config club-night window so the
+// channel stays quiet the other ~165 hours a week. Every publisher is wrapped:
+// a Pusher outage can never disturb printing.
+
+function publishTally() {
+  try {
+    const st = computeTonightStats();
+    events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn));
+  } catch (e) { console.warn('[events] tally publish skipped:', e.message); }
+}
+
+function publishRecap() {
+  try {
+    if (!eventBuffer.length) return;
+    events.publish(pusher, EVENT_CHANNEL, 'recap', events.buildRecap(eventBuffer));
+  } catch (e) { console.warn('[events] recap publish skipped:', e.message); }
+}
+
+function publishBirthdays() {
+  try {
+    const entries = [];
+    for (const r of clubbers) {
+      if (!isBirthdayWeek(r.Birthdate)) continue;
+      const bd = parseBirthdate(r.Birthdate);
+      if (!bd) continue;
+      // First name + club + calendar month/day ONLY — no last name, no year.
+      entries.push({
+        firstName: r.FirstName || '',
+        club: r.Club || '',
+        month: bd.getMonth() + 1,
+        day: bd.getDate(),
+      });
+    }
+    events.publish(pusher, EVENT_CHANNEL, 'birthdays', events.buildBirthdays(entries));
+  } catch (e) { console.warn('[events] birthdays publish skipped:', e.message); }
+}
+
+function onClubNight(fn) {
+  return () => {
+    try {
+      if (!events.isClubNightNow(churchConfig.clubNights)) return;
+      fn();
+    } catch (e) { /* scheduler must never die */ }
+  };
+}
+
+setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
+setInterval(onClubNight(publishTally), 60 * 1000);
+setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+
+// ── Selector self-test receiver ───────────────────────────────────────────────
+// The extension probes the TwoTimTwo DOM (roster rows, names, #lastCheckin,
+// club icons) every 10 minutes and posts the result here so silent selector
+// drift is visible on the dashboard before it eats a club night. A transition
+// into hard failure publishes an ops event (type/at only — no PII).
+app.post('/selftest', (req, res) => {
+  const body = req.body || {};
+  const wasOk = !lastSelfTest || lastSelfTest.ok !== false;
+  lastSelfTest = {
+    ok: body.ok !== false,
+    results: Array.isArray(body.results)
+      ? body.results.slice(0, 20).map(r => ({
+          check: String(r && r.check || '').slice(0, 60),
+          passed: !!(r && r.passed),
+          detail: String(r && r.detail || '').slice(0, 120),
+        }))
+      : [],
+    extensionVersion: String(body.extensionVersion || '').slice(0, 20),
+    at: new Date().toISOString(),
+  };
+  if (!lastSelfTest.ok && wasOk) {
+    console.warn('[selftest] Extension reports selector failure — check-in page markup may have changed');
+    events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('selector-fail'));
+  }
+  res.json({ ok: true });
+});
+
+// ── Canary — end-to-end night-systems test ────────────────────────────────────
+// Stage 1 prints a real label with a TEST overlay (unique name defeats the
+// duplicate window; excluded from history, stats, tally, and the checkin
+// event). Stage 2 publishes a canary event so displays can confirm the pipe.
+app.post('/canary', async (req, res) => {
+  const stages = [];
+  const canaryName = 'Canary ' + new Date().toTimeString().slice(0, 8);
+
+  let pngPath = null;
+  try {
+    const result = await generateLabel(
+      canaryName, '', 'Test', null, [], '', false, false,
+      false, '', null, false, true  // testBanner
+    );
+    pngPath = result.pngPath;
+    const printerName = (req.body && req.body.printerName && String(req.body.printerName).trim()) || PRINTER_NAME;
+    printImage(pngPath, printerName);
+    stages.push({ stage: 'print', passed: true, detail: `TEST label sent to ${printerName || 'default printer'}` });
+  } catch (err) {
+    stages.push({ stage: 'print', passed: false, detail: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+
+  const published = await events.publish(pusher, EVENT_CHANNEL, 'canary', events.buildCanary());
+  stages.push({
+    stage: 'pusher',
+    passed: published,
+    detail: pusher ? (published ? `canary event on ${EVENT_CHANNEL}` : 'publish failed') : 'Pusher not configured',
+  });
+
+  lastCanary = { at: new Date().toISOString(), stages };
+  console.log(`[canary] ${stages.map(s => `${s.stage}:${s.passed ? 'ok' : 'FAIL'}`).join(' ')}`);
+  res.json({ ok: stages.every(s => s.passed), stages });
+});
+
+// ── Church config (read-only) ─────────────────────────────────────────────────
+// The extension fetches this once at startup so club-night windows, the
+// check-in URL, and shares club ids live in one place instead of hardcodes.
+app.get('/config/church', (req, res) => {
+  res.json(churchConfig);
 });
 
 // ── Enhanced health check ────────────────────────────────────────────────────
@@ -1623,14 +2022,29 @@ function checkForUpdates() {
 // Override health endpoint with enhanced version
 app.get('/health', async (req, res) => {
   const warnings = await checkPrinterWarnings();
+  let csvUpdatedAt = null;
+  try {
+    csvUpdatedAt = fs.statSync(path.join(__dirname, 'clubbers.csv')).mtime.toISOString();
+  } catch { /* no CSV yet */ }
   res.json({
     status: 'ok',
     printer: PRINTER_NAME || '(default)',
     version: SERVER_VERSION,
     latestVersion: latestVersion,
     uptime: Math.round(process.uptime()),
-    warnings
+    warnings,
+    clubNight: events.isClubNightNow(churchConfig.clubNights),
+    pusher: events.getPublishState(),
+    selectorSelfTest: lastSelfTest,
+    lastCanary,
+    printFailures: printFailures.length,
+    csv: { count: clubbers.length, updatedAt: csvUpdatedAt }
   });
+});
+
+// Recent print failures for the dashboard (names stay local — never on Pusher)
+app.get('/failures', (req, res) => {
+  res.json(printFailures);
 });
 
 // ── One-click update ──────────────────────────────────────────────────────────
@@ -1664,28 +2078,149 @@ app.get('/config', (req, res) => {
 });
 
 app.post('/config', (req, res) => {
-  const { 
-    printerName, checkinUrl, 
-    pusherAppId, pusherKey, pusherSecret, pusherCluster 
+  const {
+    printerName, checkinUrl,
+    pusherAppId, pusherKey, pusherSecret, pusherCluster,
+    phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin
   } = req.body || {};
   try {
-    const config = {};
+    const next = {};
     if (fs.existsSync(CONFIG_FILE)) {
-      Object.assign(config, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
+      Object.assign(next, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
     }
-    if (printerName !== undefined) config.printerName = printerName;
-    if (checkinUrl !== undefined) config.checkinUrl = checkinUrl;
-    if (pusherAppId !== undefined) config.pusherAppId = pusherAppId;
-    if (pusherKey !== undefined) config.pusherKey = pusherKey;
-    if (pusherSecret !== undefined) config.pusherSecret = pusherSecret;
-    if (pusherCluster !== undefined) config.pusherCluster = pusherCluster;
-    
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
-    console.log('[config] Saved:', JSON.stringify(config));
+    if (printerName !== undefined) next.printerName = printerName;
+    if (checkinUrl !== undefined) next.checkinUrl = checkinUrl;
+    if (pusherAppId !== undefined) next.pusherAppId = pusherAppId;
+    if (pusherKey !== undefined) next.pusherKey = pusherKey;
+    if (pusherSecret !== undefined) next.pusherSecret = pusherSecret;
+    if (pusherCluster !== undefined) next.pusherCluster = pusherCluster;
+    if (phonePin !== undefined) next.phonePin = String(phonePin).slice(0, 12);
+    if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
+    if (connectCard !== undefined) next.connectCard = !!connectCard;
+    if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
+    if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
+
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+    // Keep the live process in sync so schedule/PIN/toggle changes apply
+    // without a restart (Pusher creds still need one — noted in the UI).
+    Object.assign(config, next);
+    console.log('[config] Saved');
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Group schedule (#28) ──────────────────────────────────────────────────────
+app.get('/config/schedule', (req, res) => {
+  res.json({ schedule: scheduleRows(), lateGraceMin: Number.isFinite(Number(config.lateGraceMin)) ? Number(config.lateGraceMin) : 10 });
+});
+
+app.post('/config/schedule', (req, res) => {
+  const { schedule, lateGraceMin } = req.body || {};
+  if (!Array.isArray(schedule)) return res.status(400).json({ error: 'schedule must be an array' });
+  const rows = schedule.slice(0, 12).map(r => ({
+    club: String(r && r.club || '').slice(0, 30),
+    startTime: /^\d{1,2}:\d{2}$/.test(String(r && r.startTime || '')) ? String(r.startTime) : '',
+    location: String(r && r.location || '').slice(0, 40),
+    room: String(r && r.room || '').slice(0, 20),
+  })).filter(r => r.club);
+  try {
+    const next = fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {};
+    next.schedule = rows;
+    if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+    Object.assign(config, next);
+    res.json({ ok: true, schedule: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Phone check-in (#17b) ─────────────────────────────────────────────────────
+// LAN-only trust model: the PIN rides plain HTTP on the venue network. It
+// gates casual misuse, not a hostile network — documented in docs/SETUP.md.
+function phonePinOk(req) {
+  const pin = String(config.phonePin || '');
+  if (!pin) return true; // no PIN configured — open on the LAN
+  const supplied = String((req.body && req.body.pin) || req.headers['x-awana-pin'] || '');
+  return supplied === pin;
+}
+
+app.get('/phone', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'phone.html'));
+});
+
+// Roster + tonight's checked-in set for the phone page.
+app.post('/phone/roster', (req, res) => {
+  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  clubbers = loadClubbers();
+  const checkedIn = new Set(
+    loadHistory()
+      .filter(e => e.timestamp && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)) && e.success !== false)
+      .map(e => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim())
+  );
+  const kids = clubbers.map(r => {
+    const name = `${r.FirstName || ''} ${r.LastName || ''}`.trim();
+    return { name, club: r.Club || '', checkedIn: checkedIn.has(name.toLowerCase()) };
+  }).filter(k => k.name);
+  res.json({ kids });
+});
+
+app.post('/phone/checkin', (req, res) => {
+  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  prunePendingActions();
+  // One pending action per kid — a double-tap must not double-drive.
+  const existing = pendingActions.find(a => a.name.toLowerCase() === name.toLowerCase() && a.status === 'pending');
+  if (existing) return res.json({ id: existing.id, queued: true });
+  const action = {
+    id: crypto.randomUUID(),
+    name,
+    at: new Date().toISOString(),
+    status: 'pending',
+    detail: '',
+  };
+  pendingActions.push(action);
+  console.log(`[phone] Check-in queued: ${name}`);
+  wakePendingWaiters();
+  res.json({ id: action.id, queued: true });
+});
+
+// Extension long-poll: returns pending actions immediately if any exist,
+// otherwise holds the request up to 25 s waiting for one.
+app.get('/pending-actions', (req, res) => {
+  prunePendingActions();
+  const pending = pendingActions.filter(a => a.status === 'pending');
+  if (pending.length || pendingWaiters.length >= PENDING_WAITERS_MAX) {
+    return res.json({ actions: pending });
+  }
+  const waiter = { res, timer: null };
+  waiter.timer = setTimeout(() => {
+    pendingWaiters = pendingWaiters.filter(w => w !== waiter);
+    try { res.json({ actions: [] }); } catch { /* client gone */ }
+  }, 25000);
+  req.on('close', () => {
+    clearTimeout(waiter.timer);
+    pendingWaiters = pendingWaiters.filter(w => w !== waiter);
+  });
+  pendingWaiters.push(waiter);
+});
+
+app.post('/pending-actions/:id/result', (req, res) => {
+  const action = pendingActions.find(a => a.id === req.params.id);
+  if (!action) return res.status(404).json({ error: 'unknown action' });
+  action.status = (req.body && req.body.ok) ? 'done' : 'failed';
+  action.detail = String((req.body && req.body.detail) || '').slice(0, 200);
+  console.log(`[phone] ${action.name}: ${action.status}${action.detail ? ' — ' + action.detail : ''}`);
+  res.json({ ok: true });
+});
+
+app.get('/phone/status/:id', (req, res) => {
+  const action = pendingActions.find(a => a.id === req.params.id);
+  if (!action) return res.status(404).json({ error: 'unknown action' });
+  res.json({ status: action.status, detail: action.detail });
 });
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────
@@ -1744,6 +2279,12 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start up ──────────────────────────────────────────────────────────────────
+// The full server is also requireable (#16): the Electron app requires this
+// module and calls startListening() so its users get the whole feature set —
+// roster enrichment, dedup, history, Pusher, phone check-in — instead of the
+// slim fallback renderer. `require.main` guards the side effects so a bare
+// `require` never auto-binds the port.
+
 // Clean up any temp files a crashed previous run left behind
 sweepOrphanedTempFiles();
 
@@ -1773,12 +2314,23 @@ function startListening(attempt = 1) {
       console.error('[startup] Server error:', err.message);
     }
   });
+  return server;
 }
-startListening();
+
+module.exports = { app, startListening };
+
+if (require.main === module) {
+  startListening();
+}
 
 // Check for updates on startup and periodically
 checkForUpdates();
 setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);
+
+// Publish the birthday roster once at startup so displays that boot before
+// the first club-night interval still get the list. Delayed a few seconds so
+// the CSV is loaded and Pusher has settled.
+setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
 
 // Pre-warm: send a blank label to the printer to eliminate cold-start delay.
 // Off by default — enable via config.json { "prewarmPrinter": true }

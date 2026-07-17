@@ -1,12 +1,13 @@
 {
   "name": "check-in-label-generator",
   "private": true,
-  "version": "4.0.0",
+  "version": "4.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:contracts": "node scripts/test-contracts.cjs"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

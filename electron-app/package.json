@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "4.0.0",
+  "version": "4.2.0",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
@@ -44,6 +44,20 @@
     ],
     "asarUnpack": [
       "node_modules/pdf-to-printer/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../print-server",
+        "to": "print-server",
+        "filter": [
+          "server.js",
+          "events.js",
+          "church-config.json",
+          "package.json",
+          "public/**",
+          "node_modules/**"
+        ]
+      }
     ]
   }
 }

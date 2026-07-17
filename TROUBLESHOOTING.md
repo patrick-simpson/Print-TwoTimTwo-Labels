@@ -223,3 +223,26 @@ Before getting help, verify:
 - [ ] install-and-run.ps1 PowerShell window is still open
 - [ ] No other application is using port 3456
 - [ ] Running on the TwoTimTwo.com check-in page (not a different page)
+
+## Phone check-in problems
+
+**Phone can't open the page** — same Wi-Fi as the laptop? Use the
+laptop's IPv4 from `ipconfig`, e.g. `http://192.168.1.20:3456/phone`.
+If it still won't load, the firewall rule is missing — re-run
+`install-and-run.ps1` once as admin (it adds "Awana Print Server
+(TCP 3456)").
+
+**Phone says "No answer"** — the check-in page must be open on the
+main laptop with the extension loaded; that's what performs the real
+check-in. Also check Settings → "Allow driven check-ins" is on.
+
+**Wrong PIN** — the PIN is set on the dashboard (Settings → Check-in
+Features). Blank = no PIN required.
+
+## Red banner: "the check-in page layout has changed"
+
+The extension's selector self-test failed — TwoTimTwo shipped new
+page markup and automatic detection may be blind. Check kids in
+normally; print labels via widget search or Walk-in Guest. Then check
+the dashboard's Night Status card for which selector broke, and file
+an issue / update the extension.
