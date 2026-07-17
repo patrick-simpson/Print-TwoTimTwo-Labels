@@ -1,4 +1,7 @@
-﻿## [5.0.1] - 2026-07-17
+﻿## [5.0.2] - 2026-07-17
+CI-only fix, round two: after 5.0.1 fixed the install-path race, the very next step in the same smoke test broke for the same underlying reason — the CI script's "Seed config and launch" step hardcoded `%APPDATA%\Awana Label Printer` for the app's config file, but the install step had just proven electron-builder names the app folder after package.json's `"name"` field (`awana-label-printer`), not `"productName"`. Guessing the userData path the same way would have hit the identical bug. `.github/workflows/build-electron.yml` now launches the packaged app with `--user-data-dir` (a native Electron/Chromium switch) to pin its data directory explicitly instead of guessing, and captures the app's stdout/stderr to log files that get dumped automatically if `/health` never responds — so any future failure here is diagnosable from logs on the first try instead of another blind guess-and-retag cycle. No application behavior changes.
+
+## [5.0.1] - 2026-07-17
 CI-only fix: the release pipeline's Windows install smoke test had a race — the one-click NSIS installer's silent stub can return from `Start-Process -Wait` before a detached child finishes copying files, so a single `Test-Path` check immediately after install intermittently (reproduced on two separate CI runners) reported the app missing even though the build itself was fine. `.github/workflows/build-electron.yml` now polls for the installed exe (up to 60s) and dumps directory/registry diagnostics if it still doesn't appear, instead of a one-shot check right after `-Wait` returns. No app behavior changes in this release.
 
 ## [5.0.0] - 2026-07-17

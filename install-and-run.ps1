@@ -1,5 +1,5 @@
 ﻿# Awana Label Print Server -- All-in-One Installer
-# Version    : 5.0.1
+# Version    : 5.0.2
 # Updated    : 2026-04-17
 #
 # DEPRECATED: this script install is superseded by the Windows app installer
@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "5.0.1"
+$ScriptVersion = "5.0.2"
 
 Write-Host ""
 Write-Host "  NOTE: There's now a simpler Windows app installer that replaces this script:" -ForegroundColor Yellow

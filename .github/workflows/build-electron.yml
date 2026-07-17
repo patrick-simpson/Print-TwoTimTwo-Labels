@@ -105,14 +105,28 @@ jobs:
 
       # Pre-seed config so the app starts the server instead of waiting in the
       # first-run wizard. launchOnBoot off so the runner image stays clean.
+      #
+      # --user-data-dir pins Electron's userData folder explicitly instead of
+      # guessing where app.getPath('userData') lands: the install step above
+      # just proved the install directory uses package.json's "name" field
+      # (awana-label-printer), not "productName" (Awana Label Printer) as
+      # assumed — guessing the config/userData path the same way is the same
+      # class of bug. --user-data-dir is a native Electron/Chromium switch
+      # that app.getPath('userData') honors automatically, so this sidesteps
+      # the guess entirely. Stdout/stderr are captured so a future failure is
+      # diagnosable from logs instead of another blind guess.
       - name: Seed config and launch
         shell: pwsh
         run: |
-          $dir = "$env:APPDATA\Awana Label Printer"
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $ciDataDir = "$env:RUNNER_TEMP\awana-userdata"
+          New-Item -ItemType Directory -Force -Path $ciDataDir | Out-Null
           @{ printerName = 'Microsoft Print to PDF'; checkinUrl = 'https://example.com/'; launchOnBoot = $false } |
-            ConvertTo-Json | Set-Content "$dir\config.json"
-          Start-Process "$env:INSTALLED_EXE" -ArgumentList '--auto-start'
+            ConvertTo-Json | Set-Content "$ciDataDir\config.json"
+          "CI_DATA_DIR=$ciDataDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Start-Process "$env:INSTALLED_EXE" `
+            -ArgumentList "--auto-start", "--user-data-dir=$ciDataDir" `
+            -RedirectStandardOutput "$ciDataDir\stdout.log" `
+            -RedirectStandardError "$ciDataDir\stderr.log"
 
       - name: Verify FULL server is up and serving
         shell: pwsh
@@ -122,7 +136,15 @@ jobs:
           while ((Get-Date) -lt $deadline) {
             try { $health = Invoke-RestMethod http://localhost:3456/health -TimeoutSec 3; break } catch { Start-Sleep 2 }
           }
-          if (-not $health) { throw 'Server never answered /health' }
+          if (-not $health) {
+            Write-Host "---- Diagnostics: app stdout ----"
+            Get-Content "$env:CI_DATA_DIR\stdout.log" -ErrorAction SilentlyContinue | Write-Host
+            Write-Host "---- Diagnostics: app stderr ----"
+            Get-Content "$env:CI_DATA_DIR\stderr.log" -ErrorAction SilentlyContinue | Write-Host
+            Write-Host "---- Diagnostics: is the app process even running? ----"
+            Get-Process 'Awana Label Printer' -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host
+            throw 'Server never answered /health'
+          }
           Write-Host "Health: $($health | ConvertTo-Json -Compress)"
           if ($health.status -ne 'ok') { throw "Unexpected health status: $($health.status)" }
 
