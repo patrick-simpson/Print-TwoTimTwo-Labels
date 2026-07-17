@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "4.2.0",
+  "version": "5.0.0",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
@@ -10,9 +10,7 @@
     "dist": "npm run build:renderer && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "pdf-to-printer": "^5.5.0"
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
@@ -25,6 +23,11 @@
   "build": {
     "appId": "com.kvbc.awana-label-printer",
     "productName": "Awana Label Printer",
+    "publish": {
+      "provider": "github",
+      "owner": "patrick-simpson",
+      "repo": "Print-TwoTimTwo-Labels"
+    },
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
@@ -33,7 +36,8 @@
       "oneClick": true,
       "perMachine": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "Awana-Label-Printer-Setup.exe"
     },
     "files": [
       "main.js",
@@ -41,9 +45,6 @@
       "src/**",
       "dist/**",
       "build/icon.png"
-    ],
-    "asarUnpack": [
-      "node_modules/pdf-to-printer/**/*"
     ],
     "extraResources": [
       {

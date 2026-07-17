@@ -2,7 +2,49 @@
 
 Having issues with Awana Label Printer? This guide covers common problems and solutions.
 
-## Installation Issues
+## Windows App (.exe) Issues
+
+### "Windows protected your PC" (SmartScreen) when running the installer
+
+This is Windows being cautious about a new community-built app — the installer is not signed with a
+paid certificate. Click **More info**, then **Run anyway**. It only appears on first install;
+after that the app updates itself silently.
+
+### Phones can't reach phone check-in (`http://<laptop-ip>:3456/phone`)
+
+Windows Firewall blocks inbound connections by default.
+
+1. The first time the server starts, Windows shows an **Allow access** prompt — click **Allow**.
+   (Make sure "Private networks" is checked.)
+2. Missed the prompt? Open the app's **Settings** (tray icon → Settings) and click
+   **Enable Phone Check-in (firewall)** — approve the administrator prompt.
+3. Both devices must be on the same Wi-Fi network.
+
+### "Port 3456 is in use" dialog at startup
+
+A previous print server is still running — usually the old script install's auto-start shortcut.
+Click **Stop it and continue**. If it keeps coming back on every boot, delete
+`Awana Check In.lnk` from your Startup folder
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`) — the app offers to do this for you
+the first time it detects an old install.
+
+### "Server failed to start" error box
+
+Labels cannot print in this state — the app shows the error instead of degrading silently.
+Send a screenshot of the message to your administrator, or check
+`%APPDATA%\Awana Label Printer\` for config problems. Reinstalling the latest
+release is safe: your roster and settings live in `%APPDATA%\Awana Label Printer`, not in the
+install folder.
+
+### Where did my data go after switching from the script install?
+
+The first run imports `config.json`, `clubbers.csv`, print history, and attendance from
+`C:\output\Print-TwoTimTwo-Labels\print-server` into `%APPDATA%\Awana Label Printer`. The old
+folder is left untouched as a backup.
+
+---
+
+## Installation Issues (legacy PowerShell script)
 
 ### "PowerShell execution policy" error
 

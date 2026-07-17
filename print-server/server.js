@@ -14,7 +14,10 @@ const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
 const events  = require('./events');
-const { createCanvas, loadImage } = require('canvas');
+// @napi-rs/canvas ships prebuilt N-API binaries, so the same node_modules
+// works under plain Node AND inside a packaged Electron app — the old `canvas`
+// package needed an ABI-matched native build and silently broke when embedded.
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
@@ -27,8 +30,16 @@ const PORT         = 3456;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
 const SERVER_VERSION = require('./package.json').version;
 
+// ── Writable data directory ───────────────────────────────────────────────────
+// All files the server WRITES (config, clubbers.csv, history, attendance,
+// event buffer) live here. Defaults to the script directory for legacy script
+// installs; the Electron shell sets AWANA_DATA_DIR to its userData folder
+// because a packaged app must never write inside resources/.
+const DATA_DIR = process.env.AWANA_DATA_DIR || __dirname;
+const CSV_FILE = path.join(DATA_DIR, 'clubbers.csv');
+
 // ── Load configuration ────────────────────────────────────────────────────────
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 let config = {};
 try {
   if (fs.existsSync(CONFIG_FILE)) {
@@ -43,7 +54,11 @@ try {
 // in church-config.json next to this script. Baked KVBC defaults keep the
 // server fully functional when the file is missing or malformed, and let a
 // fork swap churches by editing one JSON file instead of source.
-const CHURCH_CONFIG_FILE = path.join(__dirname, 'church-config.json');
+// Prefer a church-config.json in the data dir (survives app updates); fall
+// back to the copy shipped next to this script.
+const CHURCH_CONFIG_FILE = fs.existsSync(path.join(DATA_DIR, 'church-config.json'))
+  ? path.join(DATA_DIR, 'church-config.json')
+  : path.join(__dirname, 'church-config.json');
 const CHURCH_DEFAULTS = {
   churchName: 'KVBC Church',
   subdomain: 'kvbchurch',
@@ -82,7 +97,7 @@ if (pusher) {
 // ── Tonight's event buffer ────────────────────────────────────────────────────
 // The last ~50 checkin events, persisted so a mid-event server restart doesn't
 // lose the recap replay window. Only today's events survive a reload.
-const EVENT_BUFFER_FILE = path.join(__dirname, 'events-buffer.json');
+const EVENT_BUFFER_FILE = path.join(DATA_DIR, 'events-buffer.json');
 const EVENT_BUFFER_MAX = 50;
 let eventBuffer = [];
 try {
@@ -322,7 +337,7 @@ function parseCSV(raw) {
 //   EBUSY   — PowerShell is currently overwriting the file mid-event
 //   other   — malformed data, permissions, etc.
 function loadClubbers() {
-  const csvPath = path.join(__dirname, 'clubbers.csv');
+  const csvPath = CSV_FILE;
   try {
     const raw = fs.readFileSync(csvPath, 'utf8');
     const rows = parseCSV(raw);
@@ -1193,7 +1208,7 @@ $pd.Dispose()
 // Print history rolls over every ~2 nights (MAX_HISTORY=200), so milestones
 // need their own compact ledger: one dates[] per kid, one entry per day,
 // season-scoped (Awana years start Aug 1). Written atomically like history.
-const ATTENDANCE_FILE = path.join(__dirname, 'attendance.json');
+const ATTENDANCE_FILE = path.join(DATA_DIR, 'attendance.json');
 const MILESTONES = [5, 10, 25, 50];
 
 function seasonStartISO(now = new Date()) {
@@ -1363,7 +1378,7 @@ app.post('/update-csv', (req, res) => {
   if (!csv || typeof csv !== 'string' || !csv.trim()) {
     return res.status(400).json({ error: 'csv field is required (string)' });
   }
-  const csvPath = path.join(__dirname, 'clubbers.csv');
+  const csvPath = CSV_FILE;
   const tmpPath = csvPath + '.tmp';
   try {
     // Atomic write: write to a temp file then rename over the target, so a
@@ -1611,7 +1626,7 @@ app.post('/print', async (req, res) => {
 });
 
 // ── Print history ────────────────────────────────────────────────────────────
-const HISTORY_FILE = path.join(__dirname, 'print-history.json');
+const HISTORY_FILE = path.join(DATA_DIR, 'print-history.json');
 const MAX_HISTORY = 200;
 
 function loadHistory() {
@@ -1872,9 +1887,14 @@ function onClubNight(fn) {
   };
 }
 
-setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
-setInterval(onClubNight(publishTally), 60 * 1000);
-setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+// Club-night publish timers are started by startListening() so a bare
+// require() of this module never spins up background work — but embedders
+// (the Electron shell) still get them the moment the server actually starts.
+function startClubNightTimers() {
+  setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
+  setInterval(onClubNight(publishTally), 60 * 1000);
+  setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+}
 
 // ── Selector self-test receiver ───────────────────────────────────────────────
 // The extension probes the TwoTimTwo DOM (roster rows, names, #lastCheckin,
@@ -1956,7 +1976,7 @@ async function checkPrinterWarnings() {
     return cachedPrinterCheck.warnings;
   }
   const warnings = [];
-  const csvPath = path.join(__dirname, 'clubbers.csv');
+  const csvPath = CSV_FILE;
 
   // Check CSV
   try {
@@ -2001,6 +2021,15 @@ async function checkPrinterWarnings() {
 let latestVersion = null;
 const UPDATE_CHECK_INTERVAL = 6 * 3600000; // 6 hours
 
+// Embedders (the Electron shell) own the update lifecycle: they register a
+// handler that /update-now calls instead of the legacy exit-99 dance, and
+// they feed electron-updater's state into /health via setLatestVersion().
+let updateHandler = null;
+function setUpdateHandler(fn) { updateHandler = fn; }
+function setLatestVersion(ver) {
+  if (ver && /^\d+\.\d+\.\d+$/.test(String(ver).trim())) latestVersion = String(ver).trim();
+}
+
 function checkForUpdates() {
   const url = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/VERSION';
   https.get(url, { timeout: 5000 }, (res) => {
@@ -2024,7 +2053,7 @@ app.get('/health', async (req, res) => {
   const warnings = await checkPrinterWarnings();
   let csvUpdatedAt = null;
   try {
-    csvUpdatedAt = fs.statSync(path.join(__dirname, 'clubbers.csv')).mtime.toISOString();
+    csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
   } catch { /* no CSV yet */ }
   res.json({
     status: 'ok',
@@ -2056,10 +2085,17 @@ app.post('/update-now', (req, res) => {
   if (!latestVersion || latestVersion === SERVER_VERSION) {
     return res.status(409).json({ error: 'Already on the latest version', version: SERVER_VERSION });
   }
-  console.log(`[update] Update to v${latestVersion} requested — exiting so the launcher can update`);
   res.json({ ok: true, updatingTo: latestVersion });
-  // Let the response flush before the process exits.
-  setTimeout(() => process.exit(99), 500);
+  if (updateHandler) {
+    // Embedded in the Electron shell: hand the update to electron-updater.
+    console.log(`[update] Update to v${latestVersion} requested — delegating to the app shell`);
+    setTimeout(() => { try { updateHandler(latestVersion); } catch (e) { console.error('[update] Handler failed:', e.message); } }, 500);
+  } else {
+    // Legacy script install: exit 99 so launch-awana.bat re-runs the updater.
+    console.log(`[update] Update to v${latestVersion} requested — exiting so the launcher can update`);
+    // Let the response flush before the process exits.
+    setTimeout(() => process.exit(99), 500);
+  }
 });
 
 // ── Config endpoints ─────────────────────────────────────────────────────────
@@ -2250,7 +2286,7 @@ app.get('/diagnostics', async (req, res) => {
   }
 
   // 3. CSV loaded
-  const csvPath = path.join(__dirname, 'clubbers.csv');
+  const csvPath = CSV_FILE;
   const csvExists = fs.existsSync(csvPath);
   const csvCount = csvExists ? parseCSV(fs.readFileSync(csvPath, 'utf8')).length : 0;
   results.push({ test: 'CSV loaded', passed: csvExists && csvCount > 0, detail: csvExists ? `${csvCount} clubbers` : 'File not found' });
@@ -2281,21 +2317,54 @@ app.use((err, req, res, next) => {
 // ── Start up ──────────────────────────────────────────────────────────────────
 // The full server is also requireable (#16): the Electron app requires this
 // module and calls startListening() so its users get the whole feature set —
-// roster enrichment, dedup, history, Pusher, phone check-in — instead of the
-// slim fallback renderer. `require.main` guards the side effects so a bare
-// `require` never auto-binds the port.
+// roster enrichment, dedup, history, Pusher, phone check-in. A bare `require`
+// has ZERO side effects — no port bind, no timers, no network. Everything the
+// running server needs (temp-file sweep, roster load, publish timers, birthday
+// push, prewarm) happens inside startListening(); only the legacy VERSION-poll
+// self-update stays in the require.main block, because the Electron shell owns
+// updates itself via setUpdateHandler()/setLatestVersion().
 
-// Clean up any temp files a crashed previous run left behind
-sweepOrphanedTempFiles();
-
-// Load clubbers before accepting requests so the first print has data ready
-clubbers = loadClubbers();
+// Pre-warm: send a blank label to the printer to eliminate cold-start delay.
+// Off by default — enable via config.json { "prewarmPrinter": true }
+function prewarmPrinterIfConfigured() {
+  try {
+    const prewarmConfig = fs.existsSync(CONFIG_FILE)
+      ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+      : {};
+    if (prewarmConfig.prewarmPrinter) {
+      setTimeout(async () => {
+        try {
+          console.log('[prewarm] Sending blank label to printer...');
+          const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
+          printImage(result.pngPath, PRINTER_NAME);
+          fs.unlink(result.pngPath, () => {});
+          console.log('[prewarm] Done');
+        } catch (e) {
+          console.log('[prewarm] Failed (non-critical):', e.message);
+        }
+      }, 5000);
+    }
+  } catch (e) { /* config parse error — ignore */ }
+}
 
 // Bind the port with retry: during updates, install-and-run.ps1 (or a
 // just-killed previous instance) can hold port 3456 for a few seconds.
 // Previously an EADDRINUSE here killed the process with no usable message.
 const LISTEN_MAX_ATTEMPTS = 5;
 function startListening(attempt = 1) {
+  if (attempt === 1) {
+    // One-time startup work (skipped on EADDRINUSE retries).
+    // Clean up any temp files a crashed previous run left behind.
+    sweepOrphanedTempFiles();
+    // Load clubbers before accepting requests so the first print has data ready.
+    clubbers = loadClubbers();
+    startClubNightTimers();
+    // Publish the birthday roster once at startup so displays that boot before
+    // the first club-night interval still get the list. Delayed a few seconds
+    // so the CSV is loaded and Pusher has settled.
+    setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
+    prewarmPrinterIfConfigured();
+  }
   const server = app.listen(PORT, () => {
     console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
     console.log(`  Dashboard : http://localhost:${PORT}/`);
@@ -2317,38 +2386,13 @@ function startListening(attempt = 1) {
   return server;
 }
 
-module.exports = { app, startListening };
+module.exports = { app, startListening, setUpdateHandler, setLatestVersion };
 
 if (require.main === module) {
   startListening();
+  // Legacy self-update: poll the repo VERSION file so /update-now + exit 99
+  // can hand off to launch-awana.bat. The Electron shell does NOT get this —
+  // electron-updater owns its update lifecycle (see setUpdateHandler above).
+  checkForUpdates();
+  setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);
 }
-
-// Check for updates on startup and periodically
-checkForUpdates();
-setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL);
-
-// Publish the birthday roster once at startup so displays that boot before
-// the first club-night interval still get the list. Delayed a few seconds so
-// the CSV is loaded and Pusher has settled.
-setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
-
-// Pre-warm: send a blank label to the printer to eliminate cold-start delay.
-// Off by default — enable via config.json { "prewarmPrinter": true }
-try {
-  const prewarmConfig = fs.existsSync(CONFIG_FILE)
-    ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
-    : {};
-  if (prewarmConfig.prewarmPrinter) {
-    setTimeout(async () => {
-      try {
-        console.log('[prewarm] Sending blank label to printer...');
-        const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
-        printImage(result.pngPath, PRINTER_NAME);
-        fs.unlink(result.pngPath, () => {});
-        console.log('[prewarm] Done');
-      } catch (e) {
-        console.log('[prewarm] Failed (non-critical):', e.message);
-      }
-    }, 5000);
-  }
-} catch (e) { /* config parse error — ignore */ }
