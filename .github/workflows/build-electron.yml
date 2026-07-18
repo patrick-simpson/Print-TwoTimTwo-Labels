@@ -1,10 +1,14 @@
 name: Build Electron App
 
+# Normally triggered by a `vX.Y.Z` tag push. To cut a release, don't create
+# that tag by hand — dispatch `create-release-tag.yml` instead (Actions tab,
+# or see "Releasing the Windows app" in CLAUDE.md). It pushes the tag with
+# its own token and this workflow picks it up automatically.
 on:
   push:
     tags:
       - 'v*'            # triggers on version tags like v1.0.0
-  workflow_dispatch:    # allows manual trigger from GitHub Actions UI
+  workflow_dispatch:    # manual trigger (build/smoke-test only — no tag ref, so the release job is skipped)
 
 permissions:
   contents: write       # needed to attach installer + update feed to Releases

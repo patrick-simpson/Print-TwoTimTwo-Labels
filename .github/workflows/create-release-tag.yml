@@ -1,0 +1,62 @@
+name: Create Release Tag
+
+# Lets a release be cut without needing local/session git tag-push access:
+# a Claude Code session's git remote is commonly scoped to branch pushes
+# only (tag pushes rejected), and manual web-UI tagging has repeatedly hit
+# footguns here (tag case-sensitivity, republishing without deleting the
+# underlying tag first). This workflow's own GITHUB_TOKEN can push tags
+# regardless of that — it ONLY creates and pushes the tag; it never builds
+# anything itself. Pushing the tag fires build-electron.yml's normal
+# `push: tags: v*` trigger, which does the real build/smoke-test/publish.
+# Keeping tag-creation and building in separate workflows means there's no
+# risk of two builds racing for the same release.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 5.0.2 (no leading "v" — added automatically)'
+        required: true
+      ref:
+        description: 'Branch or commit to tag'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate version and create tag
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be X.Y.Z with no leading 'v' (got: '$VERSION')"
+            exit 1
+          fi
+          TAG="v$VERSION"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists — bump to a new version instead of reusing one"
+            exit 1
+          fi
+          # Guard against releasing a build that doesn't match its own version
+          # bump (VERSION is the single source of truth, kept in sync by
+          # scripts/bump-version.cjs across the repo).
+          REPO_VERSION="$(cat VERSION | tr -d '[:space:]')"
+          if [ "$REPO_VERSION" != "$VERSION" ]; then
+            echo "::error::VERSION file says $REPO_VERSION but you asked to release $VERSION — run scripts/bump-version.cjs first"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "### Created and pushed tag \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`Build Electron App\` will now run automatically for this tag." >> "$GITHUB_STEP_SUMMARY"
