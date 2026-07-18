@@ -30,8 +30,11 @@ jobs:
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes --cleanup-tag --repo "${{ github.repository }}"
             echo "Deleted release and tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
-          elif git rev-parse "$TAG" >/dev/null 2>&1; then
-            git push origin --delete "$TAG"
+          # Check the REMOTE for the tag — the default shallow checkout does
+          # not fetch tags, so a local `git rev-parse` reports every tag as
+          # missing and the dangling-tag path never runs.
+          elif git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git push origin --delete "refs/tags/$TAG"
             echo "No release found for $TAG — deleted the dangling tag only." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::error::Neither a release nor a tag named '$TAG' exists"
