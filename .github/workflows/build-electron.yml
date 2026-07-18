@@ -129,13 +129,30 @@ jobs:
           "CI_DATA_DIR=$ciDataDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $launchTime = Get-Date
           "APP_LAUNCH_TIME=$($launchTime.ToString('o'))" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $proc = Start-Process "$env:INSTALLED_EXE" `
-            -ArgumentList "--auto-start", "--user-data-dir=$ciDataDir" `
-            -RedirectStandardOutput "$ciDataDir\stdout.log" `
-            -RedirectStandardError "$ciDataDir\stderr.log" `
+          # Launch through cmd's OS-level file redirection, NOT PowerShell's
+          # -RedirectStandardOutput/-RedirectStandardError: those couple the
+          # app's stdout/stderr pipes to this step's pwsh process, so when the
+          # step exits moments later the pipes break and the app's next
+          # console write gets EPIPE — which kills a Node/Electron process
+          # (its uncaughtException handler writes to the equally-dead stderr).
+          # That matches the observed failure exactly: everything logged in
+          # the first seconds was captured, then the process silently
+          # vanished after this step ended. cmd hands the child real file
+          # handles that outlive everything.
+          $cmdProc = Start-Process cmd.exe `
+            -ArgumentList "/c", "`"`"$env:INSTALLED_EXE`" --auto-start --user-data-dir=`"$ciDataDir`" 1>`"$ciDataDir\stdout.log`" 2>`"$ciDataDir\stderr.log`"`"" `
             -PassThru
-          "APP_PID=$($proc.Id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Launched PID $($proc.Id)"
+          # Resolve the actual app PID (cmd is just the launcher wrapper).
+          $appProc = $null
+          $findDeadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $findDeadline) {
+            $appProc = Get-Process 'Awana Label Printer' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($appProc) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $appProc) { throw "App process never appeared after launch (cmd wrapper PID $($cmdProc.Id), exited: $($cmdProc.HasExited))" }
+          "APP_PID=$($appProc.Id)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Launched app PID $($appProc.Id) (via cmd wrapper $($cmdProc.Id))"
 
       - name: Verify FULL server is up and serving
         shell: pwsh
