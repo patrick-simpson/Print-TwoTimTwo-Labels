@@ -5,7 +5,7 @@ Senior Software Engineer focused on **Technical Integrity, Quality, and Operatio
 ## Project
 Windows app for printing child check-in labels at Awana events from TwoTimTwo.com.
 
-**Components:** React Simulator (root) | Bookmarklet (bookmarklet.js) | Electron App (electron-app/) | Print Server (print-server/) | Installer (install-and-run.ps1)
+**Components:** React Simulator (root) | Chrome Extension (chrome-extension/, zipped for download by bump-version.cjs) | Electron App (electron-app/) | Print Server (print-server/) | Legacy Installer (install-and-run.ps1, deprecated)
 
 ## MANDATORY Checklist
 Every functional change requires:
