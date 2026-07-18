@@ -5,11 +5,17 @@ name: Create Release Tag
 # only (tag pushes rejected), and manual web-UI tagging has repeatedly hit
 # footguns here (tag case-sensitivity, republishing without deleting the
 # underlying tag first). This workflow's own GITHUB_TOKEN can push tags
-# regardless of that — it ONLY creates and pushes the tag; it never builds
-# anything itself. Pushing the tag fires build-electron.yml's normal
-# `push: tags: v*` trigger, which does the real build/smoke-test/publish.
-# Keeping tag-creation and building in separate workflows means there's no
-# risk of two builds racing for the same release.
+# regardless of that. It never builds anything itself — it creates the tag,
+# then explicitly dispatches build-electron.yml against that tag.
+#
+# That explicit dispatch is required, not cosmetic: GitHub's anti-recursion
+# rule means a push made BY THE DEFAULT GITHUB_TOKEN does NOT fire other
+# workflows' `push` triggers (only workflow_dispatch/repository_dispatch are
+# exempted) — confirmed the hard way when v5.0.2's tag push silently didn't
+# start a build. Dispatching build-electron.yml with `ref: vX.Y.Z` produces
+# an identical run to a native tag push (github.ref resolves to
+# refs/tags/vX.Y.Z inside it, so the release job's tag-only guard still
+# works), it just has to be done explicitly rather than relying on the push.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +29,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # needed to dispatch build-electron.yml below
 
 jobs:
   tag:
@@ -58,5 +65,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
-          echo "### Created and pushed tag \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`Build Electron App\` will now run automatically for this tag." >> "$GITHUB_STEP_SUMMARY"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Dispatch the build workflow for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-electron.yml --repo "${{ github.repository }}" --ref "$TAG"
+          echo "### Created tag \`$TAG\` and dispatched \`Build Electron App\` for it" >> "$GITHUB_STEP_SUMMARY"
