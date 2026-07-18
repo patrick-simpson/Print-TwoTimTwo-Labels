@@ -26,6 +26,8 @@ Instead, after steps 1–5 land on `main`, cut the release by dispatching **`.gi
 
 That workflow creates and pushes the `vX.Y.Z` tag using its own `GITHUB_TOKEN` (not subject to session git restrictions), then explicitly dispatches `build-electron.yml` against that tag — a plain tag push alone isn't enough, because GitHub's anti-recursion rule means a push made *by* `GITHUB_TOKEN` doesn't fire other workflows' `push` triggers (confirmed the hard way: v5.0.2's tag was created but never auto-built). The dispatched run behaves identically to a native tag-push trigger: build → headless render smoke test → silent-install + `/health` + `/preview` smoke test on a Windows runner → publish the `.exe` + `latest.yml` + blockmap to the GitHub Release. Watch it through via `mcp__github__actions_get`/`get_job_logs` — don't consider a release done until that pipeline is green and the release has assets attached.
 
+**Made a mistake (wrong-case tag, stray manual release)?** Don't try to delete it via git/web UI either — same restriction. Dispatch **`.github/workflows/delete-release.yml`** with `tag` set to the exact stray tag name; it removes both the release and its underlying git tag via its own token. Do this promptly if the mistaken tag/release is newer than the real one — GitHub's "latest release" (which electron-updater's auto-update check queries) is whichever release was published most recently, not the highest version number, so a stray release left in place can break real users' auto-update.
+
 ## Commands
 
 | Context | Command |

@@ -1,0 +1,39 @@
+name: Delete Release
+
+# Cleanup tool for a mistakenly created tag/release (wrong case, duplicate,
+# stray manual publish) — symmetric with create-release-tag.yml. Deleting a
+# release/tag hits the same restriction as creating one (a Claude Code
+# session's git remote is commonly scoped to branch pushes only), so this
+# does it via the workflow's own GITHUB_TOKEN instead.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact tag name to delete (e.g. V5.0.2) — also deletes the underlying git tag'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete release and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag --repo "${{ github.repository }}"
+            echo "Deleted release and tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
+          elif git rev-parse "$TAG" >/dev/null 2>&1; then
+            git push origin --delete "$TAG"
+            echo "No release found for $TAG — deleted the dangling tag only." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Neither a release nor a tag named '$TAG' exists"
+            exit 1
+          fi
