@@ -233,6 +233,14 @@ function normalizeHeader(raw) {
 function parseCSV(raw) {
   if (!raw || !raw.trim()) return [];
   try {
+    // Strip a leading UTF-8 BOM. TwoTimTwo's export carries one, and because
+    // its fields are quoted the BOM lands *before* the first opening quote —
+    // nextField() then takes the unquoted branch and returns `"First Name"`
+    // with the quotes still attached. HEADER_MAP misses, every row loses
+    // FirstName, and findClubber() matches nobody: the entire roster silently
+    // degrades to basic labels (no allergies, group, birthday, or no-photo).
+    if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+
     // The TwoTimTwo CSV has quoted fields that can contain newlines (e.g. Notes,
     // Emergency Contact).  We need a proper stateful parser, not a simple
     // line-by-line split.
@@ -777,6 +785,13 @@ async function generateLabel(
   stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
   testBanner = false, extras = {}
 ) {
+  // Coerce the text inputs before anything calls .trim() on them. A client
+  // that posts `clubName: null` (explicit null defeats the default parameter)
+  // would otherwise throw deep inside layout and turn a printable label into
+  // a 500 + recorded print failure.
+  firstName     = String(firstName == null ? '' : firstName);
+  lastName      = String(lastName  == null ? '' : lastName);
+  clubName      = String(clubName  == null ? '' : clubName);
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   isBirthday    = !!isBirthday;
@@ -1326,7 +1341,7 @@ app.get('/roster-status', (req, res) => {
 // The extension matches returned names against DOM elements on the check-in
 // page; an empty array causes it to fall back to DOM last-name detection.
 app.get('/siblings', (req, res) => {
-  const rawName = (req.query.name || '').trim();
+  const rawName = String(req.query.name == null ? '' : req.query.name).trim();
   if (!rawName) return res.status(400).json({ error: 'name query param required' });
 
   const familyIndex = buildFamilyIndex(clubbers);
@@ -1380,12 +1395,22 @@ app.post('/update-csv', (req, res) => {
   }
   const csvPath = CSV_FILE;
   const tmpPath = csvPath + '.tmp';
+
+  // Parse BEFORE writing. A sync that yields zero rows (login redirect, an
+  // export format change, a truncated download) must not overwrite a roster
+  // we know is good — that would blank enrichment for the rest of the night
+  // and persist the damage to disk.
+  const rows = parseCSV(csv);
+  if (rows.length === 0 && clubbers.length > 0) {
+    console.warn(`[csv] Rejected roster sync: posted CSV parsed to 0 rows — keeping the ${clubbers.length} clubber(s) already loaded`);
+    return res.status(422).json({ error: 'CSV parsed to 0 rows — roster not replaced', count: clubbers.length });
+  }
+
   try {
     // Atomic write: write to a temp file then rename over the target, so a
     // crash or concurrent reader mid-write can never observe a truncated CSV.
     fs.writeFileSync(tmpPath, csv, 'utf8');
     fs.renameSync(tmpPath, csvPath);
-    const rows = parseCSV(csv);
     clubbers = rows;
     console.log(`[csv] Updated clubbers.csv from browser (${rows.length} clubber(s))`);
     res.json({ ok: true, count: rows.length });
@@ -1733,7 +1758,10 @@ app.get('/stats/tonight', (req, res) => {
 
 // ── Label preview ────────────────────────────────────────────────────────────
 app.get('/preview', async (req, res) => {
-  const { name, firstName: qFirst, lastName: qLast, clubName = '' } = req.query;
+  const { name, firstName: qFirst, lastName: qLast } = req.query;
+  // Express hands back an array for a repeated query param (?clubName=a&clubName=b);
+  // String() keeps the label renderer off a non-string.
+  const clubName = String(req.query.clubName == null ? '' : req.query.clubName);
   let firstName, lastName;
   if (qFirst) {
     firstName = String(qFirst).trim();
@@ -2100,17 +2128,38 @@ app.post('/update-now', (req, res) => {
 
 // ── Config endpoints ─────────────────────────────────────────────────────────
 
+// CORS is deliberately wide open so the content script on twotimtwo.com can
+// reach the print endpoints — which also means ANY page the volunteer has
+// open can call GET /config. The Pusher app secret and the phone PIN must not
+// be readable (or writable) that way, so secret-bearing fields are limited to
+// the callers that legitimately edit them:
+//   • no Origin header  — the dashboard's same-origin GETs, curl, tests
+//   • chrome-extension: — the extension's options page
+//   • any origin on this server's own port — the dashboard over localhost or
+//     the LAN IP (ordinary websites are on :80/:443, never :3456)
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin'];
+
+function isTrustedConfigOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (origin.startsWith('chrome-extension://')) return true;
+  return origin.endsWith(`:${PORT}`);
+}
+
 app.get('/config', (req, res) => {
+  let saved;
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      res.json(config);
-    } else {
-      res.json({ printerName: PRINTER_NAME, checkinUrl: '' });
-    }
+    saved = fs.existsSync(CONFIG_FILE)
+      ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+      : { printerName: PRINTER_NAME, checkinUrl: '' };
   } catch (e) {
-    res.json({ printerName: PRINTER_NAME, checkinUrl: '' });
+    saved = { printerName: PRINTER_NAME, checkinUrl: '' };
   }
+  if (!isTrustedConfigOrigin(req)) {
+    saved = { ...saved };
+    SECRET_CONFIG_KEYS.forEach(k => { delete saved[k]; });
+  }
+  res.json(saved);
 });
 
 app.post('/config', (req, res) => {
@@ -2119,6 +2168,9 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin
   } = req.body || {};
+  if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
+    return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
+  }
   try {
     const next = {};
     if (fs.existsSync(CONFIG_FILE)) {
@@ -2351,9 +2403,16 @@ function prewarmPrinterIfConfigured() {
 // just-killed previous instance) can hold port 3456 for a few seconds.
 // Previously an EADDRINUSE here killed the process with no usable message.
 const LISTEN_MAX_ATTEMPTS = 5;
+// The Electron shell calls startListening() again every time settings are
+// saved (it restarts the server to pick up a new printer). Without this latch
+// each save stacked another set of publish intervals on the same process, so
+// after a few visits to Settings the event bus fired tally/recap/birthday
+// publishes N times a tick — and re-ran the prewarm blank print each time.
+let startupTasksDone = false;
 function startListening(attempt = 1) {
-  if (attempt === 1) {
-    // One-time startup work (skipped on EADDRINUSE retries).
+  if (attempt === 1 && !startupTasksDone) {
+    startupTasksDone = true;
+    // One-time startup work (skipped on EADDRINUSE retries and restarts).
     // Clean up any temp files a crashed previous run left behind.
     sweepOrphanedTempFiles();
     // Load clubbers before accepting requests so the first print has data ready.
