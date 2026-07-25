@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.0.2';
+  const EXTENSION_VERSION = '5.0.3';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -169,7 +169,10 @@
     );
     for (var i = 0; i < headings.length; i++) {
       var el = headings[i];
-      if (el.closest && el.closest('#awana-printer-widget')) continue;
+      // #awana-widget is the id injectWidget() actually assigns — the old
+      // '#awana-printer-widget' never matched anything, so our own panel text
+      // was scanned as if it were page content.
+      if (el.closest && el.closest('#awana-widget')) continue;
       if (el.id === 'awana-search-input') continue;
       if (!el.offsetParent && el.tagName !== 'TITLE') continue;
       var text = el.innerText || el.textContent || '';
@@ -1878,8 +1881,12 @@
     for (var i = 0; i < inputs.length; i++) {
       var inp = inputs[i];
       if (inp.id === 'awana-search-input') continue;
-      if (inp.id && inp.id.indexOf('awana-walkin') === 0) continue;
-      if (inp.closest && inp.closest('#awana-printer-widget')) continue;
+      // The widget's id is 'awana-widget'; the old '#awana-printer-widget'
+      // selector matched nothing, and the walk-in guest field carries no id
+      // (so the 'awana-walkin' prefix test never fired either). Net effect:
+      // typing a walk-in guest's name silently froze remote check-in
+      // detection until the field was cleared.
+      if (inp.closest && inp.closest('#awana-widget')) continue;
       if (!inp.offsetParent) continue;
       var v = (inp.value || '').trim();
       if (v.length > 0) return true;
@@ -2157,6 +2164,12 @@
     });
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function printLabelDataUrl(dataUrl, firstName, lastName, clubName, imageData) {
     var frame = document.getElementById('awana-print-frame');
     if (!frame) {
@@ -2177,14 +2190,17 @@
         'img { width: 4in; height: 2in; display: block; }' +
         '</style></head><body><img src="' + dataUrl + '"/></body></html>';
     } else {
-      // Offline fallback HTML label
+      // Offline fallback HTML label. Names, club names, and the icon URL all
+      // come from the page's DOM, so they go through escapeHtml/attr before
+      // being concatenated into markup — an apostrophe or an angle bracket in
+      // a kid's name would otherwise mangle (or inject into) the label.
       var fontSize = (firstName || '').length > 12 ? '32pt' : (firstName || '').length > 8 ? '40pt' : '48pt';
       var iconHtml = imageData
-        ? '<div class="icon-col"><img src="' + imageData + '"/></div><div class="divider"></div>'
+        ? '<div class="icon-col"><img src="' + escapeHtml(imageData) + '"/></div><div class="divider"></div>'
         : '';
-      var lastNameHtml = lastName ? '<div class="ln">' + lastName + '</div>' : '';
+      var lastNameHtml = lastName ? '<div class="ln">' + escapeHtml(lastName) + '</div>' : '';
       var clubHtml = clubName
-        ? '<div class="sep"></div><div class="cn">' + clubName + '</div>'
+        ? '<div class="sep"></div><div class="cn">' + escapeHtml(clubName) + '</div>'
         : '';
       html = '<!DOCTYPE html><html><head><style>' +
         '@page { size: 4in 2in; margin: 0; }' +
@@ -2201,7 +2217,7 @@
         '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
         '</style></head><body><div class="badge">' +
         iconHtml +
-        '<div class="text"><div class="fn">' + (firstName || '') + '</div>' +
+        '<div class="text"><div class="fn">' + escapeHtml(firstName || '') + '</div>' +
         lastNameHtml + clubHtml +
         '</div></div></body></html>';
     }
@@ -2293,6 +2309,10 @@
   function autoRefresh() {
     try {
       if (document.hidden) return;
+      // Club night only. The clock window alone has no day component, so a
+      // tab left open on any other evening was reloading itself every 30 s
+      // between 5:40 and 6:00 — losing whatever the volunteer was doing.
+      if (!isInClubWindow()) return;
       var now = new Date();
       var mins = now.getHours() * 60 + now.getMinutes();
       var WINDOW_START = 17 * 60 + 40; // 5:40 PM

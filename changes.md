@@ -1,4 +1,31 @@
-﻿## [5.0.2] - 2026-07-17
+﻿## [5.0.3] - 2026-07-25
+Bug-fix sweep across the print server and the Chrome extension. No new features; several of these were failing silently.
+
+### Roster enrichment was dead whenever the CSV carried a BOM (print server)
+`parseCSV()` didn't strip the UTF-8 byte-order mark. Because TwoTimTwo's export quotes its fields, the BOM sits *before* the first opening quote, so the field parser took the unquoted branch and returned the first header as `"First Name"` — quotes and all. `HEADER_MAP` missed it, every row came back without a `FirstName`, and `findClubber()` therefore matched nobody: allergies, handbook group, birthday cake, and the no-photo flag vanished from **every** label while the server logged a healthy roster count. The mark is now stripped before parsing.
+
+### A bad roster sync could blank the roster for the night (print server)
+`POST /update-csv` wrote the payload to `clubbers.csv` and then replaced the in-memory roster with whatever it parsed to — including zero rows, e.g. when the site answers a sync with a login redirect. Both the memory copy and the on-disk copy were destroyed. The CSV is now parsed *before* the write, and a sync that yields zero rows while a good roster is loaded is rejected with 422 and leaves both copies intact.
+
+### Pusher secret and phone PIN were readable by any website (print server)
+CORS is deliberately wide open so the content script on twotimtwo.com can reach the print endpoints — which also meant any page open in the volunteer's browser could `fetch('http://localhost:3456/config')` and read `pusherSecret` and `phonePin`, or POST new ones. Those two fields are now limited to callers that legitimately edit them: same-origin requests (the dashboard), `chrome-extension://` origins (the options page), and any origin on the server's own port (the dashboard over the LAN IP). Everything else gets the config with those keys omitted, and a cross-site POST that touches them is refused with 403. Non-secret reads and writes are unchanged, so the extension's `enableDrivenCheckin` lookup still works.
+
+### Saving settings stacked duplicate publish timers (print server / Electron)
+The Electron shell restarts the server on every settings save, and `startListening()` re-ran its one-time startup block each time — so each visit to Settings added another set of tally/recap/birthday intervals to the same process and re-fired the prewarm blank print. The startup block now runs once per process.
+
+### Labels 500'd on an explicitly-null club name (print server)
+`generateLabel()` called `.trim()` on `clubName`/`lastName` directly. A payload with `clubName: null` defeats the default parameter, so the render threw, the check-in returned 500, and the failure was recorded as a print failure. Text inputs are coerced before layout. Repeated query params on `GET /preview?clubName=…` and `GET /siblings?name=…` (which Express hands back as arrays) are coerced the same way.
+
+### Typing a walk-in guest's name froze remote check-in detection (extension)
+`isSearchActive()` pauses the roster-diff scan while a page filter is active, and tried to exclude the widget's own inputs via `closest('#awana-printer-widget')` — but the widget's id is `awana-widget`, so the test never matched, and the walk-in guest field has no id, so the `awana-walkin` prefix test never matched either. Any text in that box therefore stopped remote/phone check-ins from printing until it was cleared. The same wrong selector in `scanCalendarFor()` (which meant our own panel text was scanned for "step up"/"store") is fixed too.
+
+### The check-in page reloaded itself on non-club nights (extension)
+The peak-window auto-refresh checked only the clock (5:40–6:00 PM) and never the day, so a tab left open on any other evening reloaded every 30 seconds. It now requires the configured club-night window as well.
+
+### Label markup escaping (extension)
+The offline fallback label built its HTML by string concatenation with unescaped names, club names, and the icon URL, all read from the page DOM. They now go through an escape helper.
+
+## [5.0.2] - 2026-07-17
 **Stale extension download fixed:** the committed `chrome-extension.zip` (root + `public/`, the file behind the website's "Download chrome-extension.zip" button) still contained the **4.0.0** extension — nothing regenerated it on version bumps, so the site had been serving a two-major-versions-stale extension. Both zips are rebuilt from the current source, and `scripts/bump-version.cjs` now regenerates them on every bump (`zip` on Unix, `Compress-Archive` on Windows) so they can't drift again. Also cleaned up release-page clutter: deleted the empty stray releases/tags (`V5.0.2`, `5.0.1`, `v5.0.1`, `v5.0.0`, `release`) left behind by failed/manual release attempts — a stray "latest" release breaks electron-updater for real users, and a new `delete-release.yml` workflow now exists for this cleanup.
 
 CI-only fix, round two: after 5.0.1 fixed the install-path race, the very next step in the same smoke test broke for the same underlying reason — the CI script's "Seed config and launch" step hardcoded `%APPDATA%\Awana Label Printer` for the app's config file, but the install step had just proven electron-builder names the app folder after package.json's `"name"` field (`awana-label-printer`), not `"productName"`. Guessing the userData path the same way would have hit the identical bug. `.github/workflows/build-electron.yml` now launches the packaged app with `--user-data-dir` (a native Electron/Chromium switch) to pin its data directory explicitly instead of guessing, and captures the app's stdout/stderr to log files that get dumped automatically if `/health` never responds — so any future failure here is diagnosable from logs on the first try instead of another blind guess-and-retag cycle. No application behavior changes.
