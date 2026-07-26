@@ -7,6 +7,7 @@ const links = [
   { href: '#install', label: 'Install' },
   { href: '#simulator', label: 'Try it' },
   { href: '#faq', label: 'FAQ' },
+  { href: './capabilities.html', label: 'Roadmap' },
 ];
 
 export const Nav: React.FC = () => (

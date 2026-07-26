@@ -192,10 +192,14 @@ const HEADER_MAP = {
   'medrelease':       'MedRelease',
   'med_release':      'MedRelease',
   'medical release':  'MedRelease',
-  'media release':    'MedRelease',
-  'mediarelease':     'MedRelease',
-  'photo release':    'MedRelease',
-  'photo permission': 'MedRelease',
+  // TwoTimTwo exports BOTH "Med Release?" (medical consent) and
+  // "Photo Release?" (photography consent) — the no-photo label icon must
+  // come from the photo column, with MedRelease kept only as a fallback for
+  // older/manual rosters that had a single combined column.
+  'media release':    'PhotoRelease',
+  'mediarelease':     'PhotoRelease',
+  'photo release':    'PhotoRelease',
+  'photo permission': 'PhotoRelease',
   'club':           'Club',
   'group':          'Group',
   'color':          'Color',
@@ -212,21 +216,41 @@ const HEADER_MAP = {
   'guardians':       'Guardian',
   'parent':          'Guardian',
   'parents':         'Guardian',
+  // The real TwoTimTwo /clubber/csv export carries the guardians as
+  // "Parent/Guardian#1" / "Parent/Guardian#2" (no household id column at all)
+  // — without these mappings the family index silently degrades to
+  // last-name-only grouping.
+  'parent/guardian#1':  'PrimaryContact',
+  'parent/guardian #1': 'PrimaryContact',
+  'parent/guardian1':   'PrimaryContact',
+  'parent/guardian#2':  'Guardian',
+  'parent/guardian #2': 'Guardian',
+  'parent/guardian2':   'Guardian',
   'householdid':     'HouseholdID',
   'household id':    'HouseholdID',
   'familyid':        'HouseholdID',
   'family id':       'HouseholdID',
   'family':          'HouseholdID',
   'address':         'Address',
+  'address1':        'Address',
+  'address 1':       'Address',
   'streetaddress':   'Address',
   'street address':  'Address',
   'homeaddress':     'Address',
   'home address':    'Address',
+  'primary phone':   'PrimaryPhone',
+  'primaryphone':    'PrimaryPhone',
+  'share balance':   'ShareBalance',
+  'sharebalance':    'ShareBalance',
+  'leader notes':    'LeaderNotes',
 };
 
 
 function normalizeHeader(raw) {
-  const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  // Trailing punctuation must be stripped: the real export names several
+  // columns with a question mark ("Med Release?", "Photo Release?") which
+  // otherwise never match the map.
+  const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').replace(/[?!.:]+$/, '').trim();
   return HEADER_MAP[key] || raw;  // keep original if no mapping found
 }
 
@@ -406,16 +430,29 @@ function recordPrint(nameKey) {
   }
 }
 
-// ── Find a child in the CSV by name ──────────────────────────────────────────
-// Case-insensitive and whitespace-trimmed on both sides so "alice " matches
-// "Alice" in the spreadsheet. Returns the row object or null if not found.
-function findClubber(firstName, lastName) {
+// ── Find a child in the CSV ───────────────────────────────────────────────────
+// An explicit clubberId (the extension reads it off the check-in page's
+// .clubber[recid] attribute) matches exactly against the export's
+// "Clubber ID" column — immune to middle names, suffixes, and duplicate
+// names. Name matching stays as the fallback: case-insensitive and
+// whitespace-trimmed on both sides so "alice " matches "Alice".
+function findClubberIn(rows, firstName, lastName, clubberId) {
+  const id = String(clubberId == null ? '' : clubberId).trim();
+  if (id) {
+    const byId = rows.find(r => String(r.ClubberID || '').trim() === id);
+    if (byId) return byId;
+  }
   const fn = (firstName || '').toLowerCase().trim();
   const ln = (lastName  || '').toLowerCase().trim();
-  return clubbers.find(r =>
+  if (!fn && !ln) return null;
+  return rows.find(r =>
     (r.FirstName || '').toLowerCase().trim() === fn &&
     (r.LastName  || '').toLowerCase().trim() === ln
   ) || null;
+}
+
+function findClubber(firstName, lastName, clubberId) {
+  return findClubberIn(clubbers, firstName, lastName, clubberId);
 }
 
 // ── Family index for sibling lookup ──────────────────────────────────────────
@@ -429,8 +466,23 @@ function buildFamilyIndex(rows) {
   rows.forEach(r => {
     const full = ((r.FirstName || '') + ' ' + (r.LastName || '')).trim();
     if (!full) return;
-    // Pick the most specific available key (order = priority)
-    const groupKey = (r.HouseholdID || r.PrimaryContact || r.Guardian || r.Address || r.LastName || '').trim();
+    // Pick the most specific available key (order = priority). The real
+    // TwoTimTwo export has no household id, so the primary phone number is
+    // the strongest family signal it carries; guardian+address comes next
+    // (guardian name alone can collide across unrelated families). Keys are
+    // type-prefixed so a phone number can never collide with an address.
+    const phone = String(r.PrimaryPhone || '').replace(/\D+/g, '');
+    const contact = (r.PrimaryContact || r.Guardian || '').trim().toLowerCase();
+    const address = (r.Address || '').trim().toLowerCase();
+    const household = (r.HouseholdID || '').trim();
+    const groupKey =
+      household           ? 'hh:' + household :
+      phone.length >= 7   ? 'ph:' + phone :
+      contact && address  ? 'ca:' + contact + '|' + address :
+      address             ? 'ad:' + address :
+      contact             ? 'pc:' + contact :
+      (r.LastName || '').trim() ? 'ln:' + r.LastName.trim().toLowerCase() :
+      '';
     if (!groupKey) return;
     if (!groups.has(groupKey)) groups.set(groupKey, []);
     groups.get(groupKey).push(full);
@@ -1433,7 +1485,8 @@ app.post('/label', async (req, res) => {
     clubImageData = null,
     visitor       = false,
     stepUpNight   = false,
-    awanaShares   = null
+    awanaShares   = null,
+    clubberId     = null
   } = req.body || {};
 
   let firstName, lastName;
@@ -1449,7 +1502,7 @@ app.post('/label', async (req, res) => {
   }
 
   clubbers = loadClubbers();
-  const record = findClubber(firstName, lastName);
+  const record = findClubber(firstName, lastName, clubberId);
 
   let allergyTokens, handbookGroup, birthday, noPhoto;
   if (record) {
@@ -1458,7 +1511,7 @@ app.post('/label', async (req, res) => {
     const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
-    noPhoto = parseNoPhoto(record.MedRelease);
+    noPhoto = parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
   } else {
     allergyTokens = [];
     handbookGroup = '';
@@ -1497,7 +1550,8 @@ app.post('/print', async (req, res) => {
     printerName   = '',
     visitor       = false,
     stepUpNight   = false,
-    awanaShares   = null
+    awanaShares   = null,
+    clubberId     = null
   } = req.body || {};
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
@@ -1528,9 +1582,10 @@ app.post('/print', async (req, res) => {
   clubbers = loadClubbers();
 
   // Attempt to enrich the label with data from the CSV
-  const record = findClubber(firstName, lastName);
+  const record = findClubber(firstName, lastName, clubberId);
 
   let allergyTokens, handbookGroup, birthday, noPhoto;
+  let effectiveClubName = clubName;
   if (record) {
     // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
@@ -1539,7 +1594,11 @@ app.post('/print', async (req, res) => {
     const _rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
-    noPhoto       = parseNoPhoto(record.MedRelease);
+    noPhoto       = parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
+    // Detection paths that never saw the kid's page row (checkin-report
+    // polling on a freshly loaded station) send no club — fill it from the
+    // roster so the label isn't club-less. Icon falls back to the monogram.
+    if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
     console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}${noPhoto ? ' | NO PHOTO' : ''}`);
   } else {
     // Child not in CSV (new visitor, typo, or CSV unavailable) — print a basic
@@ -1556,20 +1615,20 @@ app.post('/print', async (req, res) => {
   // Step Up Night: only honour the client's flag if the kid is actually in
   // a graduating cohort (puggle = always, cubbie = 5 by Oct 15, others =
   // graduating grade). All other kids print a normal label tonight.
-  const stepUp = !!stepUpNight && isSteppingUp(record, clubName);
-  const stepUpNextClub = stepUp ? (nextClubFor(clubName) || '') : '';
+  const stepUp = !!stepUpNight && isSteppingUp(record, effectiveClubName);
+  const stepUpNextClub = stepUp ? (nextClubFor(effectiveClubName) || '') : '';
   if (stepUp) {
-    console.log(`[print] ${firstName} ${lastName} stepping up: ${clubName} → ${stepUpNextClub}`);
+    console.log(`[print] ${firstName} ${lastName} stepping up: ${effectiveClubName} → ${stepUpNextClub}`);
   }
   if (awanaShares != null) {
     console.log(`[print] ${firstName} ${lastName} shares badge: ${awanaShares}`);
   }
-  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || clubName || '—'} | printer: ${effectivePrinter || 'default'}`);
+  console.log(`[print] ${firstName} ${lastName} | ${handbookGroup || effectiveClubName || '—'} | printer: ${effectivePrinter || 'default'}`);
 
   // Wave 2 extras: late-arrival routing from the group schedule (#28),
   // attendance milestones (#30), and the inverted first-timer palette (#27).
   const extras = {};
-  const goTo = lateGoToLine(clubName);
+  const goTo = lateGoToLine(effectiveClubName);
   if (goTo) extras.goToLine = goTo;
   if (visitor && config.firstTimerInverted !== false) extras.inverted = true;
 
@@ -1587,7 +1646,7 @@ app.post('/print', async (req, res) => {
     if (milestoneLine) extras.milestoneLine = milestoneLine;
 
     const result = await generateLabel(
-      firstName, lastName, clubName, clubImageBuffer,
+      firstName, lastName, effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       false, extras
@@ -1602,10 +1661,10 @@ app.post('/print', async (req, res) => {
     // the check-in — the main label already printed.
     if (visitor && config.connectCard) {
       try {
-        const row = scheduleRowFor(clubName);
+        const row = scheduleRowFor(effectiveClubName);
         const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
         const card = await generateLabel(
-          firstName, lastName, clubName, clubImageBuffer,
+          firstName, lastName, effectiveClubName, clubImageBuffer,
           [], "We're so glad you're here!", false, true,
           false, '', null, false,
           false, where ? { goToLine: where } : {}
@@ -1620,14 +1679,14 @@ app.post('/print', async (req, res) => {
     // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
     // plus a fresh tally so displays update within seconds of the check-in.
     const checkinEvent = events.buildCheckin({
-      firstName, club: clubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+      firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
     });
     events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
     pushEventToBuffer(checkinEvent);
 
     // Log to print history
     addHistoryEntry({
-      firstName, lastName, clubName, clubImageData,
+      firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: true, visitor: !!visitor
     });
 
@@ -1639,10 +1698,10 @@ app.post('/print', async (req, res) => {
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
     console.error('[print] Error:', err.message);
     addHistoryEntry({
-      firstName, lastName, clubName, clubImageData,
+      firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: false, visitor: !!visitor
     });
-    recordPrintFailure(`${firstName} ${lastName}`.trim(), clubName, err.message);
+    recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
@@ -2445,7 +2504,12 @@ function startListening(attempt = 1) {
   return server;
 }
 
-module.exports = { app, startListening, setUpdateHandler, setLatestVersion };
+module.exports = {
+  app, startListening, setUpdateHandler, setLatestVersion,
+  // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
+  // the assumptions about TwoTimTwo's real /clubber/csv export format.
+  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+};
 
 if (require.main === module) {
   startListening();

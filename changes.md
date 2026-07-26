@@ -1,4 +1,22 @@
-﻿## [5.0.3] - 2026-07-25
+﻿## [5.1.0] - 2026-07-26
+Validated the whole roster/check-in integration against the **real** TwoTimTwo site (kvbchurch.twotimtwo.com) for the first time, instead of the assumed formats it had been coded against. The check-in DOM contract, the `/clubber/csv` export, and the check-in AJAX endpoints are now captured in `docs/TWOTIMTWO.md` so nobody has to re-scrape the site to understand it. Several enrichment paths that were quietly keyed to the wrong columns are fixed, and clubber identity is now anchored to TwoTimTwo's own id.
+
+### The photo/no-photo icon read the wrong consent column (print server)
+The real export carries **two** separate consent columns — `Med Release?` (medical treatment) and `Photo Release?` (photography). `HEADER_MAP` folded both onto a single `MedRelease` key, so which one actually decided the label's no-photo camera icon depended on CSV column order — and semantically it was keyed off *medical* release, not photo release. `Photo Release?` now maps to its own `PhotoRelease` field and the no-photo flag reads that, falling back to `MedRelease` only for older single-column/manual rosters. A child whose family declined **photos** is now correctly flagged regardless of their medical-release answer.
+
+### Roster columns were named for a format the site doesn't emit (print server)
+`HEADER_MAP` expected `Household ID`, `Primary Contact`, `Address`, etc. The real `/clubber/csv` has none of those — its family columns are `Parent/Guardian#1`, `Parent/Guardian#2`, `Address1`, and `Primary Phone`, and several headers end in a literal `?`. `normalizeHeader()` now strips trailing punctuation, and the new mappings mean sibling detection and allergy/group/birthday enrichment actually engage on real rosters instead of silently degrading to last-name-only grouping and basic labels.
+
+### Sibling grouping now uses the phone number the export actually carries (print server)
+The real export has no household id, so `buildFamilyIndex()` was falling all the way through to last-name grouping — which wrongly merges two unrelated "Miller" families and misses blended families with different last names. It now groups by normalized `Primary Phone` first (then guardian+address, then a type-prefixed fallback chain), so blended families are detected and unrelated same-surname families are kept apart. Manual/template rosters with a real `HouseholdID` still take priority.
+
+### Labels are matched to the exact clubber, not just the name (print server + extension)
+The extension now reads TwoTimTwo's own `recid`/`club_id` off each `.clubber` row and sends `clubberId` with the print job; the server matches the CSV's `Clubber ID` column exactly before falling back to name matching. Two kids named "Ava Brown", or a middle name on the roster, no longer risk pulling the wrong allergy/photo data. Detection paths that never saw a page row (e.g. a station that loaded mid-event) now backfill the club from the roster so the label isn't club-less.
+
+### New: server-helper test suite pinned to the real export format
+`scripts/test-server-helpers.cjs` (wired into `npm test`) exercises `parseCSV`, `normalizeHeader`, `buildFamilyIndex`, `findClubberIn`, and the photo-consent logic against a fixture whose header is the **verbatim** 66-column real export line. If TwoTimTwo renames a column, these tests fail loudly instead of labels silently losing data on a Wednesday night. 37 checks, plus the existing 91 contract checks.
+
+## [5.0.3] - 2026-07-25
 Bug-fix sweep across the print server and the Chrome extension. No new features; several of these were failing silently.
 
 ### Roster enrichment was dead whenever the CSV carried a BOM (print server)
