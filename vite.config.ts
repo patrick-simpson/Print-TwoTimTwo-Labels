@@ -14,6 +14,16 @@ export default defineConfig(({ mode }) => {
       plugins: [
         react(),
       ],
+      build: {
+        rollupOptions: {
+          // Two pages: the marketing SPA (index) and the capabilities/roadmap
+          // reference (capabilities). Both ship to GitHub Pages.
+          input: {
+            main: path.resolve(__dirname, 'index.html'),
+            capabilities: path.resolve(__dirname, 'capabilities.html'),
+          },
+        },
+      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

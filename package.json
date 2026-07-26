@@ -1,13 +1,15 @@
 {
   "name": "check-in-label-generator",
   "private": true,
-  "version": "5.0.3",
+  "version": "5.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:contracts": "node scripts/test-contracts.cjs"
+    "test:contracts": "node scripts/test-contracts.cjs",
+    "test:server": "node scripts/test-server-helpers.cjs",
+    "test": "node scripts/test-contracts.cjs && node scripts/test-server-helpers.cjs"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

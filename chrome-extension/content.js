@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.0.3';
+  const EXTENSION_VERSION = '5.1.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -116,7 +116,7 @@
     try {
       var entries = Object.keys(ROSTER_CACHE).slice(0, 400).map(function(k) {
         var m = ROSTER_CACHE[k];
-        return { displayName: m.displayName, clubName: m.clubName || '', clubImageData: m.clubImageData || null };
+        return { displayName: m.displayName, clubName: m.clubName || '', clubImageData: m.clubImageData || null, recid: m.recid || null, clubId: m.clubId || null };
       });
       var payload = {};
       payload[ROSTER_LOCAL_KEY] = { ts: Date.now(), entries: entries };
@@ -136,7 +136,8 @@
         if (!m || !m.displayName) return;
         ROSTER_CACHE[m.displayName.toLowerCase()] = {
           displayName: m.displayName, clubName: m.clubName || '',
-          clubImageData: m.clubImageData || null, element: null
+          clubImageData: m.clubImageData || null, element: null,
+          recid: m.recid || null, clubId: m.clubId || null
         };
       });
       console.log('[Awana] Restored ' + saved.entries.length + ' roster entries from local cache (offline mode)');
@@ -1912,17 +1913,34 @@
       // Cache club info + DOM element while the kid is still visible — once
       // they disappear, lookupClub() can't find them.  The element reference
       // is always refreshed so search/quick-mode clicks target the current DOM.
+      // recid/club_id are TwoTimTwo's own ids on the .clubber row — they give
+      // exact identity to the print server (CSV "Clubber ID" match) and to
+      // the direct check-in API, immune to name collisions.
       var imgEl = clubberEls[i].querySelector('.club img');
       if (!ROSTER_CACHE[key]) {
         ROSTER_CACHE[key] = {
           displayName: displayName,
           clubName: imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '',
           clubImageData: imgEl ? getClubImageDataUrl(imgEl) : null,
-          element: clubberEls[i]
+          element: clubberEls[i],
+          recid: clubberEls[i].getAttribute('recid') || null,
+          clubId: clubberEls[i].getAttribute('club_id') || null
         };
         rosterDirty = true;
       } else {
-        ROSTER_CACHE[key].element = clubberEls[i]; // keep element fresh
+        // Keep element AND recid/club_id pointing at the SAME (current) row.
+        // Freezing recid to the first-scanned row while element tracked the
+        // latest meant that, for two kids with an identical display name, the
+        // widget could click one child's row but send the other child's id —
+        // exactly the collision recid is meant to prevent. They must move
+        // together.
+        ROSTER_CACHE[key].element = clubberEls[i];
+        var freshRecid = clubberEls[i].getAttribute('recid');
+        if (freshRecid && freshRecid !== ROSTER_CACHE[key].recid) {
+          ROSTER_CACHE[key].recid = freshRecid;
+          ROSTER_CACHE[key].clubId = clubberEls[i].getAttribute('club_id') || null;
+          rosterDirty = true;
+        }
       }
     }
 
@@ -2086,6 +2104,12 @@
       printerName: selectedPrinterName || '',
       stepUpNight: isStepUpNight()
     };
+    // TwoTimTwo's own clubber id (from the .clubber[recid] attribute, cached
+    // in ROSTER_CACHE) lets the server match the exact CSV row even when two
+    // kids share a name or a middle name is on the label. Name stays as the
+    // fallback for walk-ins and offline entries with no cached row.
+    var cached = ROSTER_CACHE[fullName.toLowerCase().trim()];
+    if (cached && cached.recid) payload.clubberId = cached.recid;
     if (isAwanaStoreNight()) {
       var bal = getShareBalance(firstName, lastName);
       if (bal !== null) payload.awanaShares = bal + 1;
