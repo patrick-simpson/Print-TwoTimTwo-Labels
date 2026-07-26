@@ -456,31 +456,45 @@ function findClubber(firstName, lastName, clubberId) {
 }
 
 // ── Family index for sibling lookup ──────────────────────────────────────────
-// Groups clubbers by the best available family identifier (HouseholdID →
-// PrimaryContact → Guardian → Address → LastName fallback) and builds a
-// reverse map: lowercased full-name → array of sibling full-names.
+// Groups clubbers by the best available family identifier and builds a reverse
+// map: lowercased full-name → array of sibling full-names. Priority:
+//   HouseholdID → Primary Phone → PrimaryContact/Guardian → Address → LastName.
+// Manual/template rosters that carry a real HouseholdID keep grouping on it.
+// The real TwoTimTwo export has NO household id, so the primary phone is the
+// strongest signal it carries; contact name comes before address so a family
+// whose address is inconsistently filled across siblings still groups (matching
+// the pre-phone behavior that grouped on PrimaryContact alone).
 // Called on-demand by GET /siblings so it always reflects the current roster.
+
+// A phone is only trustworthy as a family key if it isn't a placeholder or a
+// shared office/ministry number typed into many rows. Reject anything with
+// fewer than 3 distinct digits (0000000, 1111111, 5555555, 123-4567 repeats)
+// and require a plausible length; such numbers otherwise merge dozens of
+// unrelated families into one giant "sibling" group.
+function usablePhoneKey(rawPhone) {
+  const digits = String(rawPhone || '').replace(/\D+/g, '');
+  if (digits.length < 10 || digits.length > 15) return null; // full US/intl number
+  if (new Set(digits).size < 3) return null;                 // 000..., 5555..., etc.
+  return digits.slice(-10);                                  // last 10 = the line
+}
+
 function buildFamilyIndex(rows) {
   const groups = new Map(); // groupKey → [fullName, ...]
 
   rows.forEach(r => {
     const full = ((r.FirstName || '') + ' ' + (r.LastName || '')).trim();
     if (!full) return;
-    // Pick the most specific available key (order = priority). The real
-    // TwoTimTwo export has no household id, so the primary phone number is
-    // the strongest family signal it carries; guardian+address comes next
-    // (guardian name alone can collide across unrelated families). Keys are
-    // type-prefixed so a phone number can never collide with an address.
-    const phone = String(r.PrimaryPhone || '').replace(/\D+/g, '');
+    // Pick the most specific available key (order = priority). Keys are
+    // type-prefixed so a phone number can never collide with a name/address.
+    const phoneKey = usablePhoneKey(r.PrimaryPhone);
     const contact = (r.PrimaryContact || r.Guardian || '').trim().toLowerCase();
     const address = (r.Address || '').trim().toLowerCase();
     const household = (r.HouseholdID || '').trim();
     const groupKey =
-      household           ? 'hh:' + household :
-      phone.length >= 7   ? 'ph:' + phone :
-      contact && address  ? 'ca:' + contact + '|' + address :
-      address             ? 'ad:' + address :
-      contact             ? 'pc:' + contact :
+      household ? 'hh:' + household :
+      phoneKey  ? 'ph:' + phoneKey :
+      contact   ? 'pc:' + contact :
+      address   ? 'ad:' + address :
       (r.LastName || '').trim() ? 'ln:' + r.LastName.trim().toLowerCase() :
       '';
     if (!groupKey) return;
@@ -675,6 +689,17 @@ const ALLERGY_EMOJI = {
 // unaffected.
 function parseNoPhoto(value) {
   return /^(n|no|false|0)$/i.test(String(value == null ? '' : value).trim());
+}
+
+// The do-not-photograph flag for a roster row. The real TwoTimTwo export has a
+// dedicated "Photo Release?" column (→ PhotoRelease); "Med Release?" is only a
+// legacy/manual-roster fallback for rosters that had a single combined column.
+// Every label/preview/reprint/dashboard path MUST derive the flag through here
+// so the printed label, its reprint, and the director's no-photo list can never
+// disagree for a child whose two consent answers differ.
+function noPhotoFor(record) {
+  if (!record) return false;
+  return parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
 }
 
 // ── Unique temp file path ─────────────────────────────────────────────────────
@@ -1511,7 +1536,7 @@ app.post('/label', async (req, res) => {
     const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
-    noPhoto = parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
+    noPhoto = noPhotoFor(record);
   } else {
     allergyTokens = [];
     handbookGroup = '';
@@ -1594,7 +1619,7 @@ app.post('/print', async (req, res) => {
     const _rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
-    noPhoto       = parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
+    noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
     // roster so the label isn't club-less. Icon falls back to the monogram.
@@ -1796,7 +1821,7 @@ function computeTonightStats() {
     const tokens = parseAllergies(record.Allergies || record.Notes || '');
     if (tokens.length) allergyKids.push({ name, allergies: tokens });
     if (isBirthdayWeek(record.Birthdate)) birthdayKids.push(name);
-    if (parseNoPhoto(record.MedRelease)) noPhotoKids.push(name);
+    if (noPhotoFor(record)) noPhotoKids.push(name);
   });
 
   return {
@@ -1844,7 +1869,7 @@ app.get('/preview', async (req, res) => {
     const rawGroup = record.HandbookGroup || record.Group || '';
     handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
     birthday = isBirthdayWeek(record.Birthdate);
-    noPhoto = parseNoPhoto(record.MedRelease);
+    noPhoto = noPhotoFor(record);
   }
 
   try {
@@ -1892,7 +1917,7 @@ app.post('/reprint', async (req, res) => {
       const rawGroup = record.HandbookGroup || record.Group || '';
       handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
       birthday = isBirthdayWeek(record.Birthdate);
-      noPhoto = parseNoPhoto(record.MedRelease);
+      noPhoto = noPhotoFor(record);
     }
 
     const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);

@@ -131,6 +131,10 @@ const ROADMAP: Idea[] = [
     body: 'The walk-in widget prints a guest label now; it could also submit /clubber/register so the visitor exists in TwoTimTwo immediately (with the required phone/birthdate prompted inline).' },
   { id: 'F-4', title: 'Auto-print leader worksheets at meeting start', benefits: 'Printer', effort: 'S', impact: 'Low',
     body: 'Fetch the per-group handbook agenda PDF (/meeting/handbook) and print it for each leader when club night begins.' },
+  { id: 'R-4', title: 'Full clubber-id identity through detection & siblings', benefits: 'Printer', effort: 'M', impact: 'Med',
+    body: 'v5.1 anchors the print/enrichment path to TwoTimTwo’s clubber id, but the extension’s roster cache, print-dedup, and GET /siblings are still keyed by lowercased name. Two children with an identical first+last name therefore still can’t be told apart for detection/dedup or sibling lookup. Key ROSTER_CACHE and the dedup sets by recid, and let /siblings accept a clubberId, to close the last gap.' },
+  { id: 'R-5', title: 'Smarter allergy extraction from free-text Notes', benefits: 'Printer', effort: 'M', impact: 'Low',
+    body: 'The real export has no dedicated allergy column, so allergies are parsed from the free-text Notes field. Parsing stays deliberately permissive (an extra icon is safer than a missed allergy), which can surface false-positive icons (e.g. "loves coloring" → dye). A negation-aware parse, or asking the church for a dedicated allergy field/custom view, would cut the noise without risking a missed allergy.' },
 ];
 
 const EFFORT_LABEL = { S: 'Small', M: 'Medium', L: 'Large' } as const;

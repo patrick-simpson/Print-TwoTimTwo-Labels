@@ -1928,9 +1928,16 @@
         };
         rosterDirty = true;
       } else {
-        ROSTER_CACHE[key].element = clubberEls[i]; // keep element fresh
-        if (!ROSTER_CACHE[key].recid && clubberEls[i].getAttribute('recid')) {
-          ROSTER_CACHE[key].recid = clubberEls[i].getAttribute('recid');
+        // Keep element AND recid/club_id pointing at the SAME (current) row.
+        // Freezing recid to the first-scanned row while element tracked the
+        // latest meant that, for two kids with an identical display name, the
+        // widget could click one child's row but send the other child's id —
+        // exactly the collision recid is meant to prevent. They must move
+        // together.
+        ROSTER_CACHE[key].element = clubberEls[i];
+        var freshRecid = clubberEls[i].getAttribute('recid');
+        if (freshRecid && freshRecid !== ROSTER_CACHE[key].recid) {
+          ROSTER_CACHE[key].recid = freshRecid;
           ROSTER_CACHE[key].clubId = clubberEls[i].getAttribute('club_id') || null;
           rosterDirty = true;
         }

@@ -139,6 +139,42 @@ console.log('buildFamilyIndex — real export grouping');
     (idx.get('ben orchard') || []).includes('Amy Zephyr'));
 }
 
+console.log('buildFamilyIndex — placeholder/shared phones must not over-merge');
+{
+  // Three unrelated families whose rows all carry a sentinel/placeholder phone
+  // (all-zeros, all-fives) plus one real family. The placeholders must NOT
+  // collapse the three unrelated kids into one giant sibling group.
+  const rows = parseCSV([
+    'First Name,Last Name,Primary Phone,Parent/Guardian#1,Address1',
+    'Ivy,Reed,000-000-0000,Reed Parent,10 A St',
+    'Jack,Stone,(000) 000-0000,Stone Parent,20 B St',
+    'Kate,Vale,555-5555,Vale Parent,30 C St',
+    'Lee,West,(207) 555-0142,West Parent,40 D St',
+    'Mia,West,207.555.0142,West Parent,40 D St',
+  ].join('\n'));
+  const idx = buildFamilyIndex(rows);
+  check('all-zero phone rejected → Ivy not grouped with Jack',
+    !(idx.get('ivy reed') || []).includes('Jack Stone'), JSON.stringify(idx.get('ivy reed')));
+  check('repeated-digit phone rejected (Kate has no phantom siblings)',
+    (idx.get('kate vale') || []).length === 0);
+  check('real 10-digit phone still groups the Wests',
+    (idx.get('lee west') || []).includes('Mia West'));
+}
+
+console.log('buildFamilyIndex — contact groups even when address is inconsistent');
+{
+  // No phone at all; two siblings share PrimaryContact but only one row has an
+  // address filled in. Contact-before-address must still group them.
+  const rows = parseCSV([
+    'First Name,Last Name,Parent/Guardian#1,Address1',
+    'Nate,Frost,Frost Parent,55 E St',
+    'Owen,Frost,Frost Parent,',
+  ].join('\n'));
+  const idx = buildFamilyIndex(rows);
+  check('siblings group on PrimaryContact despite one blank address',
+    (idx.get('nate frost') || []).includes('Owen Frost'), JSON.stringify(idx.get('nate frost')));
+}
+
 console.log('buildFamilyIndex — manual/template rosters keep working');
 {
   const manual = parseCSV([

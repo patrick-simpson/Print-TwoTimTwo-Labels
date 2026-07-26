@@ -14,7 +14,33 @@ The real export has no household id, so `buildFamilyIndex()` was falling all the
 The extension now reads TwoTimTwo's own `recid`/`club_id` off each `.clubber` row and sends `clubberId` with the print job; the server matches the CSV's `Clubber ID` column exactly before falling back to name matching. Two kids named "Ava Brown", or a middle name on the roster, no longer risk pulling the wrong allergy/photo data. Detection paths that never saw a page row (e.g. a station that loaded mid-event) now backfill the club from the roster so the label isn't club-less.
 
 ### New: server-helper test suite pinned to the real export format
-`scripts/test-server-helpers.cjs` (wired into `npm test`) exercises `parseCSV`, `normalizeHeader`, `buildFamilyIndex`, `findClubberIn`, and the photo-consent logic against a fixture whose header is the **verbatim** 66-column real export line. If TwoTimTwo renames a column, these tests fail loudly instead of labels silently losing data on a Wednesday night. 37 checks, plus the existing 91 contract checks.
+`scripts/test-server-helpers.cjs` (wired into `npm test`) exercises `parseCSV`, `normalizeHeader`, `buildFamilyIndex`, `findClubberIn`, and the photo-consent logic against a fixture whose header is the **verbatim** 66-column real export line. If TwoTimTwo renames a column, these tests fail loudly instead of labels silently losing data on a Wednesday night. 41 checks, plus the existing 91 contract checks.
+
+### Post-review hardening (same version, pre-release)
+An adversarial review of the above changes caught three real issues, now fixed:
+- **No-photo flag was only half-migrated.** `/print` and `/label` read the new
+  `Photo Release?` column, but `/reprint`, `/preview`, and the dashboard
+  no-photo safety list (`/stats/tonight`) still read `Med Release?` — so a
+  reprinted label or the director's "do not photograph" list could disagree
+  with the original label for any child whose two consent answers differ. All
+  five paths now go through a single `noPhotoFor(record)` helper.
+- **Phone-based family grouping could over-merge on placeholder numbers.** A
+  sentinel like `000-000-0000` or a shared office line typed into many rows
+  would have collapsed unrelated families into one giant sibling group. Phone
+  keys now require a full 10–15 digit number with at least 3 distinct digits
+  (normalized to the last 10), and contact-name grouping comes before address
+  so a family with an inconsistently-filled address still groups — restoring
+  the pre-phone `PrimaryContact`-alone behavior for manual rosters.
+- **Extension identity could desync for identical names.** The cached `recid`
+  was frozen to the first-scanned row while the clickable element tracked the
+  latest, so two kids with the same display name could click one row but send
+  the other's id. `recid`/`club_id` now move with the element every scan.
+
+Known follow-ups (see the Capabilities & Roadmap page, R-4/R-5): two children
+with an *identical* first+last name are still deduped/grouped by name in the
+extension and in `GET /siblings` (no clubberId disambiguation there yet); and
+allergy parsing intentionally stays permissive on the free-text `Notes` field
+(an extra icon is safer than a missed allergy).
 
 ## [5.0.3] - 2026-07-25
 Bug-fix sweep across the print server and the Chrome extension. No new features; several of these were failing silently.
