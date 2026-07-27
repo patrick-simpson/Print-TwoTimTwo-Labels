@@ -32,6 +32,11 @@
   let storeMode           = localStorage.getItem(STORE_KEY) || 'auto';
   let lastPrintedName = null;
   var batchPrintedNames = new Set();
+  // R-1: reconcile-against-checkin_report state (see scheduleReconcile at the
+  // bottom of the file). Declared here so loadPrintedState can restore
+  // reconcileBaselineDone before the roster/reconcile passes ever run.
+  var reconcileBaselineDone = false;
+  var reconcileInFlight = false;
 
   // ── Remote check-in detection state ────────────────────────────────────────
   // The .clubber list on TwoTimTwo.com shrinks when a kid is checked in on
@@ -39,9 +44,17 @@
   // check-ins that happened on a phone/other laptop and print their label
   // here.  A session-scoped "printed" set dedupes against the existing
   // #lastCheckin detection path so locally-checked-in kids aren't reprinted.
-  var ROSTER_CACHE    = {};          // { nameLower: { displayName, clubName, clubImageData } }
-  var knownClubbers   = new Set();   // last-seen lowercased names
-  var printedNames    = new Set();   // session dedup
+  // R-4: ROSTER_CACHE, printedNames, knownClubbers, pendingMissing and
+  // batchPrintedNames are all keyed by a stable *identity key* — 'id:<recid>'
+  // when TwoTimTwo's own clubber id is known, else 'nm:<lowercased name>' for
+  // walk-ins / offline-cached entries that have no recid. This is what keeps
+  // two kids who share a first+last name from collapsing into one entry.
+  // ROSTER_CACHE must still be searchable by name (widget search, sibling
+  // lookups), so ROSTER_NAME_INDEX is a secondary nameKey → identityKey index.
+  var ROSTER_CACHE      = {};          // { identityKey: { displayName, clubName, clubImageData, recid, clubId, element } }
+  var ROSTER_NAME_INDEX = {};          // { nameKeyLower: identityKey }
+  var knownClubbers   = new Set();   // last-seen identity keys
+  var printedNames    = new Set();   // session dedup, identity keys
   var baselineScanned = false;
   // A kid must be missing from at least this many consecutive scans before the
   // roster-diff path is allowed to print their label. This defends against
@@ -68,25 +81,89 @@
   var REMOTE_STALE_MS     = 4 * 60 * 60 * 1000; // 4h idle resets dedup (new event night)
   var SCAN_INTERVAL_MS    = 5000;
   var AUTO_REFRESH_INTERVAL_MS = 30000;
+  // R-1: separate baseline flag for the checkin_report reconcile pass — kept
+  // next to the roster-diff baseline key but tracked independently so a
+  // reload can't re-trigger the "first pass never prints" seeding twice.
+  var REMOTE_RECONCILE_BASELINE_KEY = 'awana_reconcileBaselineDone';
+
+  // ── R-4: stable identity keys ───────────────────────────────────────────
+  // Internal whitespace is collapsed, not just trimmed: the check-in report's
+  // name sits between two links in the markup, so its text can come back with
+  // padding or a line break inside it ("Jane  Doe") while the roster row reads
+  // "Jane Doe". Keying those differently would make reconcile treat one child
+  // as two and print a duplicate label.
+  function nameKeyOf(name) {
+    return String(name == null ? '' : name).toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+  function identityKey(recid, displayName) {
+    return recid ? ('id:' + recid) : ('nm:' + nameKeyOf(displayName));
+  }
+  // Older sessionStorage payloads (pre-identity-key) stored bare lowercased
+  // names with no prefix. Treat anything without an 'id:'/'nm:' prefix as an
+  // 'nm:' key so a mid-event extension update doesn't reprint everyone.
+  function migrateLegacyKey(v) {
+    if (typeof v !== 'string') return v;
+    return (/^(id:|nm:)/).test(v) ? v : ('nm:' + v);
+  }
+  // Resolve the identity key for a name, preferring an explicitly-known recid,
+  // else looking the name up in ROSTER_NAME_INDEX (populated by scanClubberList
+  // whenever the kid has been seen on the live roster), else falling back to
+  // the name-only key.
+  function resolveIdentityKey(name, recid) {
+    if (recid == null) {
+      var idk = ROSTER_NAME_INDEX[nameKeyOf(name)];
+      if (idk) recid = idk.indexOf('id:') === 0 ? idk.slice(3) : null;
+    }
+    return identityKey(recid, name);
+  }
+  function isPrinted(name, recid) {
+    if (printedNames.has(resolveIdentityKey(name, recid))) return true;
+    // A label printed before this station knew the child's TwoTimTwo id was
+    // recorded under a name key — a hand-typed walk-in is the common case, and
+    // registering that walk-in (the F-3 checkbox) then checks them in, so they
+    // come back from the check-in report carrying a real id. Without this
+    // fallback the id-keyed lookup misses the name-keyed record and reconcile
+    // prints a SECOND label for the same child.
+    return printedNames.has('nm:' + nameKeyOf(name));
+  }
+  // Secondary name → identityKey index lookup, so ROSTER_CACHE (keyed by
+  // identity) stays reachable from code that only has a display name (widget
+  // search, sibling matching, doPrint's clubberId lookup).
+  function rosterLookupByName(name) {
+    var idk = ROSTER_NAME_INDEX[nameKeyOf(name)];
+    return idk ? ROSTER_CACHE[idk] : null;
+  }
 
   function loadPrintedState() {
     try {
       var ts = parseInt(sessionStorage.getItem(REMOTE_PRINTED_TS) || '0', 10);
       if (ts && Date.now() - ts < REMOTE_STALE_MS) {
         var arr = JSON.parse(sessionStorage.getItem(REMOTE_PRINTED_KEY) || '[]');
-        if (Array.isArray(arr)) printedNames = new Set(arr);
+        if (Array.isArray(arr)) printedNames = new Set(arr.map(migrateLegacyKey));
         baselineScanned = sessionStorage.getItem(REMOTE_BASELINE_KEY) === '1';
+        reconcileBaselineDone = sessionStorage.getItem(REMOTE_RECONCILE_BASELINE_KEY) === '1';
         // Restore knownClubbers + ROSTER_CACHE so diff survives a reload.
         var knownArr = JSON.parse(sessionStorage.getItem(REMOTE_KNOWN_KEY) || '[]');
-        if (Array.isArray(knownArr)) knownClubbers = new Set(knownArr);
+        if (Array.isArray(knownArr)) knownClubbers = new Set(knownArr.map(migrateLegacyKey));
         var rosterObj = JSON.parse(sessionStorage.getItem(REMOTE_ROSTER_KEY) || '{}');
-        if (rosterObj && typeof rosterObj === 'object') ROSTER_CACHE = rosterObj;
+        if (rosterObj && typeof rosterObj === 'object') {
+          ROSTER_CACHE = {};
+          ROSTER_NAME_INDEX = {};
+          Object.keys(rosterObj).forEach(function(k) {
+            var v = rosterObj[k];
+            // Pre-identity-key persisted caches were keyed by bare name.
+            var idk = (/^(id:|nm:)/).test(k) ? k : identityKey(v && v.recid, (v && v.displayName) || k);
+            ROSTER_CACHE[idk] = v;
+            if (v && v.displayName) ROSTER_NAME_INDEX[nameKeyOf(v.displayName)] = idk;
+          });
+        }
       } else {
         sessionStorage.removeItem(REMOTE_PRINTED_KEY);
         sessionStorage.removeItem(REMOTE_PRINTED_TS);
         sessionStorage.removeItem(REMOTE_BASELINE_KEY);
         sessionStorage.removeItem(REMOTE_KNOWN_KEY);
         sessionStorage.removeItem(REMOTE_ROSTER_KEY);
+        sessionStorage.removeItem(REMOTE_RECONCILE_BASELINE_KEY);
       }
     } catch (e) { /* ignore sessionStorage errors */ }
   }
@@ -134,20 +211,21 @@
       if (Object.keys(ROSTER_CACHE).length > 0) return; // roster appeared meanwhile
       saved.entries.forEach(function(m) {
         if (!m || !m.displayName) return;
-        ROSTER_CACHE[m.displayName.toLowerCase()] = {
+        var idk = identityKey(m.recid, m.displayName);
+        ROSTER_CACHE[idk] = {
           displayName: m.displayName, clubName: m.clubName || '',
           clubImageData: m.clubImageData || null, element: null,
           recid: m.recid || null, clubId: m.clubId || null
         };
+        ROSTER_NAME_INDEX[nameKeyOf(m.displayName)] = idk;
       });
       console.log('[Awana] Restored ' + saved.entries.length + ' roster entries from local cache (offline mode)');
     });
   }
 
-  function markPrinted(name) {
-    if (!name) return;
-    var key = name.toLowerCase().trim();
-    if (!key) return;
+  function markPrinted(name, recid) {
+    if (!name || !name.trim()) return;
+    var key = resolveIdentityKey(name, recid);
     printedNames.add(key);
     try {
       sessionStorage.setItem(REMOTE_PRINTED_KEY, JSON.stringify(Array.from(printedNames)));
@@ -319,8 +397,9 @@
     // (or carried over via sessionStorage). Without this, a queue persisted in
     // localStorage across a browser crash can replay a label that another path
     // (onCheckin / roster diff / Pusher) has already produced.
-    var dedupKey = (item && item.name ? String(item.name) : '').toLowerCase().trim();
-    if (dedupKey && printedNames.has(dedupKey)) {
+    var hasName = !!(item && item.name);
+    var idKey = hasName ? resolveIdentityKey(item.name, item.clubberId) : null;
+    if (idKey && printedNames.has(idKey)) {
       console.log('[Awana] Dropping queued print (already printed this session):', item.name);
       if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
       return;
@@ -332,7 +411,7 @@
       signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
     }).then(function(r) {
       if (r.ok) {
-        if (dedupKey) markPrinted(item.name);
+        if (idKey) markPrinted(item.name, item.clubberId);
         playSuccess();
         console.log('[Awana] Flushed queued print: ' + item.name);
         if (getQueue().length > 0) setTimeout(flushQueue, PRINT_COOLDOWN);
@@ -365,8 +444,12 @@
     // (e.g. two unrelated Miller families).  Only fall back to DOM last-name
     // matching when the server is unreachable or times out.
     var serverReachable = false;
+    // R-4: pass along TwoTimTwo's own clubber id for this kid when known — the
+    // server accepts it for an exact-identity lookup and ignores it otherwise.
+    var selfMeta = rosterLookupByName(fullName);
+    var clubberIdParam = (selfMeta && selfMeta.recid) ? ('&clubberId=' + encodeURIComponent(selfMeta.recid)) : '';
     try {
-      var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName),
+      var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName) + clubberIdParam,
         { signal: AbortSignal.timeout(2000) });
       if (resp.ok) {
         serverReachable = true;
@@ -594,6 +677,108 @@
     });
   }
 
+  // ── F-2: direct check-in API ─────────────────────────────────────────────
+  // Mirrors TwoTimTwo's own POST /clubber/checkinclubber (docs/TWOTIMTWO.md
+  // §2.2/§2.3) instead of clicking the .clubber row and polling for the
+  // modal's button#checkin. Used by batchCheckInSiblings / executePhoneAction /
+  // Quick Mode; each falls back to the original click-and-poll dance whenever
+  // the calendar id or CSRF token can't be found, or the POST doesn't verify —
+  // a TwoTimTwo redesign must degrade check-in, never break it outright.
+  function findCsrfToken() {
+    // Yii 1.x injects one page-wide CSRF field (name fixed by the app's
+    // csrfTokenName config — 'YII_CSRF_TOKEN' here, same name the login form
+    // uses per docs/TWOTIMTWO.md §1) into any form it renders when CSRF
+    // protection is on.
+    var el = document.querySelector('input[name="YII_CSRF_TOKEN"]');
+    return el && el.value ? el.value : null;
+  }
+
+  // Reads #checkinForm's own '.event' checkboxes (docs §2.2) and returns the
+  // events[] values to submit: automatic="1" items (e.g. Attendance) always,
+  // any explicit Bible/Friend `options` next, else whatever the DOM's live
+  // checkbox state is. An event whose clubs="…" CSV doesn't include this
+  // clubber's club_id is skipped entirely, even if its checkbox happens to be
+  // checked — that CSV is what keeps a stale, previously-club's selection
+  // from leaking into this child's submission.
+  function collectApplicableEvents(clubId, options) {
+    var out = [];
+    var form = document.getElementById('checkinForm');
+    if (!form) return out;
+    var inputs = form.querySelectorAll('input.event[name="events[]"]');
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var clubsAttr = (input.getAttribute('clubs') || '').split(',')
+        .map(function(s) { return s.trim(); }).filter(Boolean);
+      var appliesToClub = clubsAttr.length === 0 || (clubId != null && clubsAttr.indexOf(String(clubId)) !== -1);
+      if (!appliesToClub) continue;
+      var isAutomatic = input.getAttribute('automatic') === '1';
+      var include = isAutomatic || input.checked;
+      if (options) {
+        var lbl = input.closest('label');
+        if (!lbl && input.id) lbl = document.querySelector('label[for="' + input.id + '"]');
+        var labelText = lbl ? (lbl.textContent || '') : (input.nextSibling ? (input.nextSibling.textContent || '') : '');
+        if (/bible/i.test(labelText) && Object.prototype.hasOwnProperty.call(options, 'Bible')) include = options.Bible;
+        if (/friend|brought/i.test(labelText) && Object.prototype.hasOwnProperty.call(options, 'Friend')) include = options.Friend;
+      }
+      if (include && input.value) out.push(input.value);
+    }
+    return out;
+  }
+
+  // POSTs the real check-in directly. Resolves true only once the row has
+  // actually vanished from the roster (the same success signal the
+  // click-and-poll path uses) — a truthy HTTP response alone isn't trusted.
+  function driveCheckinDirect(clubberId, childName, clubId, options) {
+    if (!clubberId) return Promise.resolve(false);
+    var calInput = document.getElementById('calendar_id');
+    var calendarId = calInput && calInput.value;
+    var csrfToken = findCsrfToken();
+    if (!calendarId || !csrfToken) return Promise.resolve(false);
+
+    var body = 'clubber_id=' + encodeURIComponent(clubberId) +
+      '&calendar_id=' + encodeURIComponent(calendarId);
+    collectApplicableEvents(clubId, options).forEach(function(v) {
+      body += '&events%5B%5D=' + encodeURIComponent(v);
+    });
+    body += '&YII_CSRF_TOKEN=' + encodeURIComponent(csrfToken);
+
+    return fetch('/clubber/checkinclubber', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+      signal: AbortSignal.timeout(8000)
+    }).then(function(r) {
+      if (!r.ok) return false;
+      return r.text();
+    }).then(function(text) {
+      if (!text) return false;
+      var firstName = (childName || '').trim().split(/\s+/)[0] || '';
+      return firstName ? text.indexOf(firstName) !== -1 : true;
+    }).catch(function() {
+      return false;
+    });
+  }
+
+  // Shared entry point for the three driven-check-in call sites. Resolves
+  // true only when the direct POST both looked successful AND the row
+  // disappeared within ~2s; false means "fall back to click-and-poll" —
+  // never a rejection, so callers can always .then() it.
+  function tryDirectCheckin(clubberId, childName, clubId, options) {
+    if (CHURCH_CFG.enableDrivenCheckin === false) return Promise.resolve(false);
+    return driveCheckinDirect(clubberId, childName, clubId, options).then(function(posted) {
+      if (!posted) return false;
+      return new Promise(function(resolve) {
+        var attempts = 0;
+        (function poll() {
+          if (!findClubberElByName(childName)) { resolve(true); return; }
+          if (++attempts >= 20) { resolve(false); return; } // didn't verify — caller falls back
+          setTimeout(poll, 100);
+        })();
+      });
+    });
+  }
+
   // After clicking the modal's check-in button, wait for the kid's row to
   // disappear from the .clubber roster — that's the only signal that
   // TwoTimTwo actually accepted the check-in. If the row is still there
@@ -734,28 +919,42 @@
     // Fire print in background immediately — don't wait for check-in to complete.
     // batchPrintedNames (8 s window) guards against onCheckin double-printing.
     var club = lookupClub(sib.name);
-    var sibKey = sib.name.toLowerCase().trim();
+    var sibRecid = (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null;
+    var sibClubId = (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('club_id') : null;
+    var sibKey = resolveIdentityKey(sib.name, sibRecid);
     batchPrintedNames.add(sibKey);
     setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
-    markPrinted(sib.name); // record in session dedup so remote scan won't reprint
-    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData);
+    markPrinted(sib.name, sibRecid); // record in session dedup so remote scan won't reprint
+    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData, undefined, sibRecid);
 
-    // Re-query the clubber element by name. The reference captured at
-    // findSiblings() time goes stale after the previous sibling's check-in
-    // re-renders the roster — clicking a detached node is a silent no-op.
-    var freshEl = findClubberElByName(sib.name);
-    if (!freshEl || !freshEl.isConnected) {
-      console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+    // F-2: try the direct check-in POST first — no modal, no click-timing
+    // dance. Fall back to the original click + poll-for-#checkin flow when
+    // the direct path is unavailable or doesn't verify.
+    tryDirectCheckin(sibRecid, sib.name, sibClubId, options).then(function(ok) {
+      if (ok) {
+        console.log('[Awana] Batch: ' + sib.name + ' checked in via direct API');
+        if (remaining.length > 0) {
+          setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+        }
+        return;
       }
-      return;
-    }
-    sib.element = freshEl;
-    freshEl.click();
+      // Re-query the clubber element by name. The reference captured at
+      // findSiblings() time goes stale after the previous sibling's check-in
+      // re-renders the roster — clicking a detached node is a silent no-op.
+      var freshEl = findClubberElByName(sib.name);
+      if (!freshEl || !freshEl.isConnected) {
+        console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
+        if (remaining.length > 0) {
+          setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
+        }
+        return;
+      }
+      sib.element = freshEl;
+      freshEl.click();
 
-    // Poll for the modal's check-in button (up to 3s)
-    pollForCheckinButton(sib, remaining, options, 30);
+      // Poll for the modal's check-in button (up to 3s)
+      pollForCheckinButton(sib, remaining, options, 30);
+    });
   }
 
   function getClubImageDataUrl(img) {
@@ -1098,6 +1297,148 @@
 
     walkInClubRow.append(clubSelect, visitorCheck);
 
+    // \u2500\u2500 F-3: optional "also register in TwoTimTwo" \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // The label print above always happens regardless of this checkbox \u2014 a
+    // child at the door gets a label whether or not TwoTimTwo registration
+    // succeeds. This just additionally submits the real registration form
+    // (docs/TWOTIMTWO.md \u00A74) so the walk-in leaves a TwoTimTwo record too.
+    var registerCheck = document.createElement('label');
+    Object.assign(registerCheck.style, {
+      display: 'flex', alignItems: 'center', gap: '4px',
+      fontSize: '11px', color: '#64748b', cursor: 'pointer'
+    });
+    var registerCb = document.createElement('input');
+    registerCb.type = 'checkbox';
+    registerCheck.append(registerCb, document.createTextNode('Also register in TwoTimTwo'));
+
+    var registerFields = document.createElement('div');
+    registerFields.id = 'awana-register-fields';
+    Object.assign(registerFields.style, {
+      display: 'none', flexDirection: 'column', gap: '4px',
+      padding: '6px', background: '#f8fafc', borderRadius: '6px',
+      border: '1px solid #e2e8f0'
+    });
+
+    function regFieldInput(placeholder, type) {
+      var inp = document.createElement('input');
+      inp.type = type || 'text';
+      inp.placeholder = placeholder;
+      Object.assign(inp.style, {
+        padding: '5px 8px', borderRadius: '6px', border: '1px solid #e2e8f0',
+        fontSize: '11px', background: '#fff', color: '#1e293b', outline: 'none'
+      });
+      return inp;
+    }
+    var guardianInput  = regFieldInput('Guardian name');
+    var phoneInput     = regFieldInput('Guardian phone', 'tel');
+    var birthdateInput = regFieldInput('Birthdate', 'date');
+
+    var genderSelect = document.createElement('select');
+    Object.assign(genderSelect.style, {
+      flex: '1', padding: '5px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
+    });
+    [['M', 'Boy'], ['F', 'Girl']].forEach(function(pair) {
+      var o = document.createElement('option');
+      o.value = pair[0]; o.textContent = pair[1];
+      genderSelect.appendChild(o);
+    });
+
+    // grade_id \u2192 club mapping from the real registration form (docs \u00A74).
+    var GRADE_OPTIONS = [
+      { id: 17, label: 'Age 2 (Puggles)' },
+      { id: 3,  label: 'Preschool 1yr before K (Cubbies)' },
+      { id: 22, label: 'Preschool 2yr before K (Cubbies)' },
+      { id: 4,  label: 'K (Sparks)' },
+      { id: 5,  label: 'Gr 1 (Sparks)' },
+      { id: 6,  label: 'Gr 2 (Sparks)' },
+      { id: 7,  label: 'Gr 3 (T&T)' },
+      { id: 8,  label: 'Gr 4 (T&T)' },
+      { id: 9,  label: 'Gr 5 (T&T)' },
+      { id: 18, label: 'Gr 6 (Trek)' },
+      { id: 19, label: 'Gr 7 (Trek)' },
+      { id: 20, label: 'Gr 8 (Trek)' },
+      { id: 21, label: 'Gr 9 (Journey)' },
+      { id: 23, label: 'Gr 10 (Journey)' }
+    ];
+    var gradeSelect = document.createElement('select');
+    Object.assign(gradeSelect.style, {
+      flex: '1', padding: '5px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
+    });
+    var gradePlaceholder = document.createElement('option');
+    gradePlaceholder.value = '';
+    gradePlaceholder.textContent = 'Grade\u2026';
+    gradePlaceholder.disabled = true;
+    gradePlaceholder.selected = true;
+    gradeSelect.appendChild(gradePlaceholder);
+    GRADE_OPTIONS.forEach(function(g) {
+      var o = document.createElement('option');
+      o.value = String(g.id); o.textContent = g.label;
+      gradeSelect.appendChild(o);
+    });
+
+    var genderGradeRow = document.createElement('div');
+    Object.assign(genderGradeRow.style, { display: 'flex', gap: '4px' });
+    genderGradeRow.append(genderSelect, gradeSelect);
+
+    var registerStatus = document.createElement('div');
+    registerStatus.id = 'awana-register-status';
+    Object.assign(registerStatus.style, { fontSize: '10px', color: '#94a3b8' });
+
+    registerFields.append(guardianInput, phoneInput, birthdateInput, genderGradeRow, registerStatus);
+
+    registerCb.addEventListener('change', function() {
+      registerFields.style.display = registerCb.checked ? 'flex' : 'none';
+    });
+
+    function setRegisterStatus(text, color) {
+      registerStatus.textContent = text;
+      registerStatus.style.color = color || '#94a3b8';
+    }
+
+    // Fire-and-forget: the label already printed by the time this resolves,
+    // and it never blocks or retries the print on a registration failure.
+    function registerWalkInGuest(fullName, guardianName, phone, birthdate, gradeId, gender) {
+      var parts = fullName.trim().split(/\s+/);
+      var firstName = parts[0] || '';
+      var lastName = parts.slice(1).join(' ') || '';
+      if (!guardianName || !phone || !birthdate || !gradeId) {
+        setRegisterStatus('\u26A0 Fill in guardian, phone, birthdate & grade to register', '#f59e0b');
+        return;
+      }
+      var csrfToken = findCsrfToken();
+      if (!csrfToken) {
+        setRegisterStatus('\u26A0 Could not find TwoTimTwo\u2019s form token \u2014 not registered (label still printed)', '#ef4444');
+        return;
+      }
+      setRegisterStatus('Registering in TwoTimTwo\u2026', '#94a3b8');
+      var body = 'jscript=yep' +
+        '&Household%5Bname1%5D=' + encodeURIComponent(guardianName) +
+        '&Household%5Bphn1%5D=' + encodeURIComponent(phone) +
+        '&Clubber%5B0%5D%5Bfirst_name%5D=' + encodeURIComponent(firstName) +
+        '&Clubber%5B0%5D%5Blast_name%5D=' + encodeURIComponent(lastName) +
+        '&Clubber%5B0%5D%5Bgender%5D=' + encodeURIComponent(gender) +
+        '&Clubber%5B0%5D%5Bgrade_id%5D=' + encodeURIComponent(gradeId) +
+        '&Clubber%5B0%5D%5Bbirthdate%5D=' + encodeURIComponent(birthdate) +
+        '&YII_CSRF_TOKEN=' + encodeURIComponent(csrfToken);
+      fetch('/clubber/register?default_visitor=Y', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body,
+        signal: AbortSignal.timeout(10000)
+      }).then(function(r) {
+        if (r.ok) {
+          setRegisterStatus('\u2713 Registered in TwoTimTwo', '#16a34a');
+        } else {
+          setRegisterStatus('\u26A0 Registration failed (HTTP ' + r.status + ') \u2014 label printed, register manually', '#ef4444');
+        }
+      }).catch(function(err) {
+        setRegisterStatus('\u26A0 Registration failed (' + err.message + ') \u2014 label printed, register manually', '#ef4444');
+      });
+    }
+
     function triggerWalkIn() {
       var name = guestInput.value.trim();
       if (!name) return;
@@ -1130,6 +1471,14 @@
         setStatus('\uD83D\uDCE6');
         clearStatus();
       });
+
+      // F-3: registration is independent of the print above \u2014 it never waits
+      // on it and never blocks/undoes it if the TwoTimTwo POST fails.
+      if (registerCb.checked) {
+        registerWalkInGuest(name, guardianInput.value.trim(), phoneInput.value.trim(),
+          birthdateInput.value, gradeSelect.value, genderSelect.value);
+      }
+
       guestInput.value = '';
     }
     guestInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') triggerWalkIn(); });
@@ -1170,6 +1519,29 @@
       display: 'none', fontSize: '11px', color: '#f59e0b',
       fontWeight: '600', padding: '2px 0'
     });
+
+    // ── R-1: reconcile-against-checkin_report status + manual "Sync now" ──
+    var reconcileRow = document.createElement('div');
+    Object.assign(reconcileRow.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+    var reconcileStatus = document.createElement('span');
+    reconcileStatus.id = 'awana-reconcile-status';
+    Object.assign(reconcileStatus.style, { fontSize: '10px', color: '#94a3b8', flex: '1' });
+    var syncNowBtn = document.createElement('button');
+    syncNowBtn.textContent = 'Sync now';
+    Object.assign(syncNowBtn.style, {
+      fontSize: '10px', padding: '3px 8px', background: '#f1f5f9',
+      border: '1px solid #e2e8f0', borderRadius: '4px', cursor: 'pointer',
+      color: '#475569', fontWeight: '600'
+    });
+    syncNowBtn.addEventListener('click', function() {
+      syncNowBtn.disabled = true;
+      syncNowBtn.textContent = 'Syncing…';
+      runReconcile().then(function() {
+        syncNowBtn.disabled = false;
+        syncNowBtn.textContent = 'Sync now';
+      });
+    });
+    reconcileRow.append(reconcileStatus, syncNowBtn);
 
     // ── Quick Mode toggle ──
     var quickModeRow = document.createElement('div');
@@ -1458,15 +1830,14 @@
 
     function triggerSearchCheckin(meta) {
       var name = meta.displayName;
-      var key = name.toLowerCase().trim();
-      if (printedNames.has(key)) {
+      if (isPrinted(name, meta.recid)) {
         console.log('[Awana] Already checked in this session:', name);
         return;
       }
       if (quickModeEnabled) {
         // Quick Mode: print immediately + auto-click the clubber element to check in on TwoTimTwo
-        markPrinted(name);
-        doPrint(name, meta.clubName || '', meta.clubImageData || null);
+        markPrinted(name, meta.recid);
+        doPrint(name, meta.clubName || '', meta.clubImageData || null, undefined, meta.recid);
         var el = meta.element;
         if (el && el.isConnected) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1486,8 +1857,8 @@
           // the kid isn't stuck at the door — do the TwoTimTwo check-in once
           // the site is reachable again.
           console.log('[Awana] ' + name + ' not on the live page — printing label only (cached roster)');
-          markPrinted(name);
-          doPrint(name, meta.clubName || '', meta.clubImageData || null);
+          markPrinted(name, meta.recid);
+          doPrint(name, meta.clubName || '', meta.clubImageData || null, undefined, meta.recid);
         }
       }
     }
@@ -1619,9 +1990,9 @@
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
-      divider(), walkInLabel, walkInRow, walkInClubRow,
+      divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields,
       divider(), tonightHeader, tonightList,
-      queueBadge, csvStatus, csvWarningBanner, updateRow,
+      queueBadge, reconcileRow, csvStatus, csvWarningBanner, updateRow,
       divider(), soundRow, helpBtn
     );
     panel.append(panelHeader, panelBody);
@@ -1907,38 +2278,36 @@
       if (!nameEl) continue;
       var displayName = nameEl.innerText.trim();
       if (!displayName) continue;
-      var key = displayName.toLowerCase();
-      current.add(key);
+      // recid is TwoTimTwo's own id on the .clubber row — it gives exact
+      // identity to the print server (CSV "Clubber ID" match), the direct
+      // check-in API, AND the identity key below, so two kids sharing a
+      // display name no longer collide (R-4).
+      var recid = clubberEls[i].getAttribute('recid') || null;
+      var idKey = identityKey(recid, displayName);
+      ROSTER_NAME_INDEX[nameKeyOf(displayName)] = idKey;
+      current.add(idKey);
 
       // Cache club info + DOM element while the kid is still visible — once
       // they disappear, lookupClub() can't find them.  The element reference
       // is always refreshed so search/quick-mode clicks target the current DOM.
-      // recid/club_id are TwoTimTwo's own ids on the .clubber row — they give
-      // exact identity to the print server (CSV "Clubber ID" match) and to
-      // the direct check-in API, immune to name collisions.
       var imgEl = clubberEls[i].querySelector('.club img');
-      if (!ROSTER_CACHE[key]) {
-        ROSTER_CACHE[key] = {
+      if (!ROSTER_CACHE[idKey]) {
+        ROSTER_CACHE[idKey] = {
           displayName: displayName,
           clubName: imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '',
           clubImageData: imgEl ? getClubImageDataUrl(imgEl) : null,
           element: clubberEls[i],
-          recid: clubberEls[i].getAttribute('recid') || null,
+          recid: recid,
           clubId: clubberEls[i].getAttribute('club_id') || null
         };
         rosterDirty = true;
       } else {
-        // Keep element AND recid/club_id pointing at the SAME (current) row.
-        // Freezing recid to the first-scanned row while element tracked the
-        // latest meant that, for two kids with an identical display name, the
-        // widget could click one child's row but send the other child's id —
-        // exactly the collision recid is meant to prevent. They must move
-        // together.
-        ROSTER_CACHE[key].element = clubberEls[i];
-        var freshRecid = clubberEls[i].getAttribute('recid');
-        if (freshRecid && freshRecid !== ROSTER_CACHE[key].recid) {
-          ROSTER_CACHE[key].recid = freshRecid;
-          ROSTER_CACHE[key].clubId = clubberEls[i].getAttribute('club_id') || null;
+        // idKey already pins this entry to this specific recid (or, absent a
+        // recid, this specific name) — just keep the element/club_id fresh.
+        ROSTER_CACHE[idKey].element = clubberEls[i];
+        var freshClubId = clubberEls[i].getAttribute('club_id') || null;
+        if (freshClubId !== ROSTER_CACHE[idKey].clubId) {
+          ROSTER_CACHE[idKey].clubId = freshClubId;
           rosterDirty = true;
         }
       }
@@ -2004,24 +2373,24 @@
       }
       pendingMissing.delete(key);
       console.log('[Awana] Remote check-in detected:', meta.displayName);
-      triggerRemotePrint(meta.displayName, meta.clubName, meta.clubImageData);
+      triggerRemotePrint(meta.displayName, meta.clubName, meta.clubImageData, meta.recid);
     });
 
     knownClubbers = current;
     saveScanState();
   }
 
-  function triggerRemotePrint(fullName, clubName, clubImageData) {
+  function triggerRemotePrint(fullName, clubName, clubImageData, recid) {
     if (selectedMode === 'off') return;
-    var key = fullName.toLowerCase().trim();
+    var key = resolveIdentityKey(fullName, recid);
     // Same fix as onCheckin: per-name dedup is sufficient. The roster-diff
     // path can detect several remote check-ins in the same scan tick, and
     // each one needs to print — gating on a 2 s global cooldown silently
     // dropped all but the first.
     if (printedNames.has(key)) return;
-    markPrinted(fullName);
+    markPrinted(fullName, recid);
     doPrint(fullName, clubName || '', clubImageData || null,
-      phoneNamesInFlight.has(key) ? 'phone' : 'remote');
+      phoneNamesInFlight.has(nameKeyOf(fullName)) ? 'phone' : 'remote', recid);
   }
 
   // Re-query a .clubber row by display name. Element references captured
@@ -2061,7 +2430,7 @@
 
   function onCheckin(name) {
     if (selectedMode === 'off') return;
-    var key = name.toLowerCase().trim();
+    var key = resolveIdentityKey(name);
     // Per-name dedup is the actual deduplication mechanism. Two parents
     // checking different kids back-to-back must both print, so we do NOT
     // gate on a global time cooldown here — that was the v3.0.4 regression
@@ -2069,9 +2438,10 @@
     if (batchPrintedNames.has(key)) return; // already printed in batch
     if (printedNames.has(key)) return; // already printed this session (local or remote)
 
-    markPrinted(name);
+    var cachedMeta = rosterLookupByName(name);
+    markPrinted(name, cachedMeta && cachedMeta.recid);
     var club = lookupClub(name);
-    doPrint(name, club.clubName, club.clubImageData, 'local');
+    doPrint(name, club.clubName, club.clubImageData, 'local', cachedMeta && cachedMeta.recid);
 
     // Sibling suggest (#26): panel-only — NEVER auto-batch. The volunteer
     // confirms "Also here tonight?" chips; kill switch: enableDrivenCheckin
@@ -2086,7 +2456,7 @@
     }
   }
 
-  function doPrint(fullName, clubName, imageData, source) {
+  function doPrint(fullName, clubName, imageData, source, explicitClubberId) {
     setStatus('\u23F3');
 
     var parts = fullName.split(' ');
@@ -2104,12 +2474,14 @@
       printerName: selectedPrinterName || '',
       stepUpNight: isStepUpNight()
     };
-    // TwoTimTwo's own clubber id (from the .clubber[recid] attribute, cached
-    // in ROSTER_CACHE) lets the server match the exact CSV row even when two
-    // kids share a name or a middle name is on the label. Name stays as the
-    // fallback for walk-ins and offline entries with no cached row.
-    var cached = ROSTER_CACHE[fullName.toLowerCase().trim()];
-    if (cached && cached.recid) payload.clubberId = cached.recid;
+    // TwoTimTwo's own clubber id lets the server match the exact CSV row even
+    // when two kids share a name or a middle name is on the label. An
+    // explicitly-known id (reconcile report, roster-diff meta) wins over the
+    // ROSTER_CACHE lookup by name; name stays as the fallback for walk-ins
+    // and offline entries with no cached row.
+    var cached = rosterLookupByName(fullName);
+    var resolvedClubberId = explicitClubberId || (cached && cached.recid) || null;
+    if (resolvedClubberId) payload.clubberId = resolvedClubberId;
     if (isAwanaStoreNight()) {
       var bal = getShareBalance(firstName, lastName);
       if (bal !== null) payload.awanaShares = bal + 1;
@@ -2400,9 +2772,10 @@
 
   // ── Confirmation feed (#17a) + pinned last-5 (#29 polish) ──────────────────
   // Every print this station sends, newest first, with how it was detected:
-  // local click, remote roster-diff, phone check-in, or manual widget action.
+  // local click, remote roster-diff, phone check-in, manual widget action, or
+  // R-1's reconcile-against-checkin_report catch-up.
   var printFeed = []; // { name, source, ok, at }
-  var SOURCE_ICON = { local: '🖱', remote: '📡', phone: '📱', manual: '⌨' };
+  var SOURCE_ICON = { local: '🖱', remote: '📡', phone: '📱', manual: '⌨', reconcile: '♻️' };
 
   function recordFeed(name, source, ok) {
     printFeed.unshift({ name: name, source: source || 'manual', ok: ok, at: Date.now() });
@@ -2463,7 +2836,7 @@
     phoneActionsInFlight.add(action.id);
     var nameKey = action.name.toLowerCase().trim();
 
-    if (printedNames.has(nameKey)) {
+    if (isPrinted(action.name)) {
       reportPhoneAction(action.id, true, 'Already checked in at this station');
       return;
     }
@@ -2474,24 +2847,38 @@
     }
     console.log('[Awana] Phone check-in: driving ' + action.name);
     phoneNamesInFlight.add(nameKey);
-    el.click();
-    pollForCheckinButton({ name: action.name, element: el }, [], {}, 30);
+    var recid = el.getAttribute('recid');
+    var clubId = el.getAttribute('club_id');
 
     // Success = the row vanishes (TwoTimTwo removes checked-in kids).
-    var deadline = Date.now() + 25000;
-    (function verify() {
-      if (!findClubberElByName(action.name)) {
+    function verifyAndReport() {
+      var deadline = Date.now() + 25000;
+      (function verify() {
+        if (!findClubberElByName(action.name)) {
+          reportPhoneAction(action.id, true, '');
+          setTimeout(function() { phoneNamesInFlight.delete(nameKey); }, 15000);
+          return;
+        }
+        if (Date.now() > deadline) {
+          phoneNamesInFlight.delete(nameKey);
+          reportPhoneAction(action.id, false, 'Row did not clear — check in at the desk');
+          return;
+        }
+        setTimeout(verify, 1000);
+      })();
+    }
+
+    // F-2: try the direct check-in POST first; fall back to click + poll.
+    tryDirectCheckin(recid, action.name, clubId, {}).then(function(ok) {
+      if (ok) {
         reportPhoneAction(action.id, true, '');
         setTimeout(function() { phoneNamesInFlight.delete(nameKey); }, 15000);
         return;
       }
-      if (Date.now() > deadline) {
-        phoneNamesInFlight.delete(nameKey);
-        reportPhoneAction(action.id, false, 'Row did not clear — check in at the desk');
-        return;
-      }
-      setTimeout(verify, 1000);
-    })();
+      el.click();
+      pollForCheckinButton({ name: action.name, element: el }, [], {}, 30);
+      verifyAndReport();
+    });
   }
 
   function pollPendingActions() {
@@ -2506,6 +2893,150 @@
         setTimeout(pollPendingActions, 500);
       })
       .catch(function() { setTimeout(pollPendingActions, 10000); });
+  }
+
+  // ── R-1: reconcile against TwoTimTwo's own check-in report ─────────────────
+  // scanClubberList() infers remote check-ins from rows vanishing off the
+  // roster — a heuristic guarded against filters/re-renders/mass-disappear,
+  // but still a heuristic. /clubber/checkin_report (docs/TWOTIMTWO.md §2.4) is
+  // the authoritative "who is checked in tonight" list, so periodically
+  // cross-checking it catches anything the diff engine missed (a station that
+  // was asleep, a scan that happened to land on a guard, etc).
+  var RECONCILE_MAX_PRINTS          = 5;
+  var RECONCILE_FIRST_DELAY_MS      = 60 * 1000;
+  var RECONCILE_INTERVAL_CLUB_MS    = 60 * 1000;
+  var RECONCILE_INTERVAL_OFF_MS     = 10 * 60 * 1000;
+
+  function fetchCheckinReport() {
+    return fetch('/clubber/checkin_report', { credentials: 'same-origin', signal: AbortSignal.timeout(10000) })
+      .then(function(r) { return r.ok ? r.text() : null; })
+      .then(function(html) {
+        if (!html || html.indexOf('Login Required') !== -1) return null;
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var tables = doc.querySelectorAll('table');
+        if (!tables.length) return null;
+        var out = [];
+        tables.forEach(function(table) {
+          var titleTh = table.querySelector('th.title');
+          var clubImg = titleTh ? titleTh.querySelector('img[alt]') : null;
+          var clubName = clubImg ? (clubImg.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
+          var rows = table.querySelectorAll('tbody tr');
+          rows.forEach(function(row) {
+            var tds = row.querySelectorAll('td');
+            if (!tds.length) return;
+            var link = tds[0].querySelector('a[href*="/meeting/clubberCheckin/"]');
+            if (!link) return;
+            var m = /\/meeting\/clubberCheckin\/(\d+)/.exec(link.getAttribute('href') || '');
+            if (!m) return;
+            var clubberId = m[1];
+            var name = tds.length > 1 ? (tds[1].textContent || '').trim() : '';
+            if (!name) {
+              // Defensive fallback if the name is folded into the same cell as
+              // the edit link, rather than its own <td> — strip the link's own
+              // text so what remains is (hopefully) just the child's name.
+              var clone = tds[0].cloneNode(true);
+              var innerLink = clone.querySelector('a');
+              if (innerLink) innerLink.remove();
+              name = (clone.textContent || '').trim();
+            }
+            if (!name) return;
+            out.push({ clubberId: clubberId, name: name, club: clubName });
+          });
+        });
+        return out;
+      })
+      .catch(function(e) {
+        console.log('[Awana] Reconcile fetch failed:', e.message);
+        return null;
+      });
+  }
+
+  function updateReconcileWidget(phantomCount) {
+    var el = document.getElementById('awana-reconcile-status');
+    if (!el) return;
+    if (phantomCount > 0) {
+      el.textContent = '⚠ ' + phantomCount + ' phantom?';
+      el.style.color = '#f59e0b';
+      el.title = phantomCount + ' printed name(s) not found in tonight’s TwoTimTwo report';
+    } else {
+      el.textContent = 'Reconciled ✓';
+      el.style.color = '#94a3b8';
+      el.title = '';
+    }
+  }
+
+  function runReconcile() {
+    if (reconcileInFlight) return Promise.resolve();
+    reconcileInFlight = true;
+    return fetchCheckinReport().then(function(entries) {
+      reconcileInFlight = false;
+      if (entries === null) {
+        console.log('[Awana] Reconcile: report unavailable this pass (login required / no tables)');
+        return;
+      }
+      console.log('[Awana] Reconcile: report has ' + entries.length + ' checked-in kid(s)');
+
+      if (!reconcileBaselineDone) {
+        // First successful reconcile this session: seed dedup with everyone
+        // already checked in so we never print the whole existing roster —
+        // a station opened mid-event must not trigger a paper explosion.
+        // Persisted to sessionStorage so a page reload can't re-baseline.
+        entries.forEach(function(e) { markPrinted(e.name, e.clubberId); });
+        reconcileBaselineDone = true;
+        try { sessionStorage.setItem(REMOTE_RECONCILE_BASELINE_KEY, '1'); } catch (err) { /* ignore */ }
+        console.log('[Awana] Reconcile: baseline seeded with ' + entries.length + ' existing check-in(s) — will not print for these');
+        updateReconcileWidget(0);
+        return;
+      }
+
+      // Anyone in the report not already printed this session is a check-in
+      // the roster-diff detector missed.
+      var missed = entries.filter(function(e) { return !isPrinted(e.name, e.clubberId); });
+
+      // Inverse check — TELEMETRY ONLY. Never unprint, never print for this.
+      // Note this intentionally also flags plain walk-in prints that were
+      // never registered in TwoTimTwo (F-3 checkbox left off) — that's
+      // expected noise, not necessarily a real phantom.
+      // Match on BOTH the id key and the name key: a child in the report under
+      // an id may have been printed under their name (see isPrinted), and
+      // counting that as a phantom would cry wolf on every walk-in.
+      var reportKeys = new Set();
+      entries.forEach(function(e) {
+        reportKeys.add(identityKey(e.clubberId, e.name));
+        reportKeys.add('nm:' + nameKeyOf(e.name));
+      });
+      var phantomCount = 0;
+      printedNames.forEach(function(key) { if (!reportKeys.has(key)) phantomCount++; });
+      if (phantomCount > 0) {
+        console.warn('[Awana] Reconcile: ' + phantomCount + ' locally-printed name(s) not present in tonight\'s report (possible phantom print)');
+      }
+      updateReconcileWidget(phantomCount);
+
+      if (missed.length === 0) return;
+      if (missed.length > RECONCILE_MAX_PRINTS) {
+        console.warn('[Awana] Reconcile found ' + missed.length + ' missed check-in(s) — printing only ' +
+          RECONCILE_MAX_PRINTS + ' this pass (a gap this large means something is wrong; check the roster)');
+      }
+      missed.slice(0, RECONCILE_MAX_PRINTS).forEach(function(e) {
+        markPrinted(e.name, e.clubberId);
+        if (selectedMode === 'off') return;
+        var cached = rosterLookupByName(e.name);
+        var clubName = (cached && cached.clubName) || e.club || '';
+        var clubImageData = (cached && cached.clubImageData) || null;
+        console.log('[Awana] Reconcile: printing missed check-in for ' + e.name);
+        doPrint(e.name, clubName, clubImageData, 'reconcile', e.clubberId);
+      });
+    }).catch(function(err) {
+      reconcileInFlight = false;
+      console.log('[Awana] Reconcile error:', err.message);
+    });
+  }
+
+  function scheduleNextReconcile() {
+    var delay = isInClubWindow() ? RECONCILE_INTERVAL_CLUB_MS : RECONCILE_INTERVAL_OFF_MS;
+    setTimeout(function() {
+      runReconcile().then(scheduleNextReconcile).catch(scheduleNextReconcile);
+    }, delay);
   }
 
   // ── Selector self-test ───────────────────────────────────────────────────────
@@ -2596,17 +3127,18 @@
     var name = nameEl.innerText.trim();
     if (!name) return;
     if (selectedMode === 'off') return;
-    var key = name.toLowerCase().trim();
-    if (printedNames.has(key)) return; // already printed
-    if (batchPrintedNames.has(key)) return;
+    var recid = clubberEl.getAttribute('recid') || null;
+    if (isPrinted(name, recid)) return; // already printed
+    var batchKey = resolveIdentityKey(name, recid);
+    if (batchPrintedNames.has(batchKey)) return;
 
     console.log('[Awana] Quick Mode check-in:', name);
     // Print immediately
-    markPrinted(name);
-    batchPrintedNames.add(key);
-    setTimeout(function() { batchPrintedNames.delete(key); }, 8000);
+    markPrinted(name, recid);
+    batchPrintedNames.add(batchKey);
+    setTimeout(function() { batchPrintedNames.delete(batchKey); }, 8000);
     var club = lookupClub(name);
-    doPrint(name, club.clubName, club.clubImageData);
+    doPrint(name, club.clubName, club.clubImageData, undefined, recid);
 
     // SIBLING CHECK-IN DISABLED — re-enable by uncommenting this block.
     // setTimeout(function() {
@@ -2620,6 +3152,26 @@
     //     }
     //   });
     // }, 500);
+
+    // F-2: try the direct check-in POST first — this blocks TwoTimTwo's own
+    // click handler from ever opening a modal at all. Only if the direct path
+    // is unavailable/fails do we replay the click and fall back to the
+    // original open-modal + auto-dismiss dance.
+    if (recid && CHURCH_CFG.enableDrivenCheckin !== false) {
+      e.preventDefault();
+      e.stopPropagation();
+      var clubId = clubberEl.getAttribute('club_id') || null;
+      tryDirectCheckin(recid, name, clubId, {}).then(function(ok) {
+        if (ok) return;
+        _quickModeProcessing = true;
+        clubberEl.click();
+        setTimeout(function() {
+          pollForCheckinButton({ name: name, element: clubberEl }, [], {}, 30);
+          setTimeout(function() { _quickModeProcessing = false; }, 500);
+        }, 150);
+      });
+      return;
+    }
 
     // Let native click open the modal, then auto-dismiss after 150ms
     setTimeout(function() {
@@ -2702,6 +3254,11 @@
   // Selector self-test: first probe after the page settles, then every 10 min
   setTimeout(runSelectorSelfTest, 15000);
   setInterval(runSelectorSelfTest, SELFTEST_INTERVAL_MS);
+  // R-1: first reconcile pass ~60s after load, then self-reschedules based on
+  // isInClubWindow() (every 60s in-window, every 10 min otherwise).
+  setTimeout(function() {
+    runReconcile().then(scheduleNextReconcile).catch(scheduleNextReconcile);
+  }, RECONCILE_FIRST_DELAY_MS);
   // Keep the Tonight list fresh while the panel is expanded (other stations
   // print too — their check-ins should show up here for reprints).
   setInterval(function() {
