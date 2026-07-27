@@ -1,5 +1,5 @@
 ﻿# Awana Label Print Server -- All-in-One Installer
-# Version    : 5.2.2
+# Version    : 5.3.0
 # Updated    : 2026-04-17
 #
 # DEPRECATED: this script install is superseded by the Windows app installer
@@ -25,12 +25,56 @@ param(
     [string]$PrinterName,
     [string]$CheckinUrl,
     [string]$InstallPath,
+    [string]$RepoSlug,
     [switch]$SkipNodeCheck
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "5.2.2"
+$ScriptVersion = "5.3.0"
+
+# The repository this install pulls its code from. A FORK must change this (or
+# pass -RepoSlug), otherwise the installer downloads upstream's code instead of
+# the fork's own -- which silently un-does whatever the fork changed.
+if (-not $RepoSlug) { $RepoSlug = "patrick-simpson/Print-TwoTimTwo-Labels" }
+
+# --- Download integrity -------------------------------------------------------
+# The Node.js and PowerShell 7 installers are executed with admin rights, so
+# "downloaded over HTTPS" is not on its own a sufficient control: a proxy that
+# terminates TLS, or a compromised mirror, would hand us an installer we then
+# run elevated. Verify the Authenticode signature before executing. Checked in
+# preference to a pinned SHA256 because it keeps working when the pinned
+# version is bumped, and it verifies the PUBLISHER rather than one exact build.
+function Assert-TrustedInstaller {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string[]]$AllowedSigners,
+        [Parameter(Mandatory=$true)][string]$Description
+    )
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    if ($sig.Status -ne "Valid") {
+        throw "$Description has an invalid digital signature (status: $($sig.Status)). Refusing to run it."
+    }
+    $subject = $sig.SignerCertificate.Subject
+    $ok = $false
+    foreach ($pattern in $AllowedSigners) { if ($subject -like $pattern) { $ok = $true; break } }
+    if (-not $ok) {
+        throw "$Description is signed by an unexpected publisher ($subject). Refusing to run it."
+    }
+    Write-Host "  [OK] Signature verified: $subject" -ForegroundColor Green
+}
+
+# checkinUrl reaches Start-Process, which hands non-http schemes to the Windows
+# shell -- so a config.json carrying "file:///..." or a custom protocol would
+# launch a local program. Only http(s) is ever legitimate for a check-in page.
+function Test-SafeWebUrl {
+    param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $false }
+    try {
+        $u = [System.Uri]$Url
+        return ($u.Scheme -eq "http" -or $u.Scheme -eq "https") -and [string]::IsNullOrEmpty($u.UserInfo)
+    } catch { return $false }
+}
 
 Write-Host ""
 Write-Host "  NOTE: There's now a simpler Windows app installer that replaces this script:" -ForegroundColor Yellow
@@ -158,6 +202,8 @@ if ($psVer.Major -lt 7) {
             $ps7Path = Join-Path ([System.IO.Path]::GetTempPath()) "PowerShell-7-win-x64.msi"
             try {
                 Invoke-WebRequest -Uri $ps7Url -OutFile $ps7Path -ErrorAction Stop
+                Assert-TrustedInstaller -Path $ps7Path -Description "The PowerShell 7 installer" `
+                    -AllowedSigners @("*O=Microsoft Corporation*")
                 Start-Process msiexec.exe -ArgumentList "/i `"$ps7Path`" /qn" -Wait -ErrorAction Stop
                 $upgraded = $true
             } catch {
@@ -203,6 +249,16 @@ if ($SkipNodeCheck) {
         Write-Host "[FAIL] Download failed: $_" -ForegroundColor Red
         Write-Host "  Please download Node.js LTS manually from https://nodejs.org" -ForegroundColor Yellow
         Write-Host "  Or run this script with -SkipNodeCheck if you already have Node.js installed" -ForegroundColor Yellow
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
+
+    try {
+        Assert-TrustedInstaller -Path $installerPath -Description "The Node.js installer" `
+            -AllowedSigners @("*O=OpenJS Foundation*", "*O=Node.js Foundation*", "*O=Joyent*")
+    } catch {
+        Write-Host "[FAIL] $_" -ForegroundColor Red
+        Write-Host "  Download Node.js LTS yourself from https://nodejs.org and re-run with -SkipNodeCheck." -ForegroundColor Yellow
         Read-Host "  Press Enter to exit"
         exit 1
     }
@@ -380,7 +436,7 @@ if (-not (Test-Path (Join-Path $printServerPath "server.js"))) {
     Write-Host ""
     Write-Host "[4/8] Downloading project..." -ForegroundColor White
 
-    $zipUrl = "https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/archive/refs/heads/main.zip"
+    $zipUrl = "https://github.com/$RepoSlug/archive/refs/heads/main.zip"
     $zipPath = Join-Path $installDir "project.zip"
 
     try {
@@ -736,7 +792,12 @@ Write-Host ""
 # Open the check-in page in Edge, plus the bookmarklet setup page so the
 # user can drag it to their bookmark bar on first run.
 Write-Host "Opening check-in page in default browser..." -ForegroundColor Cyan
-Start-Process $cfg.checkinUrl
+if (Test-SafeWebUrl $cfg.checkinUrl) {
+    Start-Process $cfg.checkinUrl
+} else {
+    Write-Host "  [SKIP] The saved check-in address is not a valid http(s) URL, so it was not opened." -ForegroundColor Yellow
+    Write-Host "         Re-run with -CheckinUrl 'https://yourchurch.twotimtwo.com/clubber/checkin'" -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "  If this is your first time, drag the bookmarklet button to your bookmark bar." -ForegroundColor Yellow
 Write-Host "  After that, just click it on the check-in page to arm auto-printing." -ForegroundColor Yellow

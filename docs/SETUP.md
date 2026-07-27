@@ -32,16 +32,35 @@ green widget appears. Pin the page as the browser homepage.
 - **Group Schedule** — one row per club (start time, location, room);
   late check-ins get a "Go to:" line on the label.
 
-## 4. Phone check-in (optional)
+## 4. Phone check-in (optional, OFF by default)
 
-Any phone on the same Wi-Fi: `http://<laptop-ip>:3456/phone`.
+**Since 5.3.0 the server listens only on the laptop itself unless you
+turn this on.** The roster, check-in history and allergy list are not
+reachable from the church network by default. To enable phone check-in
+you need BOTH, in Settings → Check-in Features:
+
+1. **Phone check-in PIN** — at least 4 characters. Without a PIN the
+   server refuses to expose itself and stays private (it says so at
+   startup and in the dashboard's warnings).
+2. **"Let phones on this Wi-Fi reach this PC"** — then restart the app,
+   because the listening socket is bound at startup.
+
+Then any phone on the same Wi-Fi: `http://<laptop-ip>:3456/phone`.
 Find the laptop's IP with `ipconfig` (Wireless LAN → IPv4).
 
-**Trust model:** the PIN rides plain HTTP on your LAN. It stops casual
-misuse, not a hostile network — use it on the church's private Wi-Fi,
-not open guest networks. The phone page never prints directly; it
-queues the check-in for the main laptop, which does the real TwoTimTwo
-check-in and prints through the normal (deduplicated) path.
+**Trust model:** every request from the network must carry the PIN —
+including the roster fetch — and wrong PINs are rate-limited. But the
+PIN rides plain HTTP, so it stops a bystander reading the roster, not
+someone who can already sniff the network. Use the church's private
+Wi-Fi, not an open guest network. The Pusher secret and the PIN itself
+are never readable over the network, even with a valid PIN.
+
+The phone page never prints directly; it queues the check-in for the
+main laptop, which does the real TwoTimTwo check-in and prints through
+the normal (deduplicated) path.
+
+See [SECURITY.md](../SECURITY.md) for the full trust model, what it
+deliberately does not defend against, and the fork checklist.
 
 ## 5. Church configuration
 

@@ -249,8 +249,8 @@
               <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:8px">
                 <div>
                   <label>Phone check-in PIN</label>
-                  <input type="text" id="settings-phone-pin" placeholder="blank = no PIN">
-                  <p style="font-size:10px;color:#94a3b8">Phones on this Wi-Fi open http://&lt;this-pc-ip&gt;:3456/phone</p>
+                  <input type="text" id="settings-phone-pin" placeholder="blank = Wi-Fi access off">
+                  <p style="font-size:10px;color:#94a3b8">At least 4 characters. Required for Wi-Fi access below — without it this PC stays private.</p>
                 </div>
                 <div>
                   <label>Late grace (minutes)</label>
@@ -268,6 +268,14 @@
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-driven-checkin" checked> Allow driven check-ins (phone page + sibling suggestions)
                 </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-lan-access"> Let phones on this Wi-Fi reach this PC (needs a PIN, restart to apply)
+                </label>
+                <p id="lan-access-note" style="font-size:10px;color:#94a3b8;margin:0 0 0 22px">
+                  Off by default: the roster, check-in history and allergy list stay on this computer.
+                  Turn this on only if you use the phone check-in page, and set a PIN above —
+                  phones then open http://&lt;this-pc-ip&gt;:3456/phone
+                </p>
               </div>
             </div>
 
@@ -304,6 +312,28 @@
 
 <script>
 const BASE = '';
+
+// ── Output escaping ───────────────────────────────────────────────────────────
+// Every value below that came from OUTSIDE this page — a child's name, a club
+// name, a printer name, an allergy token, a diagnostic detail — must go through
+// esc() before it is concatenated into an innerHTML string.
+//
+// This is not theoretical. POST /print writes firstName/lastName straight into
+// print-history.json, and this page rendered them raw, so a crafted name became
+// script running on http://localhost:3456 — the one origin the server trusts
+// with the Pusher secret and the phone PIN. Escaping here is the fix; the
+// server-side length/control-char capping is only belt and braces.
+//
+// Prefer textContent when setting a whole element's text. Use esc() when
+// building an HTML string.
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // Tab switching
 document.querySelectorAll('.tab').forEach(function(tab) {
@@ -398,8 +428,9 @@ function loadHealth() {
     if (hasWarning) {
       warnCard.style.display = 'block';
       warnList.innerHTML = warnings.map(function(w) {
-        var desc = WARNING_DESCRIPTIONS[w.type] || w.message;
-        return '<div class="warning-item">' + desc + '</div>';
+        // WARNING_DESCRIPTIONS values are our own literals; w.message is not.
+        var known = WARNING_DESCRIPTIONS[w.type];
+        return '<div class="warning-item">' + (known || esc(w.message)) + '</div>';
       }).join('');
     } else {
       warnCard.style.display = 'none';
@@ -434,20 +465,20 @@ function loadTonightStats() {
       clubs.innerHTML = '<span class="empty" style="padding:0">No check-ins yet tonight</span>';
     } else {
       clubs.innerHTML = clubNames.map(function(c) {
-        return '<span class="club-chip">' + c + ' <span class="n">' + st.byClub[c] + '</span></span>';
+        return '<span class="club-chip">' + esc(c) + ' <span class="n">' + esc(st.byClub[c]) + '</span></span>';
       }).join('');
     }
 
     var flags = document.getElementById('tonight-flags');
     var html = '';
     (st.allergyKids || []).forEach(function(k) {
-      html += '<div class="flag-item allergy"><span>\u26A0\uFE0F ' + k.name + '</span><span class="flag-tokens">' + k.allergies.join(', ') + '</span></div>';
+      html += '<div class="flag-item allergy"><span>\u26A0\uFE0F ' + esc(k.name) + '</span><span class="flag-tokens">' + esc((k.allergies || []).join(', ')) + '</span></div>';
     });
     (st.noPhotoKids || []).forEach(function(n) {
-      html += '<div class="flag-item nophoto"><span>\uD83D\uDCF7\uD83D\uDEAB ' + n + '</span><span class="flag-tokens">NO PHOTOS</span></div>';
+      html += '<div class="flag-item nophoto"><span>\uD83D\uDCF7\uD83D\uDEAB ' + esc(n) + '</span><span class="flag-tokens">NO PHOTOS</span></div>';
     });
     (st.birthdayKids || []).forEach(function(n) {
-      html += '<div class="flag-item bday"><span>\uD83C\uDF70 ' + n + '</span><span class="flag-tokens">birthday week</span></div>';
+      html += '<div class="flag-item bday"><span>\uD83C\uDF70 ' + esc(n) + '</span><span class="flag-tokens">birthday week</span></div>';
     });
     flags.style.display = html ? 'flex' : 'none';
     flags.innerHTML = html;
@@ -472,11 +503,11 @@ function loadHistory() {
     }
     tbody.innerHTML = entries.slice(0, 30).map(function(e, i) {
       return '<tr' + (e.success === false ? ' style="background:#fef2f2"' : '') + '>' +
-        '<td><strong>' + (e.firstName || '') + ' ' + (e.lastName || '') + '</strong>' + (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') + '</td>' +
-        '<td>' + (e.clubName || '--') + '</td>' +
-        '<td style="font-size:11px;color:#64748b">' + (e.printer || 'default') + '</td>' +
-        '<td style="font-size:11px;color:#64748b">' + formatTime(e.timestamp) + '</td>' +
-        '<td><button class="btn btn-secondary btn-sm" onclick="reprint(' + i + ')">Reprint</button></td>' +
+        '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' + (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') + '</td>' +
+        '<td>' + esc(e.clubName || '--') + '</td>' +
+        '<td style="font-size:11px;color:#64748b">' + esc(e.printer || 'default') + '</td>' +
+        '<td style="font-size:11px;color:#64748b">' + esc(formatTime(e.timestamp)) + '</td>' +
+        '<td><button class="btn btn-secondary btn-sm" onclick="reprint(' + Number(i) + ')">Reprint</button></td>' +
         '</tr>';
     }).join('');
   }).catch(function() {
@@ -515,11 +546,13 @@ function loadPreview() {
 // Settings
 function scheduleRowHtml(row) {
   row = row || {};
+  // esc() also closes the ATTRIBUTE injection here: these values land inside
+  // value="…", so an unescaped quote would break out of the attribute.
   return '<tr>' +
-    '<td><input type="text" class="sched-club" value="' + (row.club || '') + '" placeholder="Sparks" style="width:90px"></td>' +
-    '<td><input type="text" class="sched-start" value="' + (row.startTime || '') + '" placeholder="18:30" style="width:60px"></td>' +
-    '<td><input type="text" class="sched-loc" value="' + (row.location || '') + '" placeholder="Music" style="width:110px"></td>' +
-    '<td><input type="text" class="sched-room" value="' + (row.room || '') + '" placeholder="Rm 4" style="width:60px"></td>' +
+    '<td><input type="text" class="sched-club" value="' + esc(row.club || '') + '" placeholder="Sparks" style="width:90px"></td>' +
+    '<td><input type="text" class="sched-start" value="' + esc(row.startTime || '') + '" placeholder="18:30" style="width:60px"></td>' +
+    '<td><input type="text" class="sched-loc" value="' + esc(row.location || '') + '" placeholder="Music" style="width:110px"></td>' +
+    '<td><input type="text" class="sched-room" value="' + esc(row.room || '') + '" placeholder="Rm 4" style="width:60px"></td>' +
     '<td><button class="btn btn-secondary btn-sm" onclick="this.closest(\'tr\').remove()">✕</button></td>' +
     '</tr>';
 }
@@ -552,6 +585,7 @@ function loadSettings() {
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
+    document.getElementById('settings-lan-access').checked = config.lanAccess === true;
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
     (config.schedule || []).forEach(addScheduleRow);
@@ -598,7 +632,8 @@ function saveSettings() {
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
-      enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked
+      enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
+      lanAccess: document.getElementById('settings-lan-access').checked
     })
   }).then(function(r) {
     if (!r.ok) throw new Error('config save failed');
@@ -617,8 +652,11 @@ function saveSettings() {
 }
 
 // Night Status — event-bus + selector health from the extended /health payload
+// Every caller passes plain text (emoji included) — never HTML — so escaping
+// here covers the server-derived bits that ride along in `detail`, such as a
+// Pusher error string or a failing selector list.
 function statusRow(icon, label, detail) {
-  return '<div class="diag-item"><span class="diag-icon">' + icon + '</span><span>' + label + '</span><span class="diag-detail">' + (detail || '') + '</span></div>';
+  return '<div class="diag-item"><span class="diag-icon">' + esc(icon) + '</span><span>' + esc(label) + '</span><span class="diag-detail">' + esc(detail || '') + '</span></div>';
 }
 
 function renderNightStatus(h) {
@@ -674,7 +712,7 @@ function renderNightStatus(h) {
     fetch(BASE + '/failures').then(function(r) { return r.json(); }).then(function(list) {
       document.getElementById('failures-list').innerHTML = list.map(function(f) {
         return '<div class="warning-item" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">' +
-          '<strong>' + f.name + '</strong> (' + (f.club || 'no club') + ') at ' + formatTime(f.at) + ' — ' + f.error + '</div>';
+          '<strong>' + esc(f.name) + '</strong> (' + esc(f.club || 'no club') + ') at ' + esc(formatTime(f.at)) + ' — ' + esc(f.error) + '</div>';
       }).join('');
     }).catch(function() {});
   } else {
@@ -693,7 +731,7 @@ function runCanary() {
     .then(function(r) { return r.json(); })
     .then(function(res) {
       out.innerHTML = (res.stages || []).map(function(s) {
-        return (s.passed ? '✅' : '❌') + ' <strong>' + s.stage + '</strong> — ' + (s.detail || '');
+        return (s.passed ? '✅' : '❌') + ' <strong>' + esc(s.stage) + '</strong> — ' + esc(s.detail || '');
       }).join('<br>');
       loadHealth();
     })
@@ -709,8 +747,8 @@ function runDiagnostics() {
     list.innerHTML = results.map(function(r) {
       return '<div class="diag-item">' +
         '<span class="diag-icon">' + (r.passed ? '\u2705' : '\u274C') + '</span>' +
-        '<span>' + r.test + '</span>' +
-        '<span class="diag-detail">' + (r.detail || '') + '</span>' +
+        '<span>' + esc(r.test) + '</span>' +
+        '<span class="diag-detail">' + esc(r.detail || '') + '</span>' +
         '</div>';
     }).join('');
   }).catch(function() {

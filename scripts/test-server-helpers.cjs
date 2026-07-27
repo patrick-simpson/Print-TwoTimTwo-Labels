@@ -413,6 +413,137 @@ console.log('packaging — every print-server module must ship inside the Window
   }
 }
 
+// ── security.js — the trust-model primitives ──────────────────────────────────
+// Unit-level rules only; the wiring (middleware order, bind host, which routes
+// are gated) is covered end-to-end by scripts/test-server-security.cjs.
+{
+  const sec = require(path.join(__dirname, '..', 'print-server', 'security.js'));
+
+  // Loopback detection. Anything wrong here either locks out the extension or
+  // hands the LAN a free pass.
+  for (const addr of ['127.0.0.1', '127.0.1.1', '::1', '::ffff:127.0.0.1', '::1%lo0']) {
+    check(`isLoopbackAddress accepts ${addr}`, sec.isLoopbackAddress(addr) === true);
+  }
+  for (const addr of ['192.168.1.5', '10.0.0.9', '0.0.0.0', '', null, undefined,
+    '1.2.3.4', '127.0.0.1.evil.com', '::ffff:192.168.1.5']) {
+    check(`isLoopbackAddress rejects ${String(addr)}`, sec.isLoopbackAddress(addr) === false);
+  }
+
+  // Origin allowlist.
+  const allow = (o) => sec.isAllowedOrigin(o, { port: 3456 });
+  check('allows the extension options page', allow('chrome-extension://abcdefghijklmnop') === true);
+  check('allows the check-in site', allow('https://kvbchurch.twotimtwo.com') === true);
+  check('allows another church subdomain (fork-friendly)', allow('https://other.twotimtwo.com') === true);
+  check('allows the dashboard over loopback', allow('http://localhost:3456') === true);
+  check('allows the phone page over a private LAN IP', allow('http://192.168.1.20:3456') === true);
+  check('rejects an unrelated site', allow('https://evil.example') === false);
+  check('rejects the old port-suffix bypass', allow('http://evil.example:3456') === false);
+  check('rejects a lookalike host', allow('https://twotimtwo.com.evil.example') === false);
+  check('rejects plain http on the check-in domain', allow('http://kvbchurch.twotimtwo.com') === false);
+  check('rejects a public IP on our port', allow('http://8.8.8.8:3456') === false);
+  check('rejects the null origin', allow('null') === false);
+  check('rejects a missing origin', allow('') === false && allow(undefined) === false);
+
+  // allowedOrigins sanitisation — an operator must not be able to paste '*'.
+  const sanitized = sec.sanitizeAllowedOrigins(['*', 'https://ok.example', 'nope', 'ftp://x.example',
+    'http://also-ok.example:8080']);
+  check('sanitizeAllowedOrigins drops the wildcard', !sanitized.includes('*'));
+  check('sanitizeAllowedOrigins drops non-URLs', !sanitized.includes('nope'));
+  check('sanitizeAllowedOrigins drops non-http schemes', !sanitized.some(o => o.startsWith('ftp')));
+  check('sanitizeOrigins keeps valid entries', sanitized.length === 2, JSON.stringify(sanitized));
+  check('sanitizeAllowedOrigins tolerates junk input',
+    arrEq(sec.sanitizeAllowedOrigins(null), []) && arrEq(sec.sanitizeAllowedOrigins('x'), []));
+
+  // PIN policy.
+  check('isAcceptablePin rejects empty', sec.isAcceptablePin('') === false);
+  check('isAcceptablePin rejects too short', sec.isAcceptablePin('123') === false);
+  check('isAcceptablePin accepts a 4-digit PIN', sec.isAcceptablePin('1234') === true);
+  check('isAcceptablePin accepts a passphrase', sec.isAcceptablePin('correct horse battery') === true);
+  check('isAcceptablePin rejects a control character', sec.isAcceptablePin('12\u00003') === false);
+  check('isAcceptablePin rejects over-long', sec.isAcceptablePin('x'.repeat(65)) === false);
+  check('timingSafeStringEqual matches equal strings', sec.timingSafeStringEqual('abcd', 'abcd') === true);
+  check('timingSafeStringEqual rejects different strings', sec.timingSafeStringEqual('abcd', 'abce') === false);
+  check('timingSafeStringEqual rejects a prefix', sec.timingSafeStringEqual('abc', 'abcd') === false);
+  check('timingSafeStringEqual handles null', sec.timingSafeStringEqual(null, '') === true);
+
+  // Rate limiter.
+  {
+    const lim = sec.createPinLimiter({ maxFailures: 3, lockoutMs: 1000 });
+    const t0 = 1_000_000;
+    check('limiter starts unlocked', lim.retryAfterMs('1.2.3.4', t0) === 0);
+    lim.recordFailure('1.2.3.4', t0);
+    lim.recordFailure('1.2.3.4', t0);
+    check('limiter still open below the threshold', lim.retryAfterMs('1.2.3.4', t0) === 0);
+    lim.recordFailure('1.2.3.4', t0);
+    check('limiter locks at the threshold', lim.retryAfterMs('1.2.3.4', t0) > 0);
+    check('lockout is scoped per address', lim.retryAfterMs('5.6.7.8', t0) === 0);
+    check('lockout expires', lim.retryAfterMs('1.2.3.4', t0 + 1500) === 0);
+    lim.recordFailure('9.9.9.9', t0);
+    lim.recordSuccess('9.9.9.9');
+    check('a success clears the failure count', lim.retryAfterMs('9.9.9.9', t0) === 0);
+  }
+
+  // Bind host — the property that keeps a default install off the network.
+  check('default bind is loopback', sec.resolveBindHost({}).host === '127.0.0.1');
+  check('lanAccess without a PIN stays loopback',
+    sec.resolveBindHost({ lanAccess: true, hasPin: false }).host === '127.0.0.1');
+  check('lanAccess with a PIN binds all interfaces',
+    sec.resolveBindHost({ lanAccess: true, hasPin: true }).host === '0.0.0.0');
+  check('AWANA_BIND_HOST overrides',
+    sec.resolveBindHost({ envHost: '10.0.0.5' }).host === '10.0.0.5');
+  check('an explicit loopback override is not reported as LAN',
+    sec.resolveBindHost({ envHost: '127.0.0.1' }).lan === false);
+
+  // The shell.openExternal / Start-Process sink.
+  for (const bad of ['file:///C:/Windows/System32/calc.exe', 'javascript:alert(1)',
+    'ms-msdt:/id PCWDiagnostic', 'data:text/html,<script>', '\\\\evil-host\\share',
+    'https://user:pass@example.com/', '', null, 'not a url']) {
+    check(`isSafeExternalUrl rejects ${String(bad).slice(0, 30)}`, sec.isSafeExternalUrl(bad) === false);
+  }
+  for (const good of ['https://kvbchurch.twotimtwo.com/clubber/checkin?#',
+    'http://localhost:3456/', 'https://example.org/path?a=b']) {
+    check(`isSafeExternalUrl accepts ${good.slice(0, 30)}`, sec.isSafeExternalUrl(good) === true);
+  }
+
+  // Stored-field hygiene.
+  check('sanitizeStoredText strips control characters',
+    sec.sanitizeStoredText('Ab\u0000c\u001bd') === 'Ab c d',
+    JSON.stringify(sec.sanitizeStoredText('Ab\u0000c\u001bd')));
+  check('sanitizeStoredText caps length',
+    sec.sanitizeStoredText('x'.repeat(500)).length === sec.STORED_NAME_MAX);
+  check('sanitizeStoredText leaves an ordinary name alone',
+    sec.sanitizeStoredText('  Mary-Jane O\u2019Brien  ') === 'Mary-Jane O\u2019Brien');
+  check('sanitizeStoredText does NOT mangle angle brackets (output escaping owns that)',
+    sec.sanitizeStoredText('a<b>c') === 'a<b>c');
+  check('sanitizeStoredText handles null', sec.sanitizeStoredText(null) === '');
+
+  // History retention.
+  {
+    const now = Date.parse('2026-07-27T12:00:00Z');
+    const mk = (iso) => ({ firstName: 'A', timestamp: iso });
+    const hist = [
+      mk('2026-07-27T11:00:00Z'),   // today
+      mk('2026-06-01T11:00:00Z'),   // ~8 weeks ago
+      mk('2025-01-01T11:00:00Z'),   // long past
+      { firstName: 'B' },           // no timestamp at all
+    ];
+    const kept = sec.pruneHistoryByAge(hist, 60, now);
+    check('pruneHistoryByAge keeps recent rows', kept.length === 2, `kept ${kept.length}`);
+    check('pruneHistoryByAge drops undateable rows', !kept.some(e => !e.timestamp));
+    check('pruneHistoryByAge honours a short retention',
+      sec.pruneHistoryByAge(hist, 1, now).length === 1);
+    check('pruneHistoryByAge tolerates junk', arrEq(sec.pruneHistoryByAge(null, 60, now), []));
+    check('normalizeRetentionDays defaults sanely',
+      sec.normalizeRetentionDays(undefined) === sec.DEFAULT_HISTORY_RETENTION_DAYS);
+    check('normalizeRetentionDays clamps', sec.normalizeRetentionDays(0) === 1
+      && sec.normalizeRetentionDays(99999) === 730);
+  }
+
+  // The server must actually be wired to this module, not a private copy.
+  const serverExports = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  check('server.js exposes the same security module', serverExports.security === sec);
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

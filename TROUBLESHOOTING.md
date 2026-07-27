@@ -12,7 +12,22 @@ after that the app updates itself silently.
 
 ### Phones can't reach phone check-in (`http://<laptop-ip>:3456/phone`)
 
-Windows Firewall blocks inbound connections by default.
+**Check this first (changed in 5.3.0):** the server now listens only on the
+laptop itself unless you explicitly allow network access, so that the roster and
+allergy list aren't readable by everything on the church Wi-Fi. Open **Settings →
+Check-in Features** and confirm both:
+
+1. A **Phone check-in PIN** is set (at least 4 characters), and
+2. **"Let phones on this Wi-Fi reach this PC"** is checked.
+
+Then **restart the app** — the listening socket is bound at startup, so the
+change does not apply until it restarts.
+
+If the PIN is missing, the checkbox has no effect: the server refuses to expose
+the roster without one, logs that at startup, and shows a warning on the
+dashboard. Set a PIN and restart.
+
+Once that is right, it may still be the firewall:
 
 1. The first time the server starts, Windows shows an **Allow access** prompt — click **Allow**.
    (Make sure "Private networks" is checked.)
@@ -268,18 +283,26 @@ Before getting help, verify:
 
 ## Phone check-in problems
 
-**Phone can't open the page** — same Wi-Fi as the laptop? Use the
-laptop's IPv4 from `ipconfig`, e.g. `http://192.168.1.20:3456/phone`.
-If it still won't load, the firewall rule is missing — re-run
-`install-and-run.ps1` once as admin (it adds "Awana Print Server
-(TCP 3456)").
+**Phone can't open the page** — first check Settings → Check-in Features has a
+**PIN set** and **"Let phones on this Wi-Fi reach this PC"** checked, then
+restart the app. Since 5.3.0 network access is off by default, so this is the
+most likely cause. Next: same Wi-Fi as the laptop? Use the laptop's IPv4 from
+`ipconfig`, e.g. `http://192.168.1.20:3456/phone`. If it still won't load, the
+firewall rule is missing — re-run `install-and-run.ps1` once as admin (it adds
+"Awana Print Server (TCP 3456)").
 
 **Phone says "No answer"** — the check-in page must be open on the
 main laptop with the extension loaded; that's what performs the real
 check-in. Also check Settings → "Allow driven check-ins" is on.
 
 **Wrong PIN** — the PIN is set on the dashboard (Settings → Check-in
-Features). Blank = no PIN required.
+Features), and must be at least 4 characters. A blank PIN no longer means
+"no PIN required": it means phones cannot connect at all, because the server
+will not expose the roster without one.
+
+**"Too many wrong PINs"** — after 8 wrong attempts that phone is locked out for
+a minute. Wait it out; it clears on its own. (This is deliberate: without it a
+4-digit PIN could be guessed in seconds.)
 
 ## Red banner: "the check-in page layout has changed"
 
