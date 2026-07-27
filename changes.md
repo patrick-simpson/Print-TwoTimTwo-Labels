@@ -1,4 +1,13 @@
-﻿## [5.2.1] - 2026-07-27
+﻿## [5.2.2] - 2026-07-27
+Two label-rendering fixes found by actually looking at rendered labels rather than only asserting on them in tests.
+
+### The handbook group could be hidden behind the allergy icons
+The bottom-right icon row (allergies, birthday cake, share balance, do-not-photograph) is right-anchored on the same band the handbook-group line occupies, so a child with several icons had their group text running underneath them — "Flight 3:16" was partly covered by a cake and a peanut. The handbook group is what sends a child to the correct table, so it has to stay readable. That line now reserves the icon row's width and centres in the space that remains.
+
+### Print Dialog mode dropped the first-timer palette
+`POST /label` — the render behind "Print Dialog" mode and the preview image — never passed the extras that `POST /print` does, so a first-time visitor's label came out on a normal white background instead of the inverted palette auto-printing gives them, and late-arrival routing text was missing too. Both paths now build the same extras. (Attendance milestones are deliberately still excluded from this path: that text comes from recording a check-in, and a preview must not record one.) This is the same shape of bug as the photo-consent fix in 5.2.0 — a feature applied to one render path and not its sibling.
+
+## [5.2.1] - 2026-07-27
 **The v5.2.0 Windows build did not publish** — its install smoke test caught a packaging bug, so no broken `.exe` ever reached anyone. 5.2.1 is the release that ships.
 
 ### The packaged app was missing a module and died on startup

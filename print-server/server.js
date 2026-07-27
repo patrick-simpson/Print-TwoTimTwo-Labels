@@ -1227,9 +1227,18 @@ async function generateLabel(
       ? `bold ${fs4}px ${fontFamily}`
       : `italic ${fs4}px ${fontFamily}`;
     ctx.font = groupFont;
-    groupStr = truncateTextCanvas(ctx, groupStr, groupFont, textW);
+    // The bottom-right icon row is right-anchored on the same band this line
+    // occupies, so a centered group ran straight under the icons — the handbook
+    // group is what sends a child to the right table, so it must stay readable.
+    // Reserve the icon row's width on the right and centre what's left.
+    const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
+      (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0);
+    const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
+    const groupMaxW = Math.max(40, textW - reservedRight);
+    const groupCenterX = textCenterX - reservedRight / 2;
+    groupStr = truncateTextCanvas(ctx, groupStr, groupFont, groupMaxW);
     ctx.fillStyle = COLOR.group;
-    ctx.fillText(groupStr, textCenterX, y);
+    ctx.fillText(groupStr, groupCenterX, y);
     y += fs4;
   }
 
@@ -1751,10 +1760,21 @@ app.post('/label', async (req, res) => {
 
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
+    // Same extras /print builds, so the label a volunteer sees in Print Dialog
+    // mode (and any preview) matches what auto-print produces. Without this a
+    // first-timer's label silently lost its inverted palette on this path.
+    // milestoneLine is deliberately NOT computed here: it comes from recording
+    // attendance, and a preview/dialog render must not record a check-in.
+    const labelExtras = {};
+    const labelGoTo = lateGoToLine(clubName);
+    if (labelGoTo) labelExtras.goToLine = labelGoTo;
+    if (visitor && config.firstTimerInverted !== false) labelExtras.inverted = true;
+
     const result = await generateLabel(
       firstName, lastName, clubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
-      stepUp, stepUpNextClub, awanaShares, noPhoto
+      stepUp, stepUpNextClub, awanaShares, noPhoto,
+      false, labelExtras
     );
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
