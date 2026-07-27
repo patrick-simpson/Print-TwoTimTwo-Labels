@@ -1,5 +1,12 @@
 ﻿## [5.2.1] - 2026-07-27
-Extension fix: a navigation label could be published to the lobby TV as a church announcement.
+**The v5.2.0 Windows build did not publish** — its install smoke test caught a packaging bug, so no broken `.exe` ever reached anyone. 5.2.1 is the release that ships.
+
+### The packaged app was missing a module and died on startup
+`electron-builder` copies the print server into the app via an `extraResources` **filter that enumerated files by name**. The new `print-server/feeds.js` was never added to that list, so it worked in development and passed every local test, but the installed app's server crashed immediately with `Cannot find module './feeds'` and never answered `/health`. The filter now globs `*.js`, so any future print-server module is packaged automatically.
+
+More importantly, this class of bug can no longer wait 15 minutes for a Windows runner to reveal it: the test suite now cross-checks every local `require('./…')` in the print server against the packaging filter and fails immediately if a module wouldn't ship. Verified by reproducing the exact regression — with `feeds.js` removed from the filter, the suite fails with a message naming the file and the fix.
+
+### Extension fix: a navigation label could be published to the lobby TV as a church announcement.
 
 The new announcement feed looked for an "active" marker on TwoTimTwo's messages page and, absent one, fell back to a bare `.active` selector. TwoTimTwo is a Bootstrap app, where `.active` marks the **current navigation tab** — the check-in pages carry `<li class="active">` in their own tab strip. So on a page with no real active-message marker, the parser would pick up a nav label like "Checkin Report" and broadcast it as an announcement for the lobby screen to display. Now restricted to table rows and an explicit data attribute, with anything inside a nav, tab strip or pagination container rejected outright. The conservative fallback (only read a message when the page has exactly one unambiguous data row) is unchanged.
 

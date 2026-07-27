@@ -51,8 +51,7 @@
         "from": "../print-server",
         "to": "print-server",
         "filter": [
-          "server.js",
-          "events.js",
+          "*.js",
           "church-config.json",
           "package.json",
           "public/**",

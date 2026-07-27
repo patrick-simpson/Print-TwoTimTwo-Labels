@@ -375,6 +375,44 @@ console.log('isSafePrinterName — a printer name reaches PowerShell, so it is v
   check('ACCEPTS null/undefined as empty', isSafePrinterName(null) === true && isSafePrinterName(undefined) === true);
 }
 
+console.log('packaging — every print-server module must ship inside the Windows app');
+{
+  // REGRESSION GUARD: electron-builder copies print-server via an
+  // `extraResources` filter. That filter used to ENUMERATE files, so adding
+  // print-server/feeds.js worked in dev and in every local test but was silently
+  // omitted from the packaged app — the installed server then died on startup
+  // with "Cannot find module './feeds'". The Windows install smoke test caught
+  // it, but only 15 minutes into a release. This asserts it much earlier.
+  const fs = require('fs');
+  const root = path.join(__dirname, '..');
+  const electronPkg = JSON.parse(fs.readFileSync(path.join(root, 'electron-app', 'package.json'), 'utf8'));
+  const resources = ((electronPkg.build || {}).extraResources || [])
+    .filter(r => r && r.from === '../print-server');
+  check('electron-builder still copies ../print-server', resources.length === 1);
+  const filter = (resources[0] || {}).filter || [];
+
+  // Collect every local module required by any top-level print-server module.
+  const serverDir = path.join(root, 'print-server');
+  const jsFiles = fs.readdirSync(serverDir).filter(f => f.endsWith('.js'));
+  const required = new Set();
+  for (const f of jsFiles) {
+    const src = fs.readFileSync(path.join(serverDir, f), 'utf8');
+    for (const m of src.matchAll(/require\('\.\/([^']+)'\)/g)) required.add(m[1]);
+  }
+  check('found the local requires to verify', required.size > 0);
+
+  const coversAllTopLevelJs = filter.includes('*.js') || filter.includes('**/*.js');
+  for (const mod of required) {
+    // Resolve './feeds' -> feeds.js, './package.json' -> package.json
+    const file = mod.endsWith('.json') || mod.endsWith('.js') ? mod : mod + '.js';
+    const isTopLevelJs = file.endsWith('.js') && !file.includes('/');
+    const shipped = filter.includes(file) || (isTopLevelJs && coversAllTopLevelJs);
+    check(`packaged app includes '${file}' (required as './${mod}')`, shipped,
+      shipped ? '' : `add it to electron-app package.json build.extraResources filter`);
+    check(`'${file}' actually exists in print-server/`, fs.existsSync(path.join(serverDir, file)));
+  }
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
