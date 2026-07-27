@@ -14,11 +14,23 @@
 const crypto = require('crypto');
 
 const OPS_TYPES = ['print-failure', 'canary', 'selector-fail'];
+const NOTICE_LEVELS = ['info', 'warn', 'critical'];
 
 const NAME_MAX = 40;
 const RECAP_MAX = 15;
 const BIRTHDAYS_MAX = 40;
 const TALLY_CLUBS_MAX = 30;
+const POINTS_GROUPS_MAX = 20;
+const NOTICE_MAX = 200;
+const TITLE_MAX = 60;
+
+// Whole non-negative integer, or 0 when the input is unusable. Every
+// contract-v3 counter is a count of things — never a name, never a rate.
+function wholeCount(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -26,6 +38,18 @@ function nowIso() {
 
 function cleanName(s) {
   return String(s == null ? '' : s).trim().slice(0, NAME_MAX);
+}
+
+// Bounded plain text: strips anything markup-shaped and collapses whitespace
+// (including the newlines TwoTimTwo's textareas allow) so display copy can
+// never inject markup or blow up a fixed-height banner.
+function plainText(s, max) {
+  return String(s == null ? '' : s)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 }
 
 // ── checkin ───────────────────────────────────────────────────────────────────
@@ -128,6 +152,76 @@ function buildCanary() {
   return { at: nowIso(), nonce: crypto.randomBytes(8).toString('hex') };
 }
 
+// ── tonight (contract v3, roadmap D-1) ────────────────────────────────────────
+// Aggregate counters for the lobby "tonight" ticker, derived by the extension
+// from TwoTimTwo's own check-in report + meeting report. PURE NUMBERS — there
+// is structurally no field here that could carry a name.
+function buildTonight(input) {
+  const src = input || {};
+  return {
+    checkedIn: wholeCount(src.checkedIn),
+    booksCompleted: wholeCount(src.booksCompleted),
+    awardsEarned: wholeCount(src.awardsEarned),
+    friendsBrought: wholeCount(src.friendsBrought),
+    at: nowIso(),
+  };
+}
+
+// ── points (contract v3, roadmap D-2) ─────────────────────────────────────────
+// Color-group points race (TwoTimTwo /meeting/colorGroup). Keys are color-team
+// display names ("Red", "Blue"), values whole points. Team names, never kids.
+function buildPoints(byGroup, club) {
+  const groups = {};
+  const entries = Object.entries(byGroup && typeof byGroup === 'object' ? byGroup : {})
+    .slice(0, POINTS_GROUPS_MAX);
+  for (const [group, n] of entries) {
+    const key = cleanName(group);
+    if (!key) continue;
+    const v = Number(n);
+    if (!Number.isFinite(v) || v < 0) continue;
+    groups[key] = Math.floor(v);
+  }
+  const payload = { groups, at: nowIso() };
+  const c = cleanName(club);
+  if (c) payload.club = c;
+  return payload;
+}
+
+// ── schedule (contract v3, roadmap D-3) ───────────────────────────────────────
+// Next-meeting facts read from TwoTimTwo's iCal feed, so the countdown/signage
+// never has to guess when club actually meets. Date is a bare calendar date
+// (no time-of-day, no attendee data); title is the church-authored meeting
+// theme shown publicly on the calendar.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function buildSchedule(input) {
+  const src = input || {};
+  const payload = { at: nowIso() };
+  const date = String(src.nextMeetingDate == null ? '' : src.nextMeetingDate).trim();
+  if (ISO_DATE_RE.test(date)) payload.nextMeetingDate = date;
+  const title = plainText(src.title, TITLE_MAX);
+  if (title) payload.title = title;
+  if (src.noClubThisWeek !== undefined) payload.noClubThisWeek = !!src.noClubThisWeek;
+  return payload;
+}
+
+// ── notice (contract v3, roadmap D-5) ─────────────────────────────────────────
+// A church-authored announcement (e.g. "CLUB CANCELLED TONIGHT") from
+// TwoTimTwo's /msg/admin, mirrored to the screens.
+//
+// PRIVACY NOTE: `message` is the ONLY free-text field on the whole channel. It
+// exists because this copy is written BY church staff FOR public display, so it
+// is intentionally shown verbatim. It is still bounded and forced to plain text
+// (markup stripped) so it can neither break the layout nor inject markup, and
+// it is never derived from roster data. Returns null for an empty message so a
+// blank notice can't blank the screen.
+function buildNotice(level, message) {
+  const text = plainText(message, NOTICE_MAX);
+  if (!text) return null;
+  const lvl = NOTICE_LEVELS.includes(level) ? level : 'info';
+  return { level: lvl, message: text, at: nowIso() };
+}
+
 // ── Club-night window ─────────────────────────────────────────────────────────
 // clubNights: [{ dow: 0-6 (Sunday=0), start: "HH:MM", end: "HH:MM" }].
 // Pure function of the supplied date (defaults to now) so it's testable.
@@ -202,13 +296,19 @@ function publish(pusher, channel, event, payload) {
 
 module.exports = {
   OPS_TYPES,
+  NOTICE_LEVELS,
   RECAP_MAX,
+  POINTS_GROUPS_MAX,
   buildCheckin,
   buildRecap,
   buildTally,
   buildBirthdays,
   buildOps,
   buildCanary,
+  buildTonight,
+  buildPoints,
+  buildSchedule,
+  buildNotice,
   isClubNightNow,
   parseHM,
   publish,

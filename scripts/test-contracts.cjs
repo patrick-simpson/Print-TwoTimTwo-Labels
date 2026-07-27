@@ -52,7 +52,7 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
 console.log('contract-vectors.json — self-consistency');
 {
-  check('contractVersion is 2', vectors.contractVersion === 2);
+  check('contractVersion is 3', vectors.contractVersion === 3);
   check('channel is awana-channel', vectors.channel === 'awana-channel');
   for (const [name, spec] of Object.entries(vectors.events)) {
     for (const [i, v] of (spec.valid || []).entries()) {
@@ -156,6 +156,68 @@ console.log('buildCanary');
   check('at is ISO', ISO_RE.test(c.at));
   check('nonce is a short hex string', /^[0-9a-f]{16}$/.test(c.nonce));
   check('no other fields', keysOf(c).join(',') === 'at,nonce');
+}
+
+console.log('buildTonight');
+{
+  const spec = vectors.events.tonight;
+  const t = events.buildTonight({ checkedIn: 63.9, booksCompleted: 4, awardsEarned: 11, friendsBrought: 2 });
+  check('exact field set', keysOf(t).join(',') === [...spec.fields].sort().join(','));
+  check('floats floored', t.checkedIn === 63);
+  check('at is ISO', ISO_RE.test(t.at));
+  const dirty = events.buildTonight({ checkedIn: 'Alice Smith', kids: ['Alice Smith'], booksCompleted: -5 });
+  check('non-numeric counter becomes 0 (PII can never ride)', dirty.checkedIn === 0 && !JSON.stringify(dirty).includes('Alice'));
+  check('per-child detail structurally impossible', !('kids' in dirty));
+  check('negative counter clamped to 0', dirty.booksCompleted === 0);
+  check('null input safe', events.buildTonight(null).checkedIn === 0);
+}
+
+console.log('buildPoints');
+{
+  const spec = vectors.events.points;
+  const p = events.buildPoints({ Red: 240, Blue: 215.8, Green: -1, Yellow: 'Alice Smith' }, 'Sparks');
+  check('exact field set (with club)', keysOf(p).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','));
+  check('floats floored', p.groups.Blue === 215);
+  check('negative dropped', !('Green' in p.groups));
+  check('non-numeric dropped (PII can never ride points)', !('Yellow' in p.groups) && !JSON.stringify(p).includes('Alice'));
+  check('club omitted when absent', keysOf(events.buildPoints({ Red: 1 })).join(',') === [...spec.fields].sort().join(','));
+  check('caps at maxGroups', Object.keys(events.buildPoints(
+    Object.fromEntries(Array.from({ length: 50 }, (_, i) => ['G' + i, i]))
+  ).groups).length <= spec.maxGroups);
+  check('at is ISO', ISO_RE.test(p.at));
+  check('null input safe', Object.keys(events.buildPoints(null).groups).length === 0);
+}
+
+console.log('buildSchedule');
+{
+  const spec = vectors.events.schedule;
+  const s = events.buildSchedule({ nextMeetingDate: '2026-09-23', title: 'Water Night', noClubThisWeek: false });
+  check('exact field set', keysOf(s).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','));
+  check('valid date kept', s.nextMeetingDate === '2026-09-23');
+  const bad = events.buildSchedule({ nextMeetingDate: 'next Wednesday-ish' });
+  check('malformed date dropped', !('nextMeetingDate' in bad) && !JSON.stringify(bad).includes('Wednesday-ish'));
+  const leaky = events.buildSchedule({ nextMeetingDate: '2026-09-23', attendees: ['parent@example.com'], organizer: 'Director Smith' });
+  check('iCal attendee/organizer structurally impossible', !JSON.stringify(leaky).includes('parent@example.com') && !JSON.stringify(leaky).includes('Director Smith'));
+  check('markup stripped from title', !events.buildSchedule({ title: 'Fun <b>Night</b>' }).title.includes('<'));
+  check('bare payload is just at', keysOf(events.buildSchedule({})).join(',') === 'at');
+  check('at is ISO', ISO_RE.test(s.at));
+  check('null input safe', ISO_RE.test(events.buildSchedule(null).at));
+}
+
+console.log('buildNotice');
+{
+  const spec = vectors.events.notice;
+  const n = events.buildNotice('critical', 'CLUB CANCELLED TONIGHT — snow');
+  check('exact field set', keysOf(n).join(',') === [...spec.fields].sort().join(','));
+  check('level enum matches vectors', JSON.stringify([...events.NOTICE_LEVELS].sort()) === JSON.stringify([...spec.levels].sort()));
+  check('unknown level falls back to info', events.buildNotice('emergency-broadcast', 'Doors open at 6').level === 'info');
+  const xss = events.buildNotice('warn', 'Pickup moved <script>alert(1)</script> to the gym');
+  check('markup stripped', !xss.message.includes('<script>') && !xss.message.includes('<'));
+  check('empty message returns null (cannot blank the screen)', events.buildNotice('info', '   ') === null);
+  check('missing message returns null', events.buildNotice('info') === null);
+  check(`message capped at ${spec.maxMessage}`, events.buildNotice('info', 'x'.repeat(500)).message.length === spec.maxMessage);
+  check('newlines collapsed', events.buildNotice('info', 'line one\n\nline two').message === 'line one line two');
+  check('at is ISO', ISO_RE.test(n.at));
 }
 
 console.log('isClubNightNow');

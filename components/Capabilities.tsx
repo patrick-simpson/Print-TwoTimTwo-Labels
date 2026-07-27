@@ -108,6 +108,8 @@ interface Idea {
   id: string; title: string; body: string;
   benefits: 'Printer' | 'Display' | 'Both';
   effort: 'S' | 'M' | 'L'; impact: 'High' | 'Med' | 'Low';
+  status?: 'shipped' | 'planned';
+  shippedIn?: string;
 }
 
 const ROADMAP: Idea[] = [
@@ -232,10 +234,20 @@ export const Capabilities: React.FC = () => (
         </p>
         <div className="space-y-4">
           {ROADMAP.map(idea => (
-            <div key={idea.id} className="border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+            <div
+              key={idea.id}
+              className={`border rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow ${
+                idea.status === 'shipped' ? 'border-brand-200 bg-brand-50/40' : 'border-slate-200'
+              }`}
+            >
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span className="font-mono text-xs font-bold text-slate-400">{idea.id}</span>
                 <h3 className="font-bold text-slate-900 flex-1 min-w-[12rem]">{idea.title}</h3>
+                {idea.status === 'shipped' && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide bg-brand-600 text-white whitespace-nowrap">
+                    <i className="fa fa-check mr-1"></i>Shipped{idea.shippedIn ? ` v${idea.shippedIn}` : ''}
+                  </span>
+                )}
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${BENEFIT_CLS[idea.benefits]}`}>{idea.benefits}</span>
                 <span className="text-[11px] text-slate-500">Effort: <b className="text-slate-700">{EFFORT_LABEL[idea.effort]}</b></span>
                 <span className={`text-[11px] font-bold ${IMPACT_CLS[idea.impact]}`}>Impact: {idea.impact}</span>

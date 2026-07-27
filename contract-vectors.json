@@ -1,7 +1,7 @@
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "channel": "awana-channel",
-  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years.",
+  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — the only free-text field on the channel, bounded and plain-text-forced).",
   "events": {
     "checkin": {
       "fields": ["id", "at", "firstName", "club", "isBirthday", "isFirstTimer"],
@@ -210,6 +210,149 @@
       "dirty": [],
       "reject": [
         { "reason": "no timestamp", "payload": { "nonce": "a1b2c3d4e5f60718" } }
+      ]
+    },
+    "tonight": {
+      "fields": ["checkedIn", "booksCompleted", "awardsEarned", "friendsBrought", "at"],
+      "valid": [
+        {
+          "checkedIn": 63,
+          "booksCompleted": 4,
+          "awardsEarned": 11,
+          "friendsBrought": 2,
+          "at": "2026-09-16T22:20:00.000Z"
+        },
+        {
+          "checkedIn": 0,
+          "booksCompleted": 0,
+          "awardsEarned": 0,
+          "friendsBrought": 0,
+          "at": "2026-09-16T22:20:00.000Z"
+        }
+      ],
+      "dirty": [
+        {
+          "reason": "counters are numbers only — a name smuggled into a counter must not survive",
+          "payload": {
+            "checkedIn": "Alice Smith",
+            "booksCompleted": 4,
+            "awardsEarned": 11,
+            "friendsBrought": 2,
+            "at": "2026-09-16T22:20:00.000Z"
+          },
+          "mustNotContain": ["Alice Smith"]
+        },
+        {
+          "reason": "no per-child detail may ride along",
+          "payload": {
+            "checkedIn": 63,
+            "booksCompleted": 4,
+            "awardsEarned": 11,
+            "friendsBrought": 2,
+            "kids": ["Alice Smith"],
+            "at": "2026-09-16T22:20:00.000Z"
+          },
+          "mustNotContain": ["kids", "Alice Smith"]
+        }
+      ],
+      "reject": [
+        { "reason": "no timestamp", "payload": { "checkedIn": 63, "booksCompleted": 0, "awardsEarned": 0, "friendsBrought": 0 } },
+        { "reason": "non-object", "payload": "63 kids" },
+        { "reason": "null", "payload": null }
+      ]
+    },
+    "points": {
+      "fields": ["groups", "at"],
+      "optionalFields": ["club"],
+      "maxGroups": 20,
+      "valid": [
+        {
+          "groups": { "Red": 240, "Blue": 215, "Green": 198 },
+          "club": "Sparks",
+          "at": "2026-09-16T22:25:00.000Z"
+        },
+        { "groups": {}, "at": "2026-09-16T22:25:00.000Z" }
+      ],
+      "dirty": [
+        {
+          "reason": "point values are numbers only — a name smuggled as a value is dropped",
+          "payload": {
+            "groups": { "Red": 240, "Blue": "Alice Smith" },
+            "at": "2026-09-16T22:25:00.000Z"
+          },
+          "mustNotContain": ["Alice Smith"]
+        }
+      ],
+      "reject": [
+        { "reason": "groups missing", "payload": { "at": "2026-09-16T22:25:00.000Z" } },
+        { "reason": "no timestamp", "payload": { "groups": { "Red": 1 } } },
+        { "reason": "null", "payload": null }
+      ]
+    },
+    "schedule": {
+      "fields": ["at"],
+      "optionalFields": ["nextMeetingDate", "title", "noClubThisWeek"],
+      "valid": [
+        {
+          "nextMeetingDate": "2026-09-23",
+          "title": "Water Night",
+          "noClubThisWeek": false,
+          "at": "2026-09-16T22:30:00.000Z"
+        },
+        { "noClubThisWeek": true, "at": "2026-09-16T22:30:00.000Z" },
+        { "at": "2026-09-16T22:30:00.000Z" }
+      ],
+      "dirty": [
+        {
+          "reason": "a malformed date must be dropped, never shown as-is",
+          "payload": { "nextMeetingDate": "next Wednesday-ish", "at": "2026-09-16T22:30:00.000Z" },
+          "mustNotContain": ["next Wednesday-ish"]
+        },
+        {
+          "reason": "iCal attendee/organizer detail must never ride along",
+          "payload": {
+            "nextMeetingDate": "2026-09-23",
+            "attendees": ["parent@example.com"],
+            "organizer": "Director Smith",
+            "at": "2026-09-16T22:30:00.000Z"
+          },
+          "mustNotContain": ["attendees", "parent@example.com", "organizer", "Director Smith"]
+        }
+      ],
+      "reject": [
+        { "reason": "no timestamp", "payload": { "nextMeetingDate": "2026-09-23" } },
+        { "reason": "null", "payload": null }
+      ]
+    },
+    "notice": {
+      "fields": ["level", "message", "at"],
+      "levels": ["info", "warn", "critical"],
+      "maxMessage": 200,
+      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design — but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
+      "valid": [
+        { "level": "critical", "message": "CLUB CANCELLED TONIGHT — snow", "at": "2026-09-16T21:00:00.000Z" },
+        { "level": "info", "message": "Bring your Bible next week!", "at": "2026-09-16T21:00:00.000Z" }
+      ],
+      "dirty": [
+        {
+          "reason": "markup must be stripped from display copy",
+          "payload": {
+            "level": "warn",
+            "message": "Pickup moved <script>alert(1)</script> to the gym",
+            "at": "2026-09-16T21:00:00.000Z"
+          },
+          "mustNotContain": ["<script>", "</script>"]
+        },
+        {
+          "reason": "unknown level falls back to info rather than being trusted",
+          "payload": { "level": "emergency-broadcast", "message": "Doors open at 6", "at": "2026-09-16T21:00:00.000Z" },
+          "mustNotContain": ["emergency-broadcast"]
+        }
+      ],
+      "reject": [
+        { "reason": "empty message must not blank the screen", "payload": { "level": "info", "message": "   ", "at": "2026-09-16T21:00:00.000Z" } },
+        { "reason": "missing message", "payload": { "level": "info", "at": "2026-09-16T21:00:00.000Z" } },
+        { "reason": "null", "payload": null }
       ]
     }
   }
