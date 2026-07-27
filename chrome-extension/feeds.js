@@ -523,11 +523,20 @@
     var doc;
     try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return null; }
     var text = null;
-    // Prefer an explicit "active" marker if the page provides one.
-    var candidates = doc.querySelectorAll('.active, [data-active="1"], tr.active');
-    if (candidates.length) {
-      text = (candidates[0].textContent || '').trim();
-    } else {
+    // Prefer an explicit "active" marker — but NEVER a bare '.active'. This is a
+    // Bootstrap app, where '.active' marks the current nav tab / pagination
+    // link: the check-in pages carry <li class="active"> in their own tab strip.
+    // A bare match therefore grabbed a NAVIGATION LABEL and would have published
+    // it to the lobby TV as a church announcement. Restrict to table rows and an
+    // explicit data attribute, and reject anything sitting in a nav container.
+    var candidates = doc.querySelectorAll('tr.active, tbody .active, [data-active="1"]');
+    for (var c = 0; c < candidates.length && !text; c++) {
+      var el = candidates[c];
+      if (el.closest && el.closest('nav, .navbar, .nav, .nav-tabs, .htabs, .pagination, ul.nav')) continue;
+      var t = (el.textContent || '').trim();
+      if (t) text = t;
+    }
+    if (!text) {
       // Undocumented markup — only guess when unambiguous (exactly one data
       // row), per the project's "be conservative" rule. Otherwise do nothing.
       var table = doc.querySelector('table');

@@ -1,4 +1,11 @@
-﻿## [5.2.0] - 2026-07-27
+﻿## [5.2.1] - 2026-07-27
+Extension fix: a navigation label could be published to the lobby TV as a church announcement.
+
+The new announcement feed looked for an "active" marker on TwoTimTwo's messages page and, absent one, fell back to a bare `.active` selector. TwoTimTwo is a Bootstrap app, where `.active` marks the **current navigation tab** — the check-in pages carry `<li class="active">` in their own tab strip. So on a page with no real active-message marker, the parser would pick up a nav label like "Checkin Report" and broadcast it as an announcement for the lobby screen to display. Now restricted to table rows and an explicit data attribute, with anything inside a nav, tab strip or pagination container rejected outright. The conservative fallback (only read a message when the page has exactly one unambiguous data row) is unchanged.
+
+Version-only bump for the rest of the app: the `.exe` does not contain the extension, so this is an extension-side fix. It ships as 5.2.1 rather than a second 5.2.0 so the downloadable extension zip can't drift from the version the server reports — mismatched versions make the widget nag about a phantom update.
+
+## [5.2.0] - 2026-07-27
 The whole "future possibilities" backlog from v5.1.0 — all fourteen items — is now built. v5.1.0 validated what TwoTimTwo actually exposes; this release uses it. The theme: the printer stops guessing and starts asking TwoTimTwo directly, and the screens start showing what TwoTimTwo already knows.
 
 ### No child gets missed: check-ins are now reconciled against TwoTimTwo itself (R-1)
