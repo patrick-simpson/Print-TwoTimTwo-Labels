@@ -14,6 +14,7 @@ const express = require('express');
 const cors    = require('cors');
 const Pusher  = require('pusher');
 const events  = require('./events');
+const feeds   = require('./feeds');
 // @napi-rs/canvas ships prebuilt N-API binaries, so the same node_modules
 // works under plain Node AND inside a packaged Electron app — the old `canvas`
 // package needed an ABI-matched native build and silently broke when embedded.
@@ -37,6 +38,12 @@ const SERVER_VERSION = require('./package.json').version;
 // because a packaged app must never write inside resources/.
 const DATA_DIR = process.env.AWANA_DATA_DIR || __dirname;
 const CSV_FILE = path.join(DATA_DIR, 'clubbers.csv');
+// The household export (GET /household/csv per docs/TWOTIMTWO.md §3.3) is the
+// authoritative sibling map — its "Active Clubbers" column lists a whole
+// household's children directly, unlike the roster CSV which has no
+// household id at all. Persisted the same way as clubbers.csv so a restart
+// mid-event doesn't silently fall back to the phone/address heuristics.
+const HOUSEHOLDS_CSV_FILE = path.join(DATA_DIR, 'households.csv');
 
 // ── Load configuration ────────────────────────────────────────────────────────
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
@@ -159,6 +166,13 @@ const TEXT_W      = BX + BW - TEXT_X; // right text zone width
 // clubbers.csv (e.g. added mid-event) are picked up automatically.
 let clubbers = [];
 
+// ── In-memory household snapshot ──────────────────────────────────────────────
+// Populated at startup from households.csv (if synced) and replaced wholesale
+// by POST /update-households. householdSiblingIndex is the authoritative
+// lowercased-full-name → [sibling full names] map GET /siblings prefers.
+let households = [];
+let householdSiblingIndex = new Map();
+
 // ── CSV parser ────────────────────────────────────────────────────────────────
 // Parses a raw CSV string into an array of plain objects keyed by canonical
 // field names.  Handles both the TwoTimTwo export (quoted fields, spaces in
@@ -231,6 +245,11 @@ const HEADER_MAP = {
   'familyid':        'HouseholdID',
   'family id':       'HouseholdID',
   'family':          'HouseholdID',
+  // GET /household/csv's "Active Clubbers" column — a comma-separated
+  // "First Last" list of that household's children (docs/TWOTIMTWO.md §3.3).
+  // This is what builds the authoritative sibling map.
+  'active clubbers': 'ActiveClubbers',
+  'activeclubbers':  'ActiveClubbers',
   'address':         'Address',
   'address1':        'Address',
   'address 1':       'Address',
@@ -406,6 +425,28 @@ function loadClubbers() {
   }
 }
 
+// ── Load households from disk ─────────────────────────────────────────────────
+// Same failure-tolerance shape as loadClubbers(): a missing/busy/malformed
+// file must never crash startup — it just means no authoritative household
+// map yet, and GET /siblings falls back to the CSV heuristics.
+function loadHouseholds() {
+  try {
+    const raw = fs.readFileSync(HOUSEHOLDS_CSV_FILE, 'utf8');
+    const rows = parseCSV(raw);
+    if (rows.length > 0) {
+      console.log(`[households] Loaded ${rows.length} household(s) from households.csv`);
+    }
+    return rows;
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      console.warn('[households] households.csv not found — /siblings will use CSV heuristics only');
+    } else {
+      console.warn('[households] Failed to read/parse households.csv:', e.message);
+    }
+    return households; // last-known-good, same rationale as loadClubbers()
+  }
+}
+
 // ── Duplicate-print suppression ───────────────────────────────────────────────
 // A cold printer plus PowerShell startup can push a print past the client's
 // request timeout; the client then aborts and retries even though the first
@@ -511,6 +552,43 @@ function buildFamilyIndex(rows) {
     });
   });
   return index;
+}
+
+// ── Authoritative household sibling map (from POST /update-households) ──────
+// GET /household/csv's "Active Clubbers" column already IS the sibling group
+// for that household — no phone/address/contact heuristics needed. Each row
+// is a comma-separated "First Last" list; every name in it is a sibling of
+// every other name in the same row.
+function buildHouseholdSiblingIndex(rows) {
+  const index = new Map();
+  (Array.isArray(rows) ? rows : []).forEach(r => {
+    const raw = (r && (r.ActiveClubbers || r['Active Clubbers'])) || '';
+    if (!raw) return;
+    const members = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    if (members.length < 2) return; // only child in this household — no siblings
+    members.forEach(name => {
+      const key = name.toLowerCase();
+      const additions = members.filter(m => m.toLowerCase() !== key);
+      if (!additions.length) return;
+      const existing = index.get(key) || [];
+      // Set-dedupe in case the same child's name is repeated across rows
+      // (shouldn't happen with a clean export, but stay defensive).
+      index.set(key, Array.from(new Set([...existing, ...additions])));
+    });
+  });
+  return index;
+}
+
+// GET /siblings' resolution rule: the authoritative household map wins when
+// it has an entry for this child; otherwise fall back to the CSV heuristics
+// (phone/contact/address/last-name via buildFamilyIndex). Pure + exported so
+// the precedence rule itself is unit-testable without booting Express.
+function siblingsFor(fullName, siblingIndex, csvRows) {
+  const key = String(fullName == null ? '' : fullName).toLowerCase().trim();
+  if (!key) return [];
+  const fromHousehold = siblingIndex && typeof siblingIndex.get === 'function' ? siblingIndex.get(key) : undefined;
+  if (fromHousehold) return fromHousehold;
+  return buildFamilyIndex(Array.isArray(csvRows) ? csvRows : []).get(key) || [];
 }
 
 // ── Step Up Night eligibility ─────────────────────────────────────────────────
@@ -659,18 +737,74 @@ function isBirthdayWeek(birthdateStr) {
 }
 
 // ── Allergy parser ────────────────────────────────────────────────────────────
-// Converts the free-text Allergies field from the CSV into a compact array of
-// short tokens that can be printed on the label. Returns [] for null/blank.
+// Converts the free-text Notes/Allergies field into a compact array of short
+// tokens printed on the label. Returns [] for null/blank.
+//
+// The real TwoTimTwo export has NO dedicated allergy column (docs/TWOTIMTWO.md
+// §3.1) — Notes is regex-matched free text, which used to produce false
+// positives like "loves coloring" printing a DYE icon. This parser is
+// negation-aware to cut that noise, but it is DELIBERATELY BIASED TOWARD A
+// FALSE POSITIVE OVER A FALSE NEGATIVE: an extra icon on a label is a minor
+// annoyance, a missed real allergy is a safety incident. So a clause is only
+// ever suppressed when it opens with an explicit negation cue (no / none /
+// not / without / denies / n/a) — anything merely hedged, uncertain, or
+// ambiguous ("possible peanut allergy") still flags.
 function parseAllergies(allergiesStr) {
   if (!allergiesStr || !String(allergiesStr).trim()) return [];
   const s = String(allergiesStr);
-  const tokens = [];
-  if (/nut|peanut|tree.?nut/i.test(s))         tokens.push('NUTS');
-  if (/dairy|milk|lactose/i.test(s))            tokens.push('DAIRY');
-  if (/gluten|wheat/i.test(s))                  tokens.push('GLUTEN');
-  if (/\begg\b/i.test(s))                       tokens.push('EGG');  // \b avoids matching "eggnog" as both EGG and NUTS
-  if (/dye|color/i.test(s))                     tokens.push('DYE');
-  return tokens;
+
+  // Sentence/clause boundaries: newlines (Notes can be multi-line — see the
+  // CSV quoting rules in docs/TWOTIMTWO.md §3.2), periods, commas, semicolons.
+  const clauses = s.split(/[\n.,;]+/);
+
+  // Only a NEGATION AT THE CLAUSE'S OWN START suppresses that clause — e.g.
+  // "no known allergies" or the second half of "allergic to milk, not eggs".
+  // A negation buried mid-clause ("give a snack, not candy though") must not
+  // blank out an earlier real allergy mention in the same clause.
+  const NEGATION_LEAD_RE = /^(no|none|not|without|denies|n[\/\-. ]?a)\b/i;
+
+  // ...but a negation is frequently followed by the REAL allergy as an
+  // exception: "no known allergies except peanuts", "none other than dairy",
+  // "not allergic to nuts but is allergic to eggs". Splitting each clause on
+  // these contrast markers and only ever negating the part BEFORE the marker
+  // keeps those allergies. Everything after the marker is always scanned.
+  // This can over-flag ("no nuts but dairy is fine" -> DAIRY), which is the
+  // correct direction to err: an extra icon is harmless, a missed allergy is not.
+  const EXCEPTION_SPLIT_RE = /\b(?:except(?:\s+for)?|but|however|besides|aside\s+from|other\s+than|apart\s+from)\b/i;
+
+  const NUT_RE    = /\bpeanuts?\b|\btree.?nuts?\b|\bnuts?\b/i;
+  const DAIRY_RE  = /\bdairy\b|\bmilk\b|\blactose\b/i;
+  const GLUTEN_RE = /\bgluten\b|\bwheat\b/i;
+  const EGG_RE    = /\beggs?\b/i;  // \b avoids matching "eggnog" as EGG
+  // Tightened to a food-dye SENSE, not a bare "color/colour" (which false-
+  // positived on things like "loves coloring").
+  const DYE_RE    = /\bdyes?\b|\bfood\s*colou?ring\b|\bred\s*40\b|\bartificial\s+colou?r(?:ing)?\b/i;
+
+  const found = new Set();
+  for (const rawClause of clauses) {
+    const clause = rawClause.trim();
+    if (!clause) continue;
+
+    // Split off any "except/but/other than ..." remainder. Segment 0 is the
+    // only one a leading negation can suppress; every later segment names an
+    // exception to that negation and is always scanned.
+    const segments = clause.split(EXCEPTION_SPLIT_RE);
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i].trim();
+      if (!segment) continue;
+      if (i === 0 && NEGATION_LEAD_RE.test(segment)) continue;
+
+      if (NUT_RE.test(segment))    found.add('NUTS');
+      if (DAIRY_RE.test(segment))  found.add('DAIRY');
+      if (GLUTEN_RE.test(segment)) found.add('GLUTEN');
+      if (EGG_RE.test(segment))    found.add('EGG');
+      if (DYE_RE.test(segment))    found.add('DYE');
+    }
+  }
+
+  // Stable, deterministic order regardless of clause order in the source text.
+  const ORDER = ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'];
+  return ORDER.filter(t => found.has(t));
 }
 
 // Allergen icons for the bottom-right row — icons only, no words on the label.
@@ -1401,29 +1535,58 @@ function wakePendingWaiters() {
 // ── Express server ────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));  // allow base64 image payloads
+// CORS is deliberately wide open so the content script on twotimtwo.com can
+// reach these endpoints — which also means any page the volunteer has open can
+// POST here. Keep the GLOBAL body limit small so a hostile or buggy tab can't
+// push megabytes of JSON through a laptop that is mid-event. Exactly one route
+// legitimately carries a base64 PDF (/print-pdf, where base64 inflates a 12MB
+// worksheet by ~4/3), so the global parser steps aside for that single path and
+// the route mounts its own larger parser. The global parser must skip it rather
+// than the route "overriding" it — app-level middleware runs first, so a big
+// body would otherwise be rejected here before the route is ever reached.
+const PDF_UPLOAD_PATH = '/print-pdf';
+const globalJson = express.json({ limit: '2mb' });
+app.use((req, res, next) => {
+  if (req.path === PDF_UPLOAD_PATH) return next();
+  return globalJson(req, res, next);
+});
 app.use(express.static(path.join(__dirname, 'public')));  // serve static files (bookmarklet.html, etc)
 
 // Health endpoint defined below with enhanced warnings
 
 app.get('/roster-status', (req, res) => {
-  res.json({ count: clubbers.length });
+  res.json({ count: clubbers.length, householdCount: households.length });
 });
 
-// Returns siblings (family members) of a given child from the synced CSV.
-// Uses buildFamilyIndex() which groups by HouseholdID / PrimaryContact /
-// Guardian / Address before falling back to LastName so blended families
-// with different last names are handled correctly.
+// Returns siblings (family members) of a given child. Prefers the
+// authoritative household map (POST /update-households, GET /household/csv's
+// "Active Clubbers" column) and falls back to buildFamilyIndex()'s CSV
+// heuristics (HouseholdID / PrimaryContact / Guardian / Address / LastName)
+// for churches that haven't synced a household export yet.
+//
+// An optional `clubberId` resolves the SUBJECT child exactly (via
+// findClubberIn, same id TwoTimTwo puts on `.clubber[recid]`) before falling
+// back to name matching, so two kids with the same name resolve correctly.
+//
 // Response: { siblings: ["Jane Smith", "John Smith"] }
 // The extension matches returned names against DOM elements on the check-in
 // page; an empty array causes it to fall back to DOM last-name detection.
 app.get('/siblings', (req, res) => {
   const rawName = String(req.query.name == null ? '' : req.query.name).trim();
-  if (!rawName) return res.status(400).json({ error: 'name query param required' });
+  const clubberId = req.query.clubberId != null ? String(req.query.clubberId).trim() : '';
 
-  const familyIndex = buildFamilyIndex(clubbers);
-  const siblings = familyIndex.get(rawName.toLowerCase()) || [];
-  res.json({ siblings });
+  let subjectName = rawName;
+  if (clubberId) {
+    const record = findClubberIn(clubbers, '', '', clubberId);
+    if (record) {
+      const full = `${record.FirstName || ''} ${record.LastName || ''}`.trim();
+      if (full) subjectName = full;
+    }
+  }
+
+  if (!subjectName) return res.status(400).json({ error: 'name or clubberId query param required' });
+
+  res.json({ siblings: siblingsFor(subjectName, householdSiblingIndex, clubbers) });
 });
 
 app.get('/printers', (req, res) => {
@@ -1495,6 +1658,43 @@ app.post('/update-csv', (req, res) => {
     console.error('[csv] Failed to write clubbers.csv:', e.message);
     fs.unlink(tmpPath, () => {});
     res.status(500).json({ error: 'Failed to write CSV' });
+  }
+});
+
+// ── Receive the household export (authoritative sibling map) ────────────────
+// GET /household/csv, posted the same way the roster CSV is: the bookmarklet
+// fetches it same-origin (session cookies) and POSTs the raw text here. Its
+// "Active Clubbers" column IS the sibling group for that household directly —
+// no phone/address heuristics needed once this is loaded.
+app.post('/update-households', (req, res) => {
+  const { csv } = req.body || {};
+  if (!csv || typeof csv !== 'string' || !csv.trim()) {
+    return res.status(400).json({ error: 'csv field is required (string)' });
+  }
+
+  // Same defensive rule as /update-csv: a sync that yields zero households
+  // (login redirect, export format change, truncated download) must not wipe
+  // out a household map we know is good.
+  const rows = parseCSV(csv);
+  if (rows.length === 0 && households.length > 0) {
+    console.warn(`[households] Rejected household sync: posted CSV parsed to 0 rows — keeping the ${households.length} household(s) already loaded`);
+    return res.status(422).json({ error: 'CSV parsed to 0 rows — household map not replaced', count: households.length });
+  }
+
+  const csvPath = HOUSEHOLDS_CSV_FILE;
+  const tmpPath = csvPath + '.tmp';
+  try {
+    // Atomic write, same rationale as clubbers.csv.
+    fs.writeFileSync(tmpPath, csv, 'utf8');
+    fs.renameSync(tmpPath, csvPath);
+    households = rows;
+    householdSiblingIndex = buildHouseholdSiblingIndex(rows);
+    console.log(`[households] Updated households.csv from browser (${rows.length} household(s))`);
+    res.json({ ok: true, count: rows.length });
+  } catch (e) {
+    console.error('[households] Failed to write households.csv:', e.message);
+    fs.unlink(tmpPath, () => {});
+    res.status(500).json({ error: 'Failed to write households CSV' });
   }
 });
 
@@ -1771,6 +1971,12 @@ function addHistoryEntry(entry) {
     printer: entry.printer || '',
     success: entry.success,
     visitor: !!entry.visitor,
+    // Award slips (POST /print-award) are flagged so they never masquerade
+    // as a check-in: they're excluded from name-based /reprint lookups and
+    // from tonight's check-in stats, but still show up in /history for the
+    // dashboard's own record-keeping.
+    isAward: !!entry.isAward,
+    award: entry.award || '',
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -1798,7 +2004,9 @@ function computeTonightStats() {
   const history = loadHistory();
   const today = new Date().toISOString().slice(0, 10);
   // Failed prints stay in history for the dashboard but never count a kid in.
-  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false);
+  // Award slips are flagged (isAward) and excluded — they're a recognition
+  // print, not a check-in, and must never inflate tonight's counts.
+  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false && !e.isAward);
 
   const byClub = {};
   const seen = new Set();
@@ -1895,8 +2103,11 @@ app.post('/reprint', async (req, res) => {
     entry = history[index];
   } else if (name) {
     const search = String(name).toLowerCase().trim();
+    // Award slips (isAward) are excluded from name-based lookup so
+    // reprinting "by name" always targets the check-in label, never an
+    // award slip that happens to share the same child's name.
     entry = history.find(e =>
-      `${e.firstName} ${e.lastName}`.toLowerCase().trim() === search
+      !e.isAward && `${e.firstName} ${e.lastName}`.toLowerCase().trim() === search
     );
   }
 
@@ -1951,6 +2162,267 @@ app.post('/reprint', async (req, res) => {
     if (pngPath) fs.unlink(pngPath, () => {});
   }
 });
+
+// ── Award slip labels ─────────────────────────────────────────────────────────
+// A small recognition slip ("🏅 Awarded: <award>") for a completed book or
+// earned award, printed through the SAME generateLabel/printImage pipeline
+// as a normal check-in label — no new rendering path, so it can't regress
+// one. The award text rides in the existing handbook-group text slot (with
+// a medal prefix so it reads unambiguously as an award, not a group name),
+// and the inverted (black-background) palette — already used for step-up
+// and first-timer labels — makes an award slip visually distinct from a
+// normal white check-in label at a glance.
+app.post('/print-award', async (req, res) => {
+  const {
+    name,
+    firstName: reqFirst,
+    lastName:  reqLast,
+    clubName      = '',
+    award,
+    clubImageData = null,
+    printerName   = '',
+    clubberId     = null,
+  } = req.body || {};
+
+  let firstName, lastName;
+  if (reqFirst !== undefined) {
+    firstName = String(reqFirst || '').trim();
+    lastName  = String(reqLast  || '').trim();
+  } else if (name) {
+    const parts = String(name).trim().split(/\s+/);
+    firstName = parts[0] || '';
+    lastName  = parts.slice(1).join(' ') || '';
+  } else {
+    return res.status(400).json({ error: 'name or firstName is required' });
+  }
+
+  const awardText = String(award == null ? '' : award).trim();
+  if (!awardText) return res.status(400).json({ error: 'award is required' });
+
+  const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
+
+  // Duplicate suppression keyed on name+award (NOT name alone) — a child can
+  // legitimately earn two different awards in one evening, and each should
+  // print. Namespaced ("award:...") so it can never collide with a normal
+  // check-in's dedup key in the same recentPrints map.
+  const dupKey = `award:${firstName} ${lastName}:${awardText}`.toLowerCase().trim();
+  if (isDuplicatePrint(dupKey)) {
+    console.log(`[print-award] '${firstName} ${lastName}' — '${awardText}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
+    return res.json({ success: true, duplicate: true });
+  }
+
+  // Enrich from the roster the same way /print does, including clubberId
+  // awareness — an award slip must show the same allergy/no-photo safety
+  // icons a check-in label would.
+  clubbers = loadClubbers();
+  const record = findClubber(firstName, lastName, clubberId);
+
+  let allergyTokens = [], birthday = false, noPhoto = false;
+  let effectiveClubName = clubName;
+  if (record) {
+    const allergySource = record.Allergies || record.Notes || '';
+    allergyTokens = parseAllergies(allergySource);
+    birthday = isBirthdayWeek(record.Birthdate);
+    noPhoto  = noPhotoFor(record);
+    if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
+  }
+
+  const medalLine = `🏅 Awarded: ${awardText}`.slice(0, 60);
+
+  let pngPath = null;
+  try {
+    const clubImageBuffer = await resolveImageBuffer(clubImageData);
+    const result = await generateLabel(
+      firstName, lastName, effectiveClubName, clubImageBuffer,
+      allergyTokens, medalLine, birthday, false,
+      false, '', null, noPhoto,
+      false, { inverted: true }
+    );
+    pngPath = result.pngPath;
+
+    printImage(pngPath, effectivePrinter);
+    recordPrint(dupKey);
+
+    addHistoryEntry({
+      firstName, lastName, clubName: effectiveClubName, clubImageData,
+      printer: effectivePrinter, success: true, isAward: true, award: awardText,
+    });
+
+    console.log(`[print-award] ${firstName} ${lastName} — ${awardText}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[print-award] Error:', err.message);
+    addHistoryEntry({
+      firstName, lastName, clubName: effectiveClubName, clubImageData,
+      printer: effectivePrinter, success: false, isAward: true, award: awardText,
+    });
+    recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
+// ── Print an arbitrary PDF (leader worksheets) ────────────────────────────────
+// Leader handbook-agenda / undistributed-award worksheets come out of
+// TwoTimTwo as PDFs (docs/TWOTIMTWO.md §5 — /meeting/handbook,
+// /meeting/Awards_undistributed), letter-size rather than 4×2, so they need
+// their own print path and (usually) their own printer.
+const PDF_MAX_BYTES = 12 * 1024 * 1024; // ~12MB cap on the DECODED payload
+const PDF_MAGIC = '%PDF-';
+
+// Prints a PDF on Windows via the shell's registered PDF handler (Start-Process
+// -Verb Print), the same temp-file + execSync + finally-unlink shape as
+// printImage(). If a specific printer was requested, best-effort switch the
+// Windows default printer to it first (Start-Process -Verb Print has no
+// direct "-Printer" argument) — failure to do that is non-fatal, the job
+// still goes to whatever the current default is.
+function printPdf(pdfPath, printerName) {
+  const safePath    = pdfPath.replace(/'/g, "''");
+  const safePrinter = (printerName || '').replace(/'/g, "''");
+
+  const ps = `
+$ErrorActionPreference = 'Stop'
+${safePrinter ? `
+try {
+  $p = Get-WmiObject -Class Win32_Printer -Filter "Name='${safePrinter}'"
+  if ($p) { $p.SetDefaultPrinter() | Out-Null }
+} catch { }
+` : ''}
+Start-Process -FilePath '${safePath}' -Verb Print -WindowStyle Hidden -Wait
+`.trim();
+
+  const psPath = tmpFilePath('awana-print-pdf', 'ps1');
+  try {
+    fs.writeFileSync(psPath, ps, 'utf8');
+    const result = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: 30000,
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    if (result) console.log('[print-pdf] PowerShell:', result.trim());
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
+}
+
+// The ONLY route allowed a large body — the global parser skips this path (see
+// PDF_UPLOAD_PATH above) so this 18mb parser is the one that runs here.
+app.post(PDF_UPLOAD_PATH, express.json({ limit: '18mb' }), async (req, res) => {
+  // The headless render-smoke test runs on Linux — printing must fail loudly
+  // and cheaply there, never attempt a PowerShell shell-out.
+  if (process.platform !== 'win32') {
+    return res.status(501).json({ error: 'PDF printing requires Windows — not available on this platform' });
+  }
+
+  const { pdfBase64, printerName = '', label = '' } = req.body || {};
+  if (!pdfBase64 || typeof pdfBase64 !== 'string') {
+    return res.status(400).json({ error: 'pdfBase64 (string) is required' });
+  }
+  // Cheap length pre-check before the (comparatively expensive) base64 decode
+  // — base64 inflates size by ~4/3, so this rejects wildly oversized payloads
+  // without ever allocating the decoded buffer.
+  if (pdfBase64.length > PDF_MAX_BYTES * 1.4) {
+    return res.status(413).json({ error: 'PDF payload too large (12MB max)' });
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(pdfBase64, 'base64');
+  } catch (e) {
+    return res.status(400).json({ error: 'pdfBase64 is not valid base64' });
+  }
+  if (!buffer.length || buffer.length > PDF_MAX_BYTES) {
+    return res.status(413).json({ error: 'PDF payload too large (12MB max)' });
+  }
+  // The magic bytes can be a handful of bytes into some generators' output
+  // (stray leading whitespace/BOM), so scan a small header window rather
+  // than requiring byte 0 exactly.
+  if (!buffer.subarray(0, 1024).toString('latin1').includes(PDF_MAGIC)) {
+    return res.status(400).json({ error: 'Decoded content is not a PDF (missing %PDF- header)' });
+  }
+
+  const effectivePrinter = (printerName && String(printerName).trim())
+    || config.worksheetPrinter
+    || PRINTER_NAME;
+
+  const pdfPath = tmpFilePath('awana-doc', 'pdf');
+  try {
+    fs.writeFileSync(pdfPath, buffer);
+    printPdf(pdfPath, effectivePrinter);
+    console.log(`[print-pdf] Printed ${label ? `'${String(label).slice(0, 60)}' ` : ''}(${buffer.length} bytes) to ${effectivePrinter || 'default'}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[print-pdf] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    fs.unlink(pdfPath, () => {});
+  }
+});
+
+// ── Check-in CSV write-back safety net ────────────────────────────────────────
+// If a station loses its TwoTimTwo session mid-event, tonight's check-ins are
+// still in print history — this exports them in the shape TwoTimTwo's own
+// check-in CSV importer expects (docs/TWOTIMTWO.md §2.4, /clubber/checkin_csv,
+// which does fuzzy name matching) so the director can reconcile attendance
+// afterwards instead of hand-entering it.
+function csvField(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+app.get('/checkin-csv-export', (req, res) => {
+  const dateParam = String(req.query.date || '').trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : new Date().toISOString().slice(0, 10);
+
+  const history = loadHistory();
+  const seen = new Set();
+  const rows = [];
+  for (const e of history) {
+    if (!e || !e.timestamp || !e.timestamp.startsWith(date)) continue;
+    if (e.success === false) continue;   // a failed print never actually checked the kid in
+    if (e.isAward) continue;             // award slips are not check-ins
+    const first = String(e.firstName || '').trim();
+    const last  = String(e.lastName  || '').trim();
+    if (!first && !last) continue;
+    const key = `${first} ${last}`.toLowerCase();
+    if (seen.has(key)) continue;         // one row per child even with reprints
+    seen.add(key);
+    rows.push({ first, last });
+  }
+
+  const lines = ['First Name,Last Name,Date'];
+  rows.forEach(r => lines.push([csvField(r.first), csvField(r.last), csvField(date)].join(',')));
+  const csv = lines.join('\r\n') + '\r\n';
+
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="checkin-export-${date}.csv"`);
+  res.send(csv);
+});
+
+// ── Feed receive endpoints (contract v3) ──────────────────────────────────────
+// The extension scrapes TwoTimTwo's own report CSVs / iCal / admin messages
+// and POSTs the results here; feeds.js validates + throttles (max one publish
+// per 5s per feed) and this thin route does the actual Pusher publish.
+function makeFeedRoute(feedName) {
+  return async (req, res) => {
+    const result = feeds.submitFeed(feedName, req.body, Date.now());
+    if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
+    if (result.throttled) return res.json({ ok: true, throttled: true });
+
+    let published = false;
+    try {
+      published = await events.publish(pusher, EVENT_CHANNEL, feedName, result.payload);
+    } catch (e) { published = false; }
+    feeds.recordPublishOutcome(feedName, published);
+    res.json({ ok: true, published });
+  };
+}
+
+app.post('/feed/tonight',  makeFeedRoute('tonight'));
+app.post('/feed/points',   makeFeedRoute('points'));
+app.post('/feed/schedule', makeFeedRoute('schedule'));
+app.post('/feed/notice',   makeFeedRoute('notice'));
 
 // ── Event-bus publishers ──────────────────────────────────────────────────────
 // Interval publishers are gated by the church-config club-night window so the
@@ -2167,6 +2639,10 @@ app.get('/health', async (req, res) => {
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
   } catch { /* no CSV yet */ }
+  let householdsUpdatedAt = null;
+  try {
+    householdsUpdatedAt = fs.statSync(HOUSEHOLDS_CSV_FILE).mtime.toISOString();
+  } catch { /* no household export synced yet */ }
   res.json({
     status: 'ok',
     printer: PRINTER_NAME || '(default)',
@@ -2179,7 +2655,11 @@ app.get('/health', async (req, res) => {
     selectorSelfTest: lastSelfTest,
     lastCanary,
     printFailures: printFailures.length,
-    csv: { count: clubbers.length, updatedAt: csvUpdatedAt }
+    csv: { count: clubbers.length, updatedAt: csvUpdatedAt },
+    households: { count: households.length, updatedAt: householdsUpdatedAt },
+    // Freshness per POST /feed/* so the dashboard can show whether the
+    // extension's tonight/points/schedule/notice scrapes are still landing.
+    feeds: feeds.getFeedsHealth(),
   });
 });
 
@@ -2250,7 +2730,8 @@ app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
-    phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin
+    phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
+    worksheetPrinter,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -2271,6 +2752,9 @@ app.post('/config', (req, res) => {
     if (connectCard !== undefined) next.connectCard = !!connectCard;
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
+    // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
+    // church running two printers can route them separately.
+    if (worksheetPrinter !== undefined) next.worksheetPrinter = String(worksheetPrinter || '').trim();
 
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
     // Keep the live process in sync so schedule/PIN/toggle changes apply
@@ -2501,6 +2985,8 @@ function startListening(attempt = 1) {
     sweepOrphanedTempFiles();
     // Load clubbers before accepting requests so the first print has data ready.
     clubbers = loadClubbers();
+    households = loadHouseholds();
+    householdSiblingIndex = buildHouseholdSiblingIndex(households);
     startClubNightTimers();
     // Publish the birthday roster once at startup so displays that boot before
     // the first club-night interval still get the list. Delayed a few seconds
@@ -2534,6 +3020,7 @@ module.exports = {
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+  parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
 };
 
 if (require.main === module) {

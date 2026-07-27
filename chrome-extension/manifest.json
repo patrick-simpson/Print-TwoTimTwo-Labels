@@ -21,7 +21,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.twotimtwo.com/*"],
-      "js": ["content.js"],
+      "js": ["feeds.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

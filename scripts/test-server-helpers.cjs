@@ -13,7 +13,10 @@ const path = require('path');
 
 const {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+  parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
 
 let passed = 0;
 let failed = 0;
@@ -25,6 +28,10 @@ function check(name, cond, detail) {
     failed++;
     console.error(`  ✗ ${name}${detail ? ' — ' + detail : ''}`);
   }
+}
+
+function arrEq(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 // ── Fixture: the real export format ──────────────────────────────────────────
@@ -204,6 +211,144 @@ console.log('findClubberIn — id-first lookup');
     findClubberIn(rows, 'cal', 'zephyr', null).ClubberID === '103');
   check('nothing matches → null', findClubberIn(rows, 'Zoe', 'Nobody', '') === null);
   check('empty everything → null', findClubberIn(rows, '', '', '') === null);
+}
+
+console.log('parseAllergies — negation-aware, biased toward flagging a real allergy');
+{
+  // Bias under test: only an EXPLICIT negation cue at a clause's own start
+  // suppresses that clause. Anything hedged/ambiguous still flags — a missed
+  // real allergy is far worse than an extra icon on the label.
+  check('"no allergies" → none', arrEq(parseAllergies('no allergies'), []));
+  check('"no known food allergies" → none', arrEq(parseAllergies('no known food allergies'), []));
+  check('"loves coloring" → none (bare "color" no longer triggers DYE)',
+    arrEq(parseAllergies('loves coloring'), []));
+  check('"peanut allergy" → nuts', arrEq(parseAllergies('peanut allergy'), ['NUTS']));
+  check('"allergic to milk, not eggs" → dairy only (negated clause dropped, other clause unaffected)',
+    arrEq(parseAllergies('allergic to milk, not eggs'), ['DAIRY']));
+  check('"red 40 sensitivity" → dye', arrEq(parseAllergies('red 40 sensitivity'), ['DYE']));
+
+  // REGRESSION GUARD: a negation is very often followed by the real allergy as
+  // an exception. Suppressing the whole clause silently DROPPED these, which is
+  // the one direction this parser must never fail in.
+  check('"no known allergies except peanuts" → nuts (exception after negation)',
+    arrEq(parseAllergies('no known allergies except peanuts'), ['NUTS']));
+  check('"no allergies but severe peanut reaction" → nuts',
+    arrEq(parseAllergies('no allergies but severe peanut reaction'), ['NUTS']));
+  check('"none other than dairy" → dairy',
+    arrEq(parseAllergies('none other than dairy'), ['DAIRY']));
+  check('"not allergic to nuts but is allergic to eggs" → egg only',
+    arrEq(parseAllergies('not allergic to nuts but is allergic to eggs'), ['EGG']));
+  // Documents the accepted trade-off: text after an exception marker is always
+  // scanned, so this over-flags rather than risk missing a real allergy.
+  check('"no nuts but dairy is fine" → dairy (over-flags by design)',
+    arrEq(parseAllergies('no nuts but dairy is fine'), ['DAIRY']));
+  check('"food colouring intolerance" → dye (food-dye sense, not bare "color")',
+    arrEq(parseAllergies('food colouring intolerance'), ['DYE']));
+  check('ambiguous/hedged still flags (never lose a real allergy)',
+    arrEq(parseAllergies('possible peanut allergy, unconfirmed by parent'), ['NUTS']));
+  check('"denies nut allergy" → none (explicit negation cue at clause start)',
+    arrEq(parseAllergies('denies nut allergy'), []));
+  check('"n/a" alone → none', arrEq(parseAllergies('n/a'), []));
+  check('blank/null/whitespace → none', arrEq(parseAllergies(''), []) && arrEq(parseAllergies(null), []) && arrEq(parseAllergies('   '), []));
+  check('multiple real allergies in one note all flagged, in stable order',
+    arrEq(parseAllergies('Peanut allergy, dairy intolerance, gluten sensitivity, egg allergy too'),
+      ['NUTS', 'DAIRY', 'GLUTEN', 'EGG']));
+  check('"eggnog" alone does not falsely flag EGG (word-boundary discipline)',
+    arrEq(parseAllergies('loves eggnog at Christmas'), []));
+}
+
+console.log('buildHouseholdSiblingIndex — authoritative household export (GET /household/csv)');
+{
+  const rows = parseCSV([
+    'Household ID,Parent/Guardian#1,Active Clubbers',
+    'H1,Pat Zephyr,"Amy Zephyr, Ben Orchard"',
+    'H2,Robin Zephyr,Cal Zephyr',
+  ].join('\n'));
+  const idx = buildHouseholdSiblingIndex(rows);
+  check('"Active Clubbers" column parsed via HEADER_MAP', rows[0].ActiveClubbers === 'Amy Zephyr, Ben Orchard');
+  check('household groups a blended-family pair by name alone (no shared phone needed)',
+    (idx.get('amy zephyr') || []).includes('Ben Orchard') && (idx.get('ben orchard') || []).includes('Amy Zephyr'));
+  check('single-child household has no sibling entry',
+    !idx.has('cal zephyr') || (idx.get('cal zephyr') || []).length === 0);
+  check('empty/garbage rows are ignored without throwing', arrEq([...buildHouseholdSiblingIndex([{}, { ActiveClubbers: '' }]).keys()], []));
+}
+
+console.log('siblingsFor — authoritative household map wins over CSV heuristics');
+{
+  const csvRows = parseCSV(FIXTURE); // Amy/Ben grouped by shared phone; Cal is a separate household
+  const householdRows = parseCSV([
+    'Household ID,Active Clubbers',
+    'H9,"Amy Zephyr, Cal Zephyr"',
+  ].join('\n'));
+  const hhIndex = buildHouseholdSiblingIndex(householdRows);
+
+  check('household map overrides the CSV phone/address heuristic entirely',
+    arrEq(siblingsFor('Amy Zephyr', hhIndex, csvRows), ['Cal Zephyr']));
+  check('falls back to CSV heuristics for a child with no household entry',
+    (siblingsFor('Ben Orchard', hhIndex, csvRows) || []).includes('Amy Zephyr'));
+  check('falls back to CSV heuristics entirely when no household map loaded',
+    (siblingsFor('Ben Orchard', new Map(), csvRows) || []).includes('Amy Zephyr'));
+  check('unknown child → empty array, never throws', arrEq(siblingsFor('Nobody Here', hhIndex, csvRows), []));
+}
+
+console.log('feeds.submitFeed — validation, 5s throttle, and /health freshness snapshot');
+{
+  feeds._resetForTests();
+  let t = 1_700_000_000_000;
+
+  const r1 = feeds.submitFeed('tonight', { checkedIn: 10, booksCompleted: 2, awardsEarned: 1, friendsBrought: 0 }, t);
+  check('valid tonight body publishes on first submit (not throttled)',
+    r1.valid && r1.throttled === false, JSON.stringify(r1));
+  check('payload matches the buildTonight contract shape', r1.payload && r1.payload.checkedIn === 10 && typeof r1.payload.at === 'string');
+
+  const r2 = feeds.submitFeed('tonight', { checkedIn: 11 }, t + 100);
+  check('a second submit 100ms later is throttled', r2.valid && r2.throttled === true, JSON.stringify(r2));
+
+  const r3 = feeds.submitFeed('tonight', { checkedIn: 12 }, t + feeds.THROTTLE_MS + 1);
+  check('a submit after the throttle window publishes again', r3.valid && r3.throttled === false, JSON.stringify(r3));
+
+  const badCount = feeds.submitFeed('tonight', { checkedIn: 'a lot' }, t + 10_000);
+  check('a non-numeric counter is rejected with a 400, not coerced to 0',
+    badCount.valid === false && badCount.status === 400, JSON.stringify(badCount));
+
+  const badBody = feeds.submitFeed('tonight', 'nope', t + 20_000);
+  check('a non-object body is rejected with a 400', badBody.valid === false && badBody.status === 400);
+
+  feeds._resetForTests();
+  const pointsOk = feeds.submitFeed('points', { groups: { Red: 5, Blue: 3 }, club: 'Sparks' }, t);
+  check('valid points body accepted', pointsOk.valid && pointsOk.payload.groups.Red === 5);
+  const pointsBadShape = feeds.submitFeed('points', { groups: ['Red', 'Blue'] }, t + 1);
+  check('an array for groups is rejected (must be {team: points})', pointsBadShape.valid === false);
+  const pointsBadValue = feeds.submitFeed('points', { groups: { Red: 'Alice Smith' } }, t + 2);
+  check('a non-numeric group value is rejected rather than silently dropped', pointsBadValue.valid === false);
+
+  feeds._resetForTests();
+  const schedOk = feeds.submitFeed('schedule', { nextMeetingDate: '2026-08-05', title: 'Water Night' }, t);
+  check('valid schedule body accepted', schedOk.valid && schedOk.payload.nextMeetingDate === '2026-08-05');
+  const schedBad = feeds.submitFeed('schedule', { nextMeetingDate: 'next Wednesday-ish' }, t + 1);
+  check('a malformed date is rejected with a 400 instead of being silently dropped',
+    schedBad.valid === false && schedBad.status === 400);
+  const schedNoDate = feeds.submitFeed('schedule', { noClubThisWeek: true }, t + 2);
+  check('schedule body without a date is still valid (nextMeetingDate is optional)', schedNoDate.valid === true);
+
+  feeds._resetForTests();
+  const noticeOk = feeds.submitFeed('notice', { level: 'critical', message: 'CLUB CANCELLED TONIGHT' }, t);
+  check('valid notice body accepted', noticeOk.valid && noticeOk.payload.message === 'CLUB CANCELLED TONIGHT');
+  const noticeEmpty = feeds.submitFeed('notice', { level: 'info', message: '   ' }, t + 1);
+  check('an empty message is a 400 (buildNotice returning null must never publish)',
+    noticeEmpty.valid === false && noticeEmpty.status === 400);
+
+  feeds._resetForTests();
+  feeds.submitFeed('tonight', { checkedIn: 5 }, t);
+  feeds.recordPublishOutcome('tonight', true);
+  const health = feeds.getFeedsHealth();
+  check('getFeedsHealth surfaces receipt + publish freshness for GET /health',
+    !!health.tonight.lastReceivedAt && health.tonight.lastPublishedAt === health.tonight.lastReceivedAt && health.tonight.lastPublishOk === true,
+    JSON.stringify(health.tonight));
+  check('an unknown feed name is rejected rather than crashing',
+    feeds.submitFeed('not-a-real-feed', {}, t).valid === false);
+
+  feeds._resetForTests();
 }
 
 console.log('');
