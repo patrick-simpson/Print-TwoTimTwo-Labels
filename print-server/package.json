@@ -1,6 +1,6 @@
 {
   "name": "awana-print-server",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Silent label print server for Awana check-in",
   "main": "server.js",
   "dependencies": {

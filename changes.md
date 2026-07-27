@@ -1,4 +1,35 @@
-﻿## [5.1.0] - 2026-07-26
+﻿## [5.2.0] - 2026-07-27
+The whole "future possibilities" backlog from v5.1.0 — all fourteen items — is now built. v5.1.0 validated what TwoTimTwo actually exposes; this release uses it. The theme: the printer stops guessing and starts asking TwoTimTwo directly, and the screens start showing what TwoTimTwo already knows.
+
+### No child gets missed: check-ins are now reconciled against TwoTimTwo itself (R-1)
+Remote check-in detection worked by watching rows disappear from the check-in page's roster — so if a row was missed (a search filter, a re-render, a browser hiccup), that child silently never got a label. The extension now cross-checks TwoTimTwo's own **check-in report** every minute during club and prints anything the diff detector missed. Three safety properties were designed in before the feature: the **first pass never prints** (it seeds dedup from whoever is already checked in, so opening a station mid-event cannot print the entire roster), the baseline is cleared with the other stale-session keys so a new club night re-baselines instead of reprinting the room, and **a pass prints at most 5 labels** — a bigger gap means something is wrong and a volunteer must not be handed sixty labels. The reverse check (printed here but absent from the report) is telemetry only: it surfaces a count and never prints or unprints. A "Sync now" button runs it on demand.
+
+### Labels are tied to a child, not a name (R-4)
+Dedup was keyed on lowercased display name, so two children sharing a name were one record. Identity now prefers TwoTimTwo's own clubber id and falls back to the name, threaded through the roster cache, the printed set, and the print payload. Two dedup holes found while reviewing this are fixed: a hand-typed walk-in recorded under a name key would print a **second** label once registration checked them in and the reconcile report returned a real id; and name keys only trimmed their ends, so the report's markup (the name sits between two links, and can carry padding or a newline) could yield `jane  doe` against the roster's `jane doe` — one child treated as two, another duplicate label.
+
+### Siblings are now looked up, not guessed (R-3)
+The roster export carries no household id, so "Also here tonight?" had to infer families from phone and address heuristics. The household CSV — whose *Active Clubbers* column lists each household's children directly — is now synced every 30 minutes and is the primary source, with the heuristics kept only as a fallback. `GET /siblings` also accepts a clubber id, so duplicate names resolve to the right family.
+
+### Allergy icons: fewer false alarms, and never a false negative (R-5)
+Allergies come from a free-text Notes field, so parsing was noisy ("loves coloring" produced a dye icon). Parsing is now negation-aware — "no known allergies" yields nothing — and the dye match requires a food-dye sense. Critically, **text after an exception marker is always scanned**: "no known allergies except peanuts", "none other than dairy" and "not allergic to nuts but is allergic to eggs" all still flag. Suppressing a whole clause silently dropped those allergies, which is the one direction this code must never fail in. All locked in as regression tests.
+
+### New at the check-in table
+- **Award slips (F-1)** — when a child finishes a book or earns an award, a slip prints alongside their label, sourced from the meeting report. Flagged in history so it never masquerades as a check-in in the reprint list.
+- **Direct check-in (F-2)** — sibling, phone and Quick Mode check-ins called TwoTimTwo by clicking its modal and polling for the button. They now post to the check-in endpoint directly, with the old click-and-poll path kept as a fallback.
+- **One-step walk-ins (F-3)** — the walk-in box can now also register the guest in TwoTimTwo. The label prints regardless of whether the form succeeds.
+- **Leader worksheets (F-4)** — handbook agenda PDFs can auto-print at meeting start. Opt-in, because a surprise stack of letter-size paper is worse than none.
+- **Attendance safety net (R-2)** — `GET /checkin-csv-export` produces a CSV in the exact format TwoTimTwo's own check-in import expects, so a station that lost its connection reconciles a night's attendance instead of hand-entering it.
+
+### The screens now show what TwoTimTwo knows (D-1 … D-5)
+Four new PII-free event types (contract v3: `tonight`, `points`, `schedule`, `notice`) carry aggregates from TwoTimTwo's own reports to the displays: a **lobby ticker** of tonight's counts, a **color-team points scoreboard** on the projector, **calendar-driven next-meeting awareness** so the countdown stops relying on a hand-maintained schedule, and **announcement/cancellation alerts** where a cancellation renders as an unmissable full-width bar. Trek and Journey are also no longer dropped by the projector's club code — their birthdays were silently never celebrated.
+
+### Privacy and safety of the new surface
+The only free-text field ever added to the channel is a notice message, and only because it is church-authored copy written *for* public display; it is capped and forced to plain text on both the producer and the consumer. Everything else is counters, team names and dates — the calendar parser reads only the start date and title, never attendee or organizer data. Two hardening fixes landed during review: request-body limits are **scoped** so only the PDF route accepts a large body (CORS is deliberately wide open here so the extension can reach the server, which also means any page the volunteer has open can POST — a global 18 MB limit would let a stray tab push megabytes through a laptop mid-event), and the household ingest refuses a payload that parses to zero households while a good map is loaded.
+
+### Testing
+The Chrome extension had **no test coverage at all** before this release. It now has a suite covering the identity/dedup logic that decides whether a child already has a label — and because `content.js` is a single IIFE that exports nothing, the tests extract the real function source and evaluate it rather than re-implementing it (a copy would pass while the shipped code broke). That suite caught the whitespace bug above. Totals: **241 checks in the printer repo** (141 contract + 83 server + 17 extension) and **503 in the display repo**, plus the headless label render and the Playwright countdown-boundary suite.
+
+## [5.1.0] - 2026-07-26
 Validated the whole roster/check-in integration against the **real** TwoTimTwo site (kvbchurch.twotimtwo.com) for the first time, instead of the assumed formats it had been coded against. The check-in DOM contract, the `/clubber/csv` export, and the check-in AJAX endpoints are now captured in `docs/TWOTIMTWO.md` so nobody has to re-scrape the site to understand it. Several enrichment paths that were quietly keyed to the wrong columns are fixed, and clubber identity is now anchored to TwoTimTwo's own id.
 
 ### The photo/no-photo icon read the wrong consent column (print server)
