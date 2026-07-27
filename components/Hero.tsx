@@ -11,12 +11,12 @@ const LabelMock: React.FC = () => (
     <div className="relative bg-white rounded-2xl shadow-2xl shadow-slate-300/60 border border-slate-200 rotate-1 hover:rotate-0 transition-transform duration-300 w-full max-w-[420px] aspect-[2/1] flex overflow-hidden">
       {/* icon panel */}
       <div className="w-[28%] bg-slate-50 border-r border-slate-200 flex items-center justify-center">
-        <div className="w-16 h-16 rounded-full bg-slate-900 text-white flex items-center justify-center text-2xl font-black">S</div>
+        <div className="w-16 h-16 rounded-full bg-slate-900 text-white flex items-center justify-center text-2xl font-black">M</div>
       </div>
       {/* text zone */}
       <div className="flex-1 flex flex-col items-center justify-center px-4 relative">
         <div className="text-4xl font-black text-slate-900 leading-none tracking-tight">Micah</div>
-        <div className="text-lg text-slate-800 mt-1">Simpson</div>
+        <div className="text-lg text-slate-800 mt-1">Mills</div>
         <div className="w-3/4 border-t border-slate-700 mt-2 mb-1"></div>
         <div className="text-xs font-bold italic text-slate-900">Sparks</div>
         <div className="text-[10px] italic text-slate-500">Sparks Green</div>

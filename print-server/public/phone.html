@@ -84,6 +84,10 @@ function loadRoster() {
     body: JSON.stringify({ pin: PIN })
   }).then(function(r) {
     if (r.status === 403) throw new Error('pin');
+    // The server rate-limits wrong PINs, so distinguish "locked out" from
+    // "wrong" — otherwise a volunteer who fat-fingered it a few times sees
+    // "cannot reach the print server" and starts debugging the WiFi.
+    if (r.status === 429) throw new Error('locked');
     return r.json();
   }).then(function(data) {
     KIDS = data.kids || [];
@@ -99,7 +103,9 @@ function unlock() {
     sessionStorage.setItem('awanaPhonePin', PIN);
   }).catch(function(e) {
     document.getElementById('pin-err').textContent =
-      e.message === 'pin' ? 'Wrong PIN — ask the check-in desk.' : 'Cannot reach the print server. Same Wi-Fi?';
+      e.message === 'pin' ? 'Wrong PIN — ask the check-in desk.'
+      : e.message === 'locked' ? 'Too many wrong PINs — wait a minute, then try again.'
+      : 'Cannot reach the print server. Same Wi-Fi?';
   });
 }
 document.getElementById('pin-btn').addEventListener('click', unlock);

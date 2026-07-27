@@ -11,10 +11,12 @@ process.on('uncaughtException',  err => console.error('[fatal] Uncaught exceptio
 process.on('unhandledRejection', err => console.error('[fatal] Unhandled rejection (server kept alive):', err));
 
 const express = require('express');
-const cors    = require('cors');
 const Pusher  = require('pusher');
 const events  = require('./events');
 const feeds   = require('./feeds');
+// The whole trust model (loopback vs LAN vs the open web, PIN handling, origin
+// allowlist, bind host) lives in one pure module so it can be unit-tested.
+const security = require('./security');
 // @napi-rs/canvas ships prebuilt N-API binaries, so the same node_modules
 // works under plain Node AND inside a packaged Electron app — the old `canvas`
 // package needed an ABI-matched native build and silently broke when embedded.
@@ -27,7 +29,10 @@ const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
 
-const PORT         = 3456;
+// 3456 is the port the extension, the bookmarklet and the installer all
+// hardcode, so it stays the default. AWANA_PORT exists only so the test suite
+// can bind somewhere else without colliding with a real install on the machine.
+const PORT         = Number(process.env.AWANA_PORT) || 3456;
 const PRINTER_NAME = process.env.PRINTER_NAME || '';
 const SERVER_VERSION = require('./package.json').version;
 
@@ -55,6 +60,11 @@ try {
 } catch (e) {
   console.warn('[config] Failed to load config.json:', e.message);
 }
+
+// Brute-force protection for the phone PIN. Lives at module scope so the
+// failure counts survive across requests but not across restarts — a restart
+// mid-event must never leave a volunteer locked out.
+const pinLimiter = security.createPinLimiter();
 
 // ── Church configuration ──────────────────────────────────────────────────────
 // Per-church knobs (check-in URL, club-night windows, event-bus channel) live
@@ -1543,11 +1553,58 @@ function wakePendingWaiters() {
 
 // ── Express server ────────────────────────────────────────────────────────────
 const app = express();
-app.use(cors());
-// CORS is deliberately wide open so the content script on twotimtwo.com can
-// reach these endpoints — which also means any page the volunteer has open can
-// POST here. Keep the GLOBAL body limit small so a hostile or buggy tab can't
-// push megabytes of JSON through a laptop that is mid-event. Exactly one route
+
+// ── CORS: an allowlist, not `*` ───────────────────────────────────────────────
+// This used to be `app.use(cors())`, i.e. `Access-Control-Allow-Origin: *` on
+// every response. Because the browser lets a page READ a response bearing that
+// header, any website open in the volunteer's browser could fetch
+// /stats/tonight and walk away with tonight's children plus their allergy
+// tokens. The allowlist (security.isAllowedOrigin) admits only the extension,
+// *.twotimtwo.com, this server's own pages, and any operator-configured extra.
+//
+// Two rules, both necessary:
+//   • Reads  — no ACAO header for a stranger, so the browser blocks the read.
+//   • Writes — a mutating request carrying a non-allowlisted Origin is refused
+//     outright (403). A form POST with text/plain is never preflighted, so
+//     without this a hostile tab could still WRITE (that is how a crafted name
+//     reached print-history.json and then the dashboard's innerHTML).
+function corsPolicy(req, res, next) {
+  const origin = req.headers.origin;
+  const allowed = security.isAllowedOrigin(origin, {
+    port: PORT,
+    extraOrigins: security.sanitizeAllowedOrigins(config.allowedOrigins),
+  });
+
+  // Vary so a proxy or the browser cache never reuses one origin's answer for
+  // another origin's request.
+  res.setHeader('Vary', 'Origin');
+
+  if (origin && allowed) {
+    // Echo the exact origin — never '*'. No Allow-Credentials: these endpoints
+    // are authenticated by PIN (or by being loopback), never by cookie.
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Awana-Pin');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+
+  if (req.method === 'OPTIONS') {
+    // Answer the preflight before the auth gate: a rejected preflight must look
+    // like a CORS failure, not a PIN failure.
+    return res.sendStatus(origin && allowed ? 204 : 403);
+  }
+
+  if (origin && !allowed && security.isMutatingMethod(req.method)) {
+    console.warn(`[security] Refused ${req.method} ${req.path} from disallowed origin ${origin}`);
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+
+  return next();
+}
+app.use(corsPolicy);
+
+// Keep the GLOBAL body limit small so a hostile or buggy tab can't push
+// megabytes of JSON through a laptop that is mid-event. Exactly one route
 // legitimately carries a base64 PDF (/print-pdf, where base64 inflates a 12MB
 // worksheet by ~4/3), so the global parser steps aside for that single path and
 // the route mounts its own larger parser. The global parser must skip it rather
@@ -1559,6 +1616,53 @@ app.use((req, res, next) => {
   if (req.path === PDF_UPLOAD_PATH) return next();
   return globalJson(req, res, next);
 });
+
+// ── The auth gate ─────────────────────────────────────────────────────────────
+// Mounted BEFORE express.static and before every route, so nothing — not the
+// dashboard, not the roster, not /config — is reachable from the LAN without
+// the PIN. Loopback callers (the extension via localhost, the dashboard, the
+// Electron shell) pass through untouched, which is why this adds no friction to
+// the normal single-laptop setup.
+//
+// LAN_PUBLIC_PATHS is the one exception: the phone page itself is the PIN entry
+// form, so it must load before a PIN exists to send. It contains no roster
+// data — every byte of that arrives via POST /phone/roster, which is gated.
+const LAN_PUBLIC_PATHS = new Set(['/phone']);
+
+app.use((req, res, next) => {
+  if (security.isLoopbackRequest(req)) return next();
+  if (LAN_PUBLIC_PATHS.has(req.path)) return next();
+
+  const addr = (req.socket && req.socket.remoteAddress) || 'unknown';
+  const pin = String(config.phonePin || '');
+
+  // Fail CLOSED. The old phonePinOk() returned true when no PIN was set, so a
+  // default install handed the whole roster to anyone on the venue network.
+  if (!pin) {
+    console.warn(`[security] Refused ${req.method} ${req.path} from ${addr} — no PIN is configured`);
+    return res.status(403).json({ error: 'This server is not accepting network requests. Set a PIN in Settings to enable phone check-in.' });
+  }
+
+  const now = Date.now();
+  const waitMs = pinLimiter.retryAfterMs(addr, now);
+  if (waitMs > 0) {
+    res.setHeader('Retry-After', String(Math.ceil(waitMs / 1000)));
+    return res.status(429).json({ error: `Too many wrong PINs — try again in ${Math.ceil(waitMs / 1000)}s` });
+  }
+
+  const supplied = String(
+    (req.body && req.body.pin) || req.headers['x-awana-pin'] || req.query.pin || ''
+  );
+  if (!supplied || !security.timingSafeStringEqual(supplied, pin)) {
+    const rec = pinLimiter.recordFailure(addr, now);
+    console.warn(`[security] Wrong/missing PIN for ${req.method} ${req.path} from ${addr} (failure ${rec.failures})`);
+    return res.status(403).json({ error: 'Wrong PIN' });
+  }
+
+  pinLimiter.recordSuccess(addr);
+  return next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));  // serve static files (bookmarklet.html, etc)
 
 // Health endpoint defined below with enhanced warnings
@@ -1966,7 +2070,12 @@ const MAX_HISTORY = 200;
 function loadHistory() {
   try {
     if (fs.existsSync(HISTORY_FILE)) {
-      return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+      const raw = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+      // MAX_HISTORY caps the row COUNT; this caps the AGE. Without it a church
+      // that prints a handful of labels a week accumulated children's names and
+      // check-in times indefinitely. Applied on read as well as write so an
+      // existing over-long file shrinks on the next run.
+      return security.pruneHistoryByAge(raw, config.historyRetentionDays, Date.now());
     }
   } catch (e) {
     console.warn('[history] Failed to load print history:', e.message);
@@ -1989,11 +2098,16 @@ function saveHistory(entries) {
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
-    firstName: entry.firstName,
-    lastName: entry.lastName,
-    clubName: entry.clubName || '',
+    // Bounded and control-character-stripped on the way in: these strings come
+    // straight off a request body and are persisted, then rendered by the
+    // dashboard. The dashboard escapes on output (that is the real fix for the
+    // stored-XSS path); this keeps an unbounded or escape-laden value from
+    // bloating the history file or mangling the console log.
+    firstName: security.sanitizeStoredText(entry.firstName),
+    lastName: security.sanitizeStoredText(entry.lastName),
+    clubName: security.sanitizeStoredText(entry.clubName || ''),
     clubImageData: entry.clubImageData || null,
-    printer: entry.printer || '',
+    printer: security.sanitizeStoredText(entry.printer || ''),
     success: entry.success,
     visitor: !!entry.visitor,
     // Award slips (POST /print-award) are flagged so they never masquerade
@@ -2001,7 +2115,7 @@ function addHistoryEntry(entry) {
     // from tonight's check-in stats, but still show up in /history for the
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
-    award: entry.award || '',
+    award: security.sanitizeStoredText(entry.award || ''),
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -2703,7 +2817,15 @@ function checkForUpdates() {
 
 // Override health endpoint with enhanced version
 app.get('/health', async (req, res) => {
-  const warnings = await checkPrinterWarnings();
+  // Copy: checkPrinterWarnings() hands back its CACHED array, so appending in
+  // place would re-append on every poll until the cache expired.
+  const warnings = [...await checkPrinterWarnings()];
+  // Surface security misconfiguration where the operator already looks. A
+  // silently loopback-only server looks identical to a broken phone page, and
+  // "I turned on phone check-in and nothing happens" must not be a mystery.
+  if (config.lanAccess === true && !security.isAcceptablePin(config.phonePin)) {
+    warnings.push('Phone check-in is enabled but no PIN is set, so the server is only listening on this computer. Set a PIN in Settings and restart.');
+  }
   let csvUpdatedAt = null;
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
@@ -2761,22 +2883,36 @@ app.post('/update-now', (req, res) => {
 
 // ── Config endpoints ─────────────────────────────────────────────────────────
 
-// CORS is deliberately wide open so the content script on twotimtwo.com can
-// reach the print endpoints — which also means ANY page the volunteer has
-// open can call GET /config. The Pusher app secret and the phone PIN must not
-// be readable (or writable) that way, so secret-bearing fields are limited to
-// the callers that legitimately edit them:
-//   • no Origin header  — the dashboard's same-origin GETs, curl, tests
-//   • chrome-extension: — the extension's options page
-//   • any origin on this server's own port — the dashboard over localhost or
-//     the LAN IP (ordinary websites are on :80/:443, never :3456)
+// The Pusher app secret and the phone PIN are the two values that must never
+// leave this machine: the secret lets anyone publish to the church's screens,
+// and the PIN is what gates the roster on the LAN.
+//
+// The previous version of this check had two holes, both closed here:
+//   • `origin.endsWith(':3456')` accepted ANY host on that port, so a page
+//     served from http://evil.example:3456 read both secrets cross-origin.
+//   • `if (!origin) return true` trusted every request without an Origin
+//     header — including a plain `curl` from any phone on the church WiFi,
+//     which made the PIN self-defeating (fetch the PIN, then use it).
+//
+// Now: the request must come from the loopback interface, AND its Origin (when
+// present) must be the extension or one of this server's own loopback pages.
+// A LAN caller never gets these fields even with a valid PIN.
 const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin'];
 
 function isTrustedConfigOrigin(req) {
+  if (!security.isLoopbackRequest(req)) return false;
   const origin = req.headers.origin;
-  if (!origin) return true;
-  if (origin.startsWith('chrome-extension://')) return true;
-  return origin.endsWith(`:${PORT}`);
+  if (!origin) return true;                                   // same-origin GET, curl on this machine, tests
+  if (origin.startsWith('chrome-extension://')) return true;   // the extension's options page
+  if (origin.startsWith('moz-extension://')) return true;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:'
+      && String(url.port) === String(PORT)
+      && (url.hostname === 'localhost' || security.isLoopbackAddress(url.hostname));
+  } catch {
+    return false;
+  }
 }
 
 app.get('/config', (req, res) => {
@@ -2800,7 +2936,7 @@ app.post('/config', (req, res) => {
     printerName, checkinUrl,
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
-    worksheetPrinter,
+    worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -2811,12 +2947,44 @@ app.post('/config', (req, res) => {
       Object.assign(next, JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
     }
     if (printerName !== undefined) next.printerName = printerName;
-    if (checkinUrl !== undefined) next.checkinUrl = checkinUrl;
+    // checkinUrl is handed to shell.openExternal() (Electron) and Start-Process
+    // (legacy installer), so an unvalidated value was an arbitrary URI aimed at
+    // the Windows shell — and this route accepts writes from the extension's
+    // origin. Same reasoning as worksheetPrinter below: refuse to PERSIST
+    // anything unsafe, so it can never be poisoned once and fire later.
+    if (checkinUrl !== undefined) {
+      if (!security.isSafeExternalUrl(checkinUrl)) {
+        return res.status(400).json({ error: 'checkinUrl must be a plain http(s) URL' });
+      }
+      next.checkinUrl = String(checkinUrl).trim();
+    }
     if (pusherAppId !== undefined) next.pusherAppId = pusherAppId;
     if (pusherKey !== undefined) next.pusherKey = pusherKey;
     if (pusherSecret !== undefined) next.pusherSecret = pusherSecret;
     if (pusherCluster !== undefined) next.pusherCluster = pusherCluster;
-    if (phonePin !== undefined) next.phonePin = String(phonePin).slice(0, 12);
+    // A PIN is the only thing between the LAN and the roster, so it has a
+    // minimum length now and the 12-char cap is gone (it discouraged
+    // passphrases). Clearing it is still allowed — that just turns LAN access
+    // off, because the auth gate fails closed without one.
+    if (phonePin !== undefined) {
+      const wanted = String(phonePin);
+      if (wanted === '') {
+        delete next.phonePin;
+      } else if (!security.isAcceptablePin(wanted)) {
+        return res.status(400).json({
+          error: `PIN must be ${security.PIN_MIN_LENGTH}–${security.PIN_MAX_LENGTH} characters`,
+        });
+      } else {
+        next.phonePin = wanted;
+      }
+    }
+    // Binding beyond loopback is an explicit choice, not a default. Takes
+    // effect on restart (the listening socket is already bound).
+    if (lanAccess !== undefined) next.lanAccess = !!lanAccess;
+    if (allowedOrigins !== undefined) next.allowedOrigins = security.sanitizeAllowedOrigins(allowedOrigins);
+    if (historyRetentionDays !== undefined) {
+      next.historyRetentionDays = security.normalizeRetentionDays(historyRetentionDays);
+    }
     if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
     if (connectCard !== undefined) next.connectCard = !!connectCard;
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
@@ -2872,14 +3040,14 @@ app.post('/config/schedule', (req, res) => {
 });
 
 // ── Phone check-in (#17b) ─────────────────────────────────────────────────────
-// LAN-only trust model: the PIN rides plain HTTP on the venue network. It
-// gates casual misuse, not a hostile network — documented in docs/SETUP.md.
-function phonePinOk(req) {
-  const pin = String(config.phonePin || '');
-  if (!pin) return true; // no PIN configured — open on the LAN
-  const supplied = String((req.body && req.body.pin) || req.headers['x-awana-pin'] || '');
-  return supplied === pin;
-}
+// PIN enforcement for every non-loopback caller now lives in the app-level auth
+// gate near the top of the Express setup — one check, applied to every route,
+// rather than a per-route opt-in that was easy to forget on a new endpoint (and
+// was in fact missing from /stats/tonight, /history and /checkin-csv-export).
+//
+// The PIN still rides plain HTTP on the venue network, so it remains a
+// LAN-trust credential rather than a cryptographic one: it stops a bystander
+// reading the roster, not someone who can already sniff the church WiFi.
 
 app.get('/phone', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'phone.html'));
@@ -2887,7 +3055,7 @@ app.get('/phone', (req, res) => {
 
 // Roster + tonight's checked-in set for the phone page.
 app.post('/phone/roster', (req, res) => {
-  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  // PIN already verified by the auth gate for every non-loopback caller.
   clubbers = loadClubbers();
   const checkedIn = new Set(
     loadHistory()
@@ -2902,7 +3070,7 @@ app.post('/phone/roster', (req, res) => {
 });
 
 app.post('/phone/checkin', (req, res) => {
-  if (!phonePinOk(req)) return res.status(403).json({ error: 'Wrong PIN' });
+  // PIN already verified by the auth gate for every non-loopback caller.
   const name = String((req.body && req.body.name) || '').trim().slice(0, 80);
   if (!name) return res.status(400).json({ error: 'name is required' });
   prunePendingActions();
@@ -3072,10 +3240,27 @@ function startListening(attempt = 1) {
     setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
     prewarmPrinterIfConfigured();
   }
-  const server = app.listen(PORT, () => {
+  // Bind loopback-only unless the operator has explicitly enabled LAN access
+  // AND set a PIN. Previously this was a bare app.listen(PORT), which binds
+  // every interface — so the roster, the check-in history and the allergy list
+  // were readable by anything on the church WiFi.
+  const bind = security.resolveBindHost({
+    lanAccess: config.lanAccess === true,
+    hasPin: security.isAcceptablePin(config.phonePin),
+    envHost: process.env.AWANA_BIND_HOST,
+  });
+  const server = app.listen(PORT, bind.host, () => {
     console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
     console.log(`  Dashboard : http://localhost:${PORT}/`);
     console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
+    console.log(`  Network   : bound to ${bind.host} — ${bind.reason}`);
+    if (bind.lan) {
+      console.log('              Phone check-in is reachable on this network; every');
+      console.log('              request from it must carry the PIN.');
+    } else if (config.lanAccess === true) {
+      console.log('              LAN access is ON in settings but no PIN is set, so the');
+      console.log('              server stayed loopback-only. Set a PIN and restart.');
+    }
     console.log('  Waiting for check-ins. Press Ctrl+C to stop.\n');
   });
   server.on('error', (err) => {
@@ -3100,6 +3285,9 @@ module.exports = {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
+  // The security policy itself is tested through print-server/security.js;
+  // re-exported here so a test can assert the server wires up the same module.
+  security,
 };
 
 if (require.main === module) {

@@ -6,6 +6,50 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { runMigration, removeShortcuts } = require('./src/migrate');
 
+// ── Safe external opens ───────────────────────────────────────────────────────
+// shell.openExternal() hands its argument to the OS handler, so on Windows a
+// non-http scheme can launch a local program. config.checkinUrl reaches it from
+// three call sites below, and POST /config used to accept that value from any
+// caller with no validation — a poisoned config.json was therefore an arbitrary
+// URI aimed at the shell.
+//
+// The server now refuses to PERSIST an unsafe checkinUrl (see
+// security.isSafeExternalUrl in print-server/security.js). This is the second
+// half of that fix: validate again at the sink, because a config.json can also
+// be edited by hand or arrive from an older install. Deliberately implemented
+// locally rather than requiring the server module — these calls can run before
+// the server has loaded (or when it failed to start entirely).
+function isSafeExternalUrl(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s || s.length > 2048) return false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return false;
+  }
+  try {
+    const url = new URL(s);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.username || url.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function openExternalSafely(value, context) {
+  if (!isSafeExternalUrl(value)) {
+    console.error(`[security] Refusing to open unsafe URL from ${context}:`, value);
+    dialog.showErrorBox(
+      'Awana Label Printer — blocked link',
+      'The configured check-in address is not a valid web address, so it was not opened.\n\n'
+      + 'Open Settings and set the check-in page URL (it should start with https://).'
+    );
+    return false;
+  }
+  shell.openExternal(value);
+  return true;
+}
+
 // Single instance lock — prevent two copies of the server running on port 3456
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -175,7 +219,7 @@ function buildTray(config) {
     { type: 'separator' },
     {
       label: 'Open Check-in Page',
-      click: () => shell.openExternal(config.checkinUrl)
+      click: () => openExternalSafely(config.checkinUrl, 'tray menu')
     },
     {
       label: 'Settings',
@@ -342,13 +386,14 @@ ipcMain.handle('save-config', (event, config) => {
   // Close wizard shortly after so the renderer can show a success state
   setTimeout(() => {
     if (setupWindow) setupWindow.close();
-    shell.openExternal(config.checkinUrl);
+    openExternalSafely(config.checkinUrl, 'setup wizard');
   }, 600);
   return { success: true };
 });
 
 ipcMain.handle('open-checkin-page', (event, url) => {
-  shell.openExternal(url);
+  // Renderer-supplied URL: same validation, same reason.
+  openExternalSafely(url, 'open-checkin-page IPC');
 });
 
 ipcMain.handle('get-server-state', () => ({
@@ -410,7 +455,7 @@ app.whenReady().then(async () => {
     buildTray(config);
     // On login-item auto-start stay silent; only open the browser when a
     // person launched the app.
-    if (!isAutoStart) shell.openExternal(config.checkinUrl);
+    if (!isAutoStart) openExternalSafely(config.checkinUrl, 'startup');
   }
 
   // Legacy shortcuts re-launch the old script install on every boot and fight

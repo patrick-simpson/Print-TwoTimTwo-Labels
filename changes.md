@@ -1,4 +1,58 @@
-﻿## [5.2.2] - 2026-07-27
+﻿## [5.3.0] - 2026-07-27
+Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.
+
+**Nothing was leaked into git.** No roster CSV, history file or Pusher secret has ever been committed to this repo — that was checked across the full history. The exposure was on the running server, and in what a *future* commit could have published (see the `.gitignore` item below).
+
+### The server was listening on every network interface
+`app.listen(PORT)` omits its host argument, which binds `0.0.0.0` — every interface — even though the file header claimed "listens on http://localhost:3456". Combined with no authentication on the roster endpoints, any device on the church WiFi (guest network included, if it is flat) could fetch tonight's children and their allergy list:
+
+```
+curl http://<laptop-ip>:3456/stats/tonight
+```
+
+That endpoint returns full names, **allergy tokens**, birthday-week children, and the **no-photo-consent** list. `GET /history`, `/checkin-csv-export`, `/siblings` and `POST /phone/roster` were comparably open.
+
+The server now binds **loopback only** by default. A default install is not reachable from the network at all — not merely PIN-protected there. LAN access (needed for phone check-in) requires the new `lanAccess` setting **and** a PIN; enable it without a PIN and the server stays on loopback, says so at startup, and raises a `/health` warning rather than silently exposing the roster.
+
+### The phone PIN failed open, and was brute-forceable
+`phonePinOk()` began `if (!pin) return true` — no PIN configured meant *no check at all* on the LAN, so the default install served the whole roster to the network. It also compared with `===` (timing-leaky) and had no rate limiting, so a 4-digit PIN fell in seconds. And `GET /config` handed the PIN out to any caller with no `Origin` header — i.e. to `curl` from any phone on the WiFi — which made the PIN self-defeating.
+
+Now: PIN enforcement fails **closed**, uses a constant-time compare, locks an address out after 8 failures, and is applied by a single app-level gate ahead of every route instead of a per-route opt-in that `/stats/tonight`, `/history` and `/checkin-csv-export` had simply never been given. The Pusher secret and the PIN are readable only from loopback, never from the LAN even with a valid PIN.
+
+### `Access-Control-Allow-Origin: *` let any website read the roster
+`app.use(cors())` set a wildcard ACAO on every response, and a browser lets a page **read** a response bearing that header. So any site the volunteer visited while the server ran could `fetch('http://localhost:3456/stats/tonight')` and take the names and allergies — no network access required. The old code's own comment noted that a hostile tab could POST here; the read side was the larger hole.
+
+CORS is now an allowlist (the extension, `*.twotimtwo.com`, this server's own pages, plus an optional `allowedOrigins`) which echoes the exact origin and never `*`. Mutating requests carrying a non-allowlisted `Origin` are refused outright — a form POST is never preflighted, so the allowlist alone would not have stopped writes.
+
+The origin check guarding the secrets had a second hole: it accepted `origin.endsWith(':3456')`, so a page served from `http://evil.example:3456` qualified. It now requires a loopback host as well as the port.
+
+### Stored XSS in the dashboard, escalating to secret theft
+`POST /print` is unauthenticated and wrote `firstName`/`lastName` verbatim into `print-history.json`; the dashboard rendered them with `innerHTML` unescaped. A crafted name therefore became script running on `http://localhost:3456` — the one origin trusted with the Pusher secret and the PIN — which it could then read from `/config` and exfiltrate. The allergy, no-photo and birthday flag lists, the club chips, the failures list and the diagnostics rows had the same defect, and the schedule editor had the attribute-injection variant.
+
+Every interpolation of an outside value now goes through `esc()`. Names are also length-capped and control-character-stripped on the way into the history file, but the output escaping is the actual fix. A static check in the test suite fails the build if any of those fields is interpolated unescaped again — verified by reintroducing the bug and watching it fail with the line number.
+
+### A poisoned config could hand an arbitrary URI to the Windows shell
+`POST /config` gated only `pusherSecret` and `phonePin`, so **any** origin could set `checkinUrl`, with no validation whatsoever. That value reaches `shell.openExternal()` (Electron, at launch and on tray click) and `Start-Process` (legacy installer) — both of which pass a non-`http` scheme to the OS handler. `checkinUrl` is now validated as plain `http(s)` before it is persisted *and* again at each sink, the same treatment `worksheetPrinter` already had.
+
+### `.gitignore` did not cover the files a live install writes
+The important one for anyone who forks this repo. `DATA_DIR` defaults to `print-server/` itself for legacy script installs, so a running install writes **inside the git working tree** — but only `clubbers*.csv` was ignored. A `git add -A`, or a pull request from a machine that had run the server, would have published `config.json` (**the Pusher app secret and the phone PIN**), `households.csv` (guardians, addresses, phone numbers), `print-history.json` and `attendance.json`.
+
+All of those are now ignored. New `SECURITY.md` documents the trust model, what it deliberately does *not* defend against, and a fork checklist: audit history for committed data, rotate credentials, set your own church identity, and point `install-and-run.ps1` at your own repo (`$RepoSlug` — a fork previously downloaded *upstream's* code, silently discarding its own changes).
+
+### Real children's names in the sample data
+The public marketing page rendered a real child's first and last name on its example label, and `data.ts` carried two more in its mock roster — inherited by every fork and published to GitHub Pages. Replaced with synthetic placeholders matching the file's existing style.
+
+### Installers ran unverified downloads with admin rights
+`install-and-run.ps1` downloaded the Node.js and PowerShell 7 MSIs and executed them elevated with no integrity check. HTTPS from a known host is a reasonable trust anchor, but not a sufficient one for an elevated execution. Both are now Authenticode-verified (publisher, not a pinned hash, so it survives a version bump) and refuse to run otherwise.
+
+### Also
+- History is pruned by **age** as well as row count (`historyRetentionDays`, default 60) — a quiet church previously kept every child's name and check-in time indefinitely. Pruning applies on read, so an existing over-long file shrinks on the next run.
+- Removed the `cors` dependency; the policy is 40 lines in `security.js` and no longer needs it.
+- `AWANA_PORT` added so the test suite can bind off 3456 without colliding with a real install. The default is unchanged.
+- The phone page now distinguishes "locked out" from "wrong PIN" instead of reporting a WiFi problem.
+- New `print-server/security.js` holds the whole trust model as pure functions, with 100+ unit assertions in `test-server-helpers.cjs` and 72 end-to-end assertions in the new `test-server-security.cjs` — including one that starts a default-configured server in a child process and proves it cannot be reached on the LAN address at all.
+
+## [5.2.2] - 2026-07-27
 Two label-rendering fixes found by actually looking at rendered labels rather than only asserting on them in tests.
 
 ### The handbook group could be hidden behind the allergy icons

@@ -29,9 +29,38 @@ dist-ssr
 *.sw?
 migrated_prompt_history/
 
-# Real clubber data (personal info -- never commit)
+# ── Runtime data written by the print server (NEVER commit) ──────────────────
+# DATA_DIR defaults to print-server/ itself for legacy script installs, so a
+# live install writes all of the following INSIDE the working tree. Only
+# clubbers*.csv used to be ignored, which meant a `git add -A` — or a fork
+# owner sending a pull request from a machine that had run the server —
+# published the church's Pusher app secret, the phone PIN, every child's
+# check-in history and the full household export.
+#
+# The Electron app points AWANA_DATA_DIR at userData instead, so these paths
+# only appear for script installs and local development. They are ignored
+# regardless of which directory they turn up in.
+
+# Roster and household exports (names, birthdates, allergies, guardians, phones)
 clubbers*.csv
+households*.csv
 !print-server/clubbers-template.csv
+
+# config.json holds pusherSecret and phonePin
+config.json
+!electron-app/renderer/*config*.json
+
+# Check-in history, attendance and the event replay buffer (names + timestamps)
+print-history.json
+print-history.json.tmp
+attendance.json
+events-buffer.json
+
+# Generated label images / temp print artifacts
+label-*.png
+label-*.html
+awana-label-*.png
+awana-worksheet-*.pdf
 
 # Example/test files
 example.html
