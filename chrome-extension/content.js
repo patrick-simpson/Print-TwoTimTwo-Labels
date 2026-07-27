@@ -52,7 +52,27 @@
   // ROSTER_CACHE must still be searchable by name (widget search, sibling
   // lookups), so ROSTER_NAME_INDEX is a secondary nameKey → identityKey index.
   var ROSTER_CACHE      = {};          // { identityKey: { displayName, clubName, clubImageData, recid, clubId, element } }
-  var ROSTER_NAME_INDEX = {};          // { nameKeyLower: identityKey }
+  // { nameKeyLower: identityKey | AMBIGUOUS_NAME }. Two children really can
+  // share a display name (twins, cousins, two unrelated Jane Does). A
+  // single-valued index silently resolved such a name to whichever row was
+  // scanned last, which meant a label could print with the OTHER child's club
+  // and consent data while marking that child printed — so she then never got
+  // a label at all. When a name maps to more than one clubber id we record the
+  // collision instead and refuse to guess: callers fall back to the name key,
+  // which prints the right name and never attributes one child's safety data
+  // to another.
+  // Local calendar date (YYYY-MM-DD). Must be local, not UTC: after 7pm ET a
+  // UTC date is already tomorrow, which would ask TwoTimTwo for the wrong
+  // meeting mid-club.
+  function todayIsoDate() {
+    var d = new Date();
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  }
+
+  var AMBIGUOUS_NAME = '*ambiguous*';
+  var ROSTER_NAME_INDEX = {};
   var knownClubbers   = new Set();   // last-seen identity keys
   var printedNames    = new Set();   // session dedup, identity keys
   var baselineScanned = false;
@@ -112,7 +132,7 @@
   function resolveIdentityKey(name, recid) {
     if (recid == null) {
       var idk = ROSTER_NAME_INDEX[nameKeyOf(name)];
-      if (idk) recid = idk.indexOf('id:') === 0 ? idk.slice(3) : null;
+      if (idk && idk !== AMBIGUOUS_NAME) recid = idk.indexOf('id:') === 0 ? idk.slice(3) : null;
     }
     return identityKey(recid, name);
   }
@@ -131,7 +151,8 @@
   // search, sibling matching, doPrint's clubberId lookup).
   function rosterLookupByName(name) {
     var idk = ROSTER_NAME_INDEX[nameKeyOf(name)];
-    return idk ? ROSTER_CACHE[idk] : null;
+    if (!idk || idk === AMBIGUOUS_NAME) return null;
+    return ROSTER_CACHE[idk] || null;
   }
 
   function loadPrintedState() {
@@ -754,7 +775,17 @@
     }).then(function(text) {
       if (!text) return false;
       var firstName = (childName || '').trim().split(/\s+/)[0] || '';
-      return firstName ? text.indexOf(firstName) !== -1 : true;
+      var ok = firstName ? text.indexOf(firstName) !== -1 : true;
+      if (!ok) return false;
+      // Drop the row ourselves. TwoTimTwo removes a checked-in child's row from
+      // its own AJAX success handler — which never runs here, because posting
+      // directly is the whole point of this path. Without this the row stays
+      // put forever, the caller's "did the row disappear?" verification always
+      // times out, and it falls back to the click-and-poll dance — checking the
+      // child in a SECOND time and double-crediting their events.
+      var row = findClubberElByName(childName);
+      if (row && row.parentNode) row.parentNode.removeChild(row);
+      return true;
     }).catch(function() {
       return false;
     });
@@ -1456,6 +1487,12 @@
         var bal = getShareBalance(parts[0] || '', parts.slice(1).join(' '));
         if (bal !== null) payload.awanaShares = bal + 1;
       }
+      // Record the walk-in in the session dedup set. This was the ONE print
+      // path that never did, so once the guest was registered and checked in
+      // (the new one-step option makes that routine), reconcile / roster-diff /
+      // the last-checkin observer all saw a name they had no record of printing
+      // and produced a SECOND label.
+      markPrinted(name);
       setStatus('\u23F3');
       fetch(PRINT_SERVER + '/print', {
         method: 'POST',
@@ -2284,7 +2321,9 @@
       // display name no longer collide (R-4).
       var recid = clubberEls[i].getAttribute('recid') || null;
       var idKey = identityKey(recid, displayName);
-      ROSTER_NAME_INDEX[nameKeyOf(displayName)] = idKey;
+      var nk = nameKeyOf(displayName);
+      var priorIdk = ROSTER_NAME_INDEX[nk];
+      ROSTER_NAME_INDEX[nk] = (priorIdk && priorIdk !== idKey) ? AMBIGUOUS_NAME : idKey;
       current.add(idKey);
 
       // Cache club info + DOM element while the kid is still visible — once
@@ -2908,7 +2947,7 @@
   var RECONCILE_INTERVAL_OFF_MS     = 10 * 60 * 1000;
 
   function fetchCheckinReport() {
-    return fetch('/clubber/checkin_report', { credentials: 'same-origin', signal: AbortSignal.timeout(10000) })
+    return fetch('/clubber/checkin_report?date=' + todayIsoDate(), { credentials: 'same-origin', signal: AbortSignal.timeout(10000) })
       .then(function(r) { return r.ok ? r.text() : null; })
       .then(function(html) {
         if (!html || html.indexOf('Login Required') !== -1) return null;
@@ -3018,8 +3057,12 @@
           RECONCILE_MAX_PRINTS + ' this pass (a gap this large means something is wrong; check the roster)');
       }
       missed.slice(0, RECONCILE_MAX_PRINTS).forEach(function(e) {
-        markPrinted(e.name, e.clubberId);
+        // Mode check FIRST. Marking before it meant a reconcile tick that fired
+        // while a volunteer had printing off (reloading paper) permanently ate
+        // those check-ins — flipping the mode back never recovered them, unlike
+        // every other detection path, which returns before marking.
         if (selectedMode === 'off') return;
+        markPrinted(e.name, e.clubberId);
         var cached = rosterLookupByName(e.name);
         var clubName = (cached && cached.clubName) || e.club || '';
         var clubImageData = (cached && cached.clubImageData) || null;

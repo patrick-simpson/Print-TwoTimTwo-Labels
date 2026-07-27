@@ -57,6 +57,9 @@ function extractFunction(name) {
 
 const HELPERS = ['nameKeyOf', 'identityKey', 'migrateLegacyKey', 'resolveIdentityKey', 'isPrinted'];
 
+// The sentinel scanClubberList() stores when one name maps to two clubber ids.
+const AMBIGUOUS_NAME = '*ambiguous*';
+
 // Fresh sandbox per scenario: the helpers close over `printedNames` and
 // `ROSTER_NAME_INDEX`, which we supply.
 function sandbox() {
@@ -66,13 +69,21 @@ function sandbox() {
   const factory = new Function(
     'printedNames',
     'ROSTER_NAME_INDEX',
+    'AMBIGUOUS_NAME',
     `${body}\n; return { ${HELPERS.join(', ')} };`
   );
-  return Object.assign(factory(printedNames, ROSTER_NAME_INDEX), { printedNames, ROSTER_NAME_INDEX });
+  return Object.assign(
+    factory(printedNames, ROSTER_NAME_INDEX, AMBIGUOUS_NAME),
+    { printedNames, ROSTER_NAME_INDEX }
+  );
 }
 
 console.log('extension identity keys — extraction');
 {
+  // If content.js renames or changes the sentinel, these tests would silently
+  // stop covering the collision path — pin the literal.
+  check("content.js still uses the '" + AMBIGUOUS_NAME + "' sentinel",
+    SRC.indexOf("'" + AMBIGUOUS_NAME + "'") !== -1);
   for (const name of HELPERS) {
     check(`content.js still defines ${name}()`, extractFunction(name).length > 0);
   }
@@ -129,6 +140,41 @@ console.log('isPrinted — no duplicate labels, no missed labels');
   h5.printedNames.add('id:101');
   check('an empty name does not match an unrelated printed record',
     h5.isPrinted('', null) === false);
+}
+
+console.log('same-name collision — must never attribute one child\'s data to another');
+{
+  // REGRESSION GUARD: ROSTER_NAME_INDEX held ONE identity per name, so two
+  // children sharing a display name resolved to whichever row was scanned
+  // last. The label then printed with the other child's club and consent data
+  // AND marked that child printed, so she never got a label at all. The index
+  // now stores an ambiguity sentinel and callers refuse to guess.
+  //
+  // Note this covers the NAME-ONLY resolution path (what the last-checkin
+  // observer actually uses) — distinct from the explicit-recid path above.
+  const h = sandbox();
+  h.ROSTER_NAME_INDEX[h.nameKeyOf('Jane Doe')] = AMBIGUOUS_NAME;
+
+  check('an ambiguous name does NOT resolve to either child\'s id',
+    h.resolveIdentityKey('Jane Doe', null) === 'nm:' + h.nameKeyOf('Jane Doe'),
+    h.resolveIdentityKey('Jane Doe', null));
+
+  // Printing one Jane must not mark the other Jane as printed via a borrowed id.
+  h.printedNames.add('id:555');
+  check('a child printed under one id is not implied printed by the shared name',
+    h.isPrinted('Jane Doe', null) === false);
+
+  // An explicit id still wins — the caller genuinely knows which child it is.
+  check('an explicit id still resolves exactly despite the name collision',
+    h.resolveIdentityKey('Jane Doe', '666') === 'id:666');
+  check('the explicitly-identified printed child is still recognised',
+    h.isPrinted('Jane Doe', '555') === true);
+
+  // A non-colliding name keeps resolving through the index as before.
+  const h2 = sandbox();
+  h2.ROSTER_NAME_INDEX[h2.nameKeyOf('Amy Zephyr')] = 'id:101';
+  check('a unique name still resolves through the index',
+    h2.resolveIdentityKey('Amy Zephyr', null) === 'id:101');
 }
 
 console.log('');

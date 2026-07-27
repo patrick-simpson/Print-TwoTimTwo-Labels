@@ -1795,7 +1795,12 @@ app.post('/print', async (req, res) => {
 
   // Duplicate check-in retry (client timeout/retry, double-tap, overlapping
   // detection paths) — the label already printed, so just acknowledge it.
-  const dupKey = `${firstName} ${lastName}`.toLowerCase().trim();
+  // Keyed on the clubber id when the client knows it: a name-only key means two
+  // children who share a name and check in within the window collide, and the
+  // second is silently reported as a duplicate and never printed. Falls back to
+  // the name for walk-ins and older extensions that send no id.
+  const dupKey = (clubberId ? `id:${String(clubberId).trim()}` : `${firstName} ${lastName}`)
+    .toLowerCase().trim();
   if (isDuplicatePrint(dupKey)) {
     console.log(`[print] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
     return res.json({ success: true, duplicate: true });
