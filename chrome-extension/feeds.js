@@ -320,21 +320,43 @@
     return { booksCompleted: booksCompleted, awardsEarned: awardsEarned, slips: slips };
   }
 
-  var AWARD_SLIP_KEY = 'awana_feedsSlippedAwards';
+  // Dedup lives in localStorage keyed by DATE, not sessionStorage. The meeting
+  // report is a persistent record, not a queue: it keeps listing an award all
+  // night. sessionStorage is wiped when the tab is closed or the browser
+  // restarts, so a fresh tab would find every already-slipped award "new" and
+  // print a second slip for each. Keyed by date it survives a restart and still
+  // starts clean next club night. (Same pattern the worksheet marker uses.)
+  var AWARD_SLIP_PREFIX = 'awana_feedsSlippedAwards_';
   var AWARD_SLIP_CAP = 10;
 
+  function awardSlipKeyForToday() {
+    var d = new Date();
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    return AWARD_SLIP_PREFIX + d.getFullYear() + '-' +
+      (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+  }
+
   function loadSlipped() {
-    try { return new Set(JSON.parse(sessionStorage.getItem(AWARD_SLIP_KEY) || '[]')); }
+    try { return new Set(JSON.parse(localStorage.getItem(awardSlipKeyForToday()) || '[]')); }
     catch (e) { return new Set(); }
   }
   function saveSlipped(set) {
-    try { sessionStorage.setItem(AWARD_SLIP_KEY, JSON.stringify(Array.from(set))); }
-    catch (e) { /* ignore quota errors */ }
+    try {
+      localStorage.setItem(awardSlipKeyForToday(), JSON.stringify(Array.from(set)));
+      // Drop markers from previous dates so this can't grow without bound.
+      for (var i = localStorage.length - 1; i >= 0; i--) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(AWARD_SLIP_PREFIX) === 0 && k !== awardSlipKeyForToday()) {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch (e) { /* ignore quota errors */ }
   }
 
   // Only run during the club-night window (per spec); caps at 10 slips/pass
-  // and dedupes "name|award" pairs across the whole session so a page
-  // refresh never reprints the same slip.
+  // and dedupes "name|award" pairs for the whole DATE so neither a page
+  // refresh nor a browser restart reprints the same slip.
   function processAwardSlips(slips) {
     if (!Array.isArray(slips) || !slips.length) return;
     var slipped = loadSlipped();

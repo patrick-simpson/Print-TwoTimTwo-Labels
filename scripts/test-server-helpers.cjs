@@ -13,7 +13,7 @@ const path = require('path');
 
 const {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
-  parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
+  parseAllergies, buildHouseholdSiblingIndex, siblingsFor, isSafePrinterName,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -349,6 +349,30 @@ console.log('feeds.submitFeed — validation, 5s throttle, and /health freshness
     feeds.submitFeed('not-a-real-feed', {}, t).valid === false);
 
   feeds._resetForTests();
+}
+
+console.log('isSafePrinterName — a printer name reaches PowerShell, so it is validated not escaped');
+{
+  // REGRESSION GUARD: printPdf() once escaped only single quotes and then
+  // embedded the name inside a DOUBLE-quoted PowerShell filter string, so a
+  // name containing a double quote could terminate the string and run commands.
+  // Because this server intentionally accepts requests from any local page,
+  // that was reachable from any site the volunteer had open. Values are now
+  // passed via the environment AND validated; these cases pin the validator.
+  check('rejects the double-quote breakout payload',
+    isSafePrinterName('x" ; Start-Process calc.exe ; "y') === false);
+  check('rejects a semicolon', isSafePrinterName('printer; calc') === false);
+  check('rejects a backtick', isSafePrinterName('p`whoami`') === false);
+  check('rejects a $() subexpression', isSafePrinterName('$(calc)') === false);
+  check('rejects a pipe', isSafePrinterName('p | calc') === false);
+  check('rejects a newline', isSafePrinterName('printer\ncalc') === false);
+  check('rejects a NUL/control character', isSafePrinterName('printer\u0000x') === false);
+  check('rejects a single quote as well', isSafePrinterName("Bob's printer") === false);
+  check('rejects an absurdly long value', isSafePrinterName('x'.repeat(500)) === false);
+  check('ACCEPTS a real printer name', isSafePrinterName('Brother QL-820NWB') === true);
+  check('ACCEPTS a name with spaces and a dash', isSafePrinterName('HP LaserJet 400 - Office') === true);
+  check('ACCEPTS empty, meaning use the default printer', isSafePrinterName('') === true);
+  check('ACCEPTS null/undefined as empty', isSafePrinterName(null) === true && isSafePrinterName(undefined) === true);
 }
 
 console.log('');

@@ -2205,7 +2205,8 @@ app.post('/print-award', async (req, res) => {
   // legitimately earn two different awards in one evening, and each should
   // print. Namespaced ("award:...") so it can never collide with a normal
   // check-in's dedup key in the same recentPrints map.
-  const dupKey = `award:${firstName} ${lastName}:${awardText}`.toLowerCase().trim();
+  const dupKey = `award:${clubberId ? 'id' + clubberId : firstName + ' ' + lastName}:${awardText}`
+    .toLowerCase().trim();
   if (isDuplicatePrint(dupKey)) {
     console.log(`[print-award] '${firstName} ${lastName}' — '${awardText}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
     return res.json({ success: true, duplicate: true });
@@ -2277,19 +2278,47 @@ const PDF_MAGIC = '%PDF-';
 // Windows default printer to it first (Start-Process -Verb Print has no
 // direct "-Printer" argument) — failure to do that is non-fatal, the job
 // still goes to whatever the current default is.
+// A printer name is operator data that reaches a shell. Windows printer names
+// are plain labels ("Brother QL-820NWB", "HP LaserJet (Office)"), so anything
+// carrying quotes, shell metacharacters, or control characters is not a printer
+// name — it is an injection attempt or corrupt config. Refuse it outright
+// rather than try to escape it.
+const PRINTER_NAME_MAX = 120;
+function isSafePrinterName(name) {
+  const s = String(name == null ? '' : name);
+  if (!s) return true;                       // empty = "use the default"
+  if (s.length > PRINTER_NAME_MAX) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(s)) return false;
+  return !/["'`$;|&<>(){}\[\]\\\r\n%]/.test(s);
+}
+
+// Prints a PDF on Windows.
+//
+// SECURITY: neither the file path nor the printer name is interpolated into the
+// PowerShell source. Both are handed to the child process as environment
+// variables and read back with $env:, so no value can terminate a string
+// literal and start a new statement. An earlier version escaped only single
+// quotes and then embedded the printer name inside a DOUBLE-quoted filter
+// string, which let a name containing a double quote run arbitrary commands —
+// and because this server deliberately accepts requests from any local page,
+// that was reachable from any website the volunteer had open.
 function printPdf(pdfPath, printerName) {
-  const safePath    = pdfPath.replace(/'/g, "''");
-  const safePrinter = (printerName || '').replace(/'/g, "''");
+  if (!isSafePrinterName(printerName)) {
+    throw new Error('Refusing to print: printer name contains unsupported characters');
+  }
 
   const ps = `
 $ErrorActionPreference = 'Stop'
-${safePrinter ? `
-try {
-  $p = Get-WmiObject -Class Win32_Printer -Filter "Name='${safePrinter}'"
-  if ($p) { $p.SetDefaultPrinter() | Out-Null }
-} catch { }
-` : ''}
-Start-Process -FilePath '${safePath}' -Verb Print -WindowStyle Hidden -Wait
+$target = $env:AWANA_PDF_PATH
+$printer = $env:AWANA_PRINTER
+if ($printer) {
+  try {
+    $p = Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Name -eq $printer }
+    if ($p) { Invoke-CimMethod -InputObject $p -MethodName SetDefaultPrinter | Out-Null }
+  } catch { }
+}
+Start-Process -FilePath $target -Verb Print -WindowStyle Hidden -Wait
 `.trim();
 
   const psPath = tmpFilePath('awana-print-pdf', 'ps1');
@@ -2299,6 +2328,10 @@ Start-Process -FilePath '${safePath}' -Verb Print -WindowStyle Hidden -Wait
       timeout: 30000,
       windowsHide: true,
       encoding: 'utf8',
+      env: Object.assign({}, process.env, {
+        AWANA_PDF_PATH: pdfPath,
+        AWANA_PRINTER: printerName || '',
+      }),
     });
     if (result) console.log('[print-pdf] PowerShell:', result.trim());
   } finally {
@@ -2309,6 +2342,14 @@ Start-Process -FilePath '${safePath}' -Verb Print -WindowStyle Hidden -Wait
 // The ONLY route allowed a large body — the global parser skips this path (see
 // PDF_UPLOAD_PATH above) so this 18mb parser is the one that runs here.
 app.post(PDF_UPLOAD_PATH, express.json({ limit: '18mb' }), async (req, res) => {
+  // Validate the printer name FIRST, before the platform short-circuit below:
+  // a malformed request is malformed on every OS, and rejecting it here means
+  // the refusal is observable in tests that run on Linux rather than being
+  // masked by the 501.
+  if (!isSafePrinterName((req.body || {}).printerName)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
+
   // The headless render-smoke test runs on Linux — printing must fail loudly
   // and cheaply there, never attempt a PowerShell shell-out.
   if (process.platform !== 'win32') {
@@ -2342,6 +2383,9 @@ app.post(PDF_UPLOAD_PATH, express.json({ limit: '18mb' }), async (req, res) => {
     return res.status(400).json({ error: 'Decoded content is not a PDF (missing %PDF- header)' });
   }
 
+  if (!isSafePrinterName(printerName)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
   const effectivePrinter = (printerName && String(printerName).trim())
     || config.worksheetPrinter
     || PRINTER_NAME;
@@ -2754,7 +2798,16 @@ app.post('/config', (req, res) => {
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
     // church running two printers can route them separately.
-    if (worksheetPrinter !== undefined) next.worksheetPrinter = String(worksheetPrinter || '').trim();
+    if (worksheetPrinter !== undefined) {
+      // This value reaches a shell via printPdf(); refuse to persist anything
+      // that isn't a plain printer label so it can never be poisoned once and
+      // fire later during a legitimate worksheet print.
+      const wp = String(worksheetPrinter || '').trim();
+      if (!isSafePrinterName(wp)) {
+        return res.status(400).json({ error: 'worksheetPrinter contains unsupported characters' });
+      }
+      next.worksheetPrinter = wp;
+    }
 
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
     // Keep the live process in sync so schedule/PIN/toggle changes apply
@@ -3020,6 +3073,7 @@ module.exports = {
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+  isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
 };
 
