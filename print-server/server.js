@@ -1900,8 +1900,26 @@ app.post('/print', async (req, res) => {
     visitor       = false,
     stepUpNight   = false,
     awanaShares   = null,
-    clubberId     = null
+    clubberId     = null,
+    demo          = false
   } = req.body || {};
+
+  // ── Demo / training mode ────────────────────────────────────────────────────
+  // A demo check-in prints a REAL label (so a volunteer sees the actual output)
+  // carrying the same diagonal TEST band /canary uses, and touches nothing else.
+  // Every persistent side effect below is skipped, because each one causes real
+  // damage during training:
+  //   • addHistoryEntry   → print-history.json feeds /checkin-csv-export, which
+  //                         is imported BACK INTO TwoTimTwo. Fake kids would be
+  //                         recorded as having attended.
+  //   • recordAttendance  → the season ledger is permanent; a padded count makes
+  //                         real milestone lines ("10th club night!") wrong for
+  //                         the rest of the year.
+  //   • publish + buffer  → fake children celebrated by name on the lobby TV.
+  //   • publishTally      → inflates tonight's counts on every screen.
+  // This is the same set /canary already skips; demo mode generalises it to an
+  // arbitrary name and club.
+  const isDemo = demo === true || demo === 'true';
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
 
@@ -1925,7 +1943,9 @@ app.post('/print', async (req, res) => {
   // the name for walk-ins and older extensions that send no id.
   const dupKey = (clubberId ? `id:${String(clubberId).trim()}` : `${firstName} ${lastName}`)
     .toLowerCase().trim();
-  if (isDuplicatePrint(dupKey)) {
+  // Demo mode skips the duplicate window: a trainer demonstrating the same
+  // child twice in a row is the normal case, not a double-tap to suppress.
+  if (!isDemo && isDuplicatePrint(dupKey)) {
     console.log(`[print] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
     return res.json({ success: true, duplicate: true });
   }
@@ -1993,22 +2013,26 @@ app.post('/print', async (req, res) => {
 
     // Attendance is recorded before rendering so the milestone prints on
     // the very night it's earned. Never blocks the label on a ledger error.
+    // Skipped for demo prints — the ledger is permanent, and padding it would
+    // corrupt real milestone lines for the rest of the season.
     let milestoneLine = '';
-    try {
-      milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
-    } catch { /* ledger trouble must not stop the print */ }
+    if (!isDemo) {
+      try {
+        milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
+      } catch { /* ledger trouble must not stop the print */ }
+    }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
 
     const result = await generateLabel(
       firstName, lastName, effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, birthday, !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
-      false, extras
+      isDemo, extras   // 13th arg is testBanner — a demo label is visibly marked
     );
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
-    recordPrint(dupKey);
+    if (!isDemo) recordPrint(dupKey);
 
     // Connect card (#27): visitors optionally get a second label pointing
     // their family to the club's time and place. Failure here never fails
@@ -2030,33 +2054,46 @@ app.post('/print', async (req, res) => {
       }
     }
 
-    // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
-    // plus a fresh tally so displays update within seconds of the check-in.
-    const checkinEvent = events.buildCheckin({
-      firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
-    });
-    events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
-    pushEventToBuffer(checkinEvent);
+    if (isDemo) {
+      // The label printed and nothing else happened: no broadcast, no history,
+      // no tally, no ledger. Deliberately logged so a demo run is obvious when
+      // reading the console after a training session.
+      console.log(`[demo] Printed a TEST label for '${firstName} ${lastName}' (${effectiveClubName || 'no club'}) — nothing recorded or broadcast`);
+      res.json({ success: true, demo: true });
+    } else {
+      // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
+      // plus a fresh tally so displays update within seconds of the check-in.
+      const checkinEvent = events.buildCheckin({
+        firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+      });
+      events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
+      pushEventToBuffer(checkinEvent);
 
-    // Log to print history
-    addHistoryEntry({
-      firstName, lastName, clubName: effectiveClubName, clubImageData,
-      printer: effectivePrinter, success: true, visitor: !!visitor
-    });
+      // Log to print history
+      addHistoryEntry({
+        firstName, lastName, clubName: effectiveClubName, clubImageData,
+        printer: effectivePrinter, success: true, visitor: !!visitor
+      });
 
-    publishTally();
+      publishTally();
 
-    res.json({ success: true });
+      res.json({ success: true });
+    }
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
     console.error('[print] Error:', err.message);
-    addHistoryEntry({
-      firstName, lastName, clubName: effectiveClubName, clubImageData,
-      printer: effectivePrinter, success: false, visitor: !!visitor
-    });
-    recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
-    res.status(500).json({ error: err.message });
+    // A failed DEMO print is a training problem, not an operational one: it must
+    // not appear in the history the dashboard shows, and must not raise an `ops`
+    // print-failure event that makes the church think a real label was lost.
+    if (!isDemo) {
+      addHistoryEntry({
+        firstName, lastName, clubName: effectiveClubName, clubImageData,
+        printer: effectivePrinter, success: false, visitor: !!visitor
+      });
+      recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
+    }
+    res.status(500).json({ error: err.message, ...(isDemo ? { demo: true } : {}) });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
     if (connectPngPath) fs.unlink(connectPngPath, () => {});

@@ -10,7 +10,8 @@
     "test:contracts": "node scripts/test-contracts.cjs",
     "test:server": "node scripts/test-server-helpers.cjs",
     "test:security": "node scripts/test-server-security.cjs",
-    "test": "node scripts/test-contracts.cjs && node scripts/test-server-helpers.cjs && node scripts/test-extension-identity.cjs && node scripts/test-server-security.cjs",
+    "test:demo": "node scripts/test-server-demo.cjs",
+    "test": "node scripts/test-contracts.cjs && node scripts/test-server-helpers.cjs && node scripts/test-extension-identity.cjs && node scripts/test-server-security.cjs && node scripts/test-server-demo.cjs",
     "test:extension": "node scripts/test-extension-identity.cjs"
   },
   "dependencies": {
