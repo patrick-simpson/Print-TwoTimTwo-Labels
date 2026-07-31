@@ -3375,6 +3375,12 @@ module.exports = {
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey,
+  // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
+  // has to render field combinations GET /preview cannot express — a visitor
+  // with allergies, a step-up night, an all-fields-on torture case. Going
+  // through HTTP would also make every baseline depend on the route's defaults
+  // rather than on the renderer itself.
+  generateLabel,
   // The security policy itself is tested through print-server/security.js;
   // re-exported here so a test can assert the server wires up the same module.
   security,

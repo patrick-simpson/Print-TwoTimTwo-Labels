@@ -68,3 +68,6 @@ example_files/
 
 # Claude Code session data
 .claude/
+
+# Golden-image diff output (regenerated on failure, never committed)
+label-golden-out/
