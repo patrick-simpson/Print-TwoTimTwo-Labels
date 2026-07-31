@@ -2625,10 +2625,23 @@
         'img { width: 4in; height: 2in; display: block; }' +
         '</style></head><body><img src="' + dataUrl + '"/></body></html>';
     } else {
-      // Offline fallback HTML label. Names, club names, and the icon URL all
-      // come from the page's DOM, so they go through escapeHtml/attr before
-      // being concatenated into markup — an apostrophe or an angle bracket in
-      // a kid's name would otherwise mangle (or inject into) the label.
+      // ── Offline fallback label ───────────────────────────────────────────
+      // Fires ONLY when the print server is unreachable, which is exactly why
+      // it cannot be unified with the real renderer: every safety field on a
+      // normal label — allergy icons, birthday, photo-consent, handbook group —
+      // is derived by the SERVER from its roster CSV. The extension has never
+      // held that data, so an offline label physically cannot show it.
+      //
+      // The danger is therefore not the missing icons, it's that the label
+      // still LOOKS complete: a volunteer who has learned "no peanut icon means
+      // no peanut allergy" would read this as safe. So it says plainly that it
+      // is incomplete. A label that admits what it doesn't know is safe; one
+      // that quietly omits an allergy is not.
+      //
+      // Names, club names, and the icon URL all come from the page's DOM, so
+      // they go through escapeHtml/attr before being concatenated into markup —
+      // an apostrophe or an angle bracket in a kid's name would otherwise
+      // mangle (or inject into) the label.
       var fontSize = (firstName || '').length > 12 ? '32pt' : (firstName || '').length > 8 ? '40pt' : '48pt';
       var iconHtml = imageData
         ? '<div class="icon-col"><img src="' + escapeHtml(imageData) + '"/></div><div class="divider"></div>'
@@ -2650,10 +2663,15 @@
         '.ln { font-size: 20pt; margin-top: 2pt; }' +
         '.sep { width: 65%; height: 0.5pt; background: #ccc; margin: 5pt auto; }' +
         '.cn { font-size: 12pt; font-style: italic; color: #444; }' +
+        // Inverted band so it survives a 1-bit thermal print and is impossible
+        // to mistake for part of the normal layout.
+        '.offline { margin-top: 4pt; background: #000; color: #fff; font-size: 8pt; ' +
+        'font-weight: bold; letter-spacing: 0.4pt; padding: 2pt 6pt; border-radius: 3pt; }' +
         '</style></head><body><div class="badge">' +
         iconHtml +
         '<div class="text"><div class="fn">' + escapeHtml(firstName || '') + '</div>' +
         lastNameHtml + clubHtml +
+        '<div class="offline">OFFLINE &mdash; CHECK ALLERGY LIST</div>' +
         '</div></div></body></html>';
     }
 
