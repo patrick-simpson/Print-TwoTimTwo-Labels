@@ -14,7 +14,32 @@ permissions:
   contents: write       # needed to attach installer + update feed to Releases
 
 jobs:
+  # Gate the release on the test suites. Without this, `npm test` only ran on
+  # branch pushes and PRs (webpack.yml) — so a tag cut straight from a green
+  # main would still publish an .exe without re-verifying the trust model or
+  # the event contract. Cheap (~30s) next to the Windows build.
+  #
+  # Ubuntu on purpose: these suites are pure Node, and the security suite binds
+  # 0.0.0.0 and connects back over a non-loopback address, which is simpler
+  # without the Windows firewall involved.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install print-server dependencies
+        run: npm ci
+        working-directory: print-server
+      - name: Run the test suites
+        run: npm test
+
   build:
+    needs: test
     runs-on: windows-latest
 
     steps:

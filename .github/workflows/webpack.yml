@@ -2,11 +2,48 @@ name: Build with Vite
 
 on:
   push:
-    branches: [ "main" ]
+    # Every branch, not just main: the point of a test suite is to catch a
+    # regression BEFORE it reaches main, and a `claude/...` or feature branch
+    # push is exactly when that matters.
+    branches: [ "**" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
+  # The four suites in `npm test` (event contracts, server helpers, the trust
+  # model, extension identity) existed and passed for several releases while
+  # being invoked ONLY by hand — nothing in CI ran them. That meant the
+  # security suite guarding the roster against network exposure could have
+  # started failing and no push would have noticed.
+  #
+  # Runs on ubuntu even though the app is Windows-only: every one of these
+  # suites is pure Node (no printing, no PowerShell), and
+  # test-server-security.cjs needs to bind 0.0.0.0 and connect back over a
+  # non-loopback address — simpler and more predictable without the Windows
+  # firewall in the way.
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: npm
+
+    - name: Install root dependencies
+      run: npm ci
+
+    # test-server-helpers.cjs and test-server-security.cjs both require()
+    # print-server/server.js, which needs express and @napi-rs/canvas.
+    - name: Install print-server dependencies
+      run: npm ci
+      working-directory: print-server
+
+    - name: Run the test suites
+      run: npm test
+
   build:
     runs-on: ubuntu-latest
 
