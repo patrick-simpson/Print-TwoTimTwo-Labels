@@ -2072,7 +2072,7 @@ app.post('/print', async (req, res) => {
       // Log to print history
       addHistoryEntry({
         firstName, lastName, clubName: effectiveClubName, clubImageData,
-        printer: effectivePrinter, success: true, visitor: !!visitor
+        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId
       });
 
       publishTally();
@@ -2089,7 +2089,7 @@ app.post('/print', async (req, res) => {
     if (!isDemo) {
       addHistoryEntry({
         firstName, lastName, clubName: effectiveClubName, clubImageData,
-        printer: effectivePrinter, success: false, visitor: !!visitor
+        printer: effectivePrinter, success: false, visitor: !!visitor, clubberId
       });
       recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
     }
@@ -2132,6 +2132,35 @@ function saveHistory(entries) {
   }
 }
 
+// Does a history row refer to this child?
+//
+// Identity is id-first with a name fallback, because rows written before the
+// clubberId field existed have none — and a mid-season upgrade must not make
+// every earlier check-in unrecognisable. The rules, in order:
+//   1. Both sides know an id → the ids decide, and a mismatch is a DIFFERENT
+//      child even when the names are identical. This is the whole point.
+//   2. Either side lacks an id → fall back to the lowercased full name, which
+//      is exactly the old behaviour.
+// Mirrors the extension's identityKey()/migrateLegacyKey() pair, which solved
+// this on its side (roadmap R-4) while the server never followed.
+function historyRowMatches(row, firstName, lastName, clubberId) {
+  if (!row) return false;
+  const rowId = row.clubberId != null ? String(row.clubberId).trim() : '';
+  const wantId = clubberId != null ? String(clubberId).trim() : '';
+  if (rowId && wantId) return rowId === wantId;
+  const rowName = `${row.firstName || ''} ${row.lastName || ''}`.toLowerCase().trim();
+  const wantName = `${firstName || ''} ${lastName || ''}`.toLowerCase().trim();
+  return !!rowName && rowName === wantName;
+}
+
+// The dedup key for "one row per child" aggregations. Prefers the id so two
+// same-named children stay two children; falls back to the name for older rows.
+function historyIdentityKey(row) {
+  const id = row && row.clubberId != null ? String(row.clubberId).trim() : '';
+  if (id) return `id:${id}`;
+  return `name:${`${(row && row.firstName) || ''} ${(row && row.lastName) || ''}`.toLowerCase().trim()}`;
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -2153,6 +2182,16 @@ function addHistoryEntry(entry) {
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
     award: security.sanitizeStoredText(entry.award || ''),
+    // TwoTimTwo's own clubber id, when the caller knew it. Everything here was
+    // keyed on a lowercased "first last" string, so two children who share a
+    // name merged into one row — the same defect the extension already fixed on
+    // its side with identityKey(), which the server never followed. Stored as a
+    // bounded string (ids are numeric today, but that is TwoTimTwo's business
+    // to change). Absent on rows written before this, so every consumer must
+    // fall back to the name — see historyRowMatches().
+    clubberId: entry.clubberId != null && String(entry.clubberId).trim()
+      ? security.sanitizeStoredText(String(entry.clubberId), 40)
+      : null,
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -2193,7 +2232,10 @@ function computeTonightStats() {
 
   entries.forEach(e => {
     const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
-    const key = name.toLowerCase();
+    // Keyed on the clubber id when the row has one, so two children who share a
+    // name count as two. Older rows without an id keep the name key, which is
+    // the previous behaviour.
+    const key = historyIdentityKey(e);
     if (!name || seen.has(key)) return;
     seen.add(key);
     const club = (e.clubName || '').trim() || 'No club';
@@ -2271,20 +2313,25 @@ app.get('/preview', async (req, res) => {
 
 // ── Reprint ──────────────────────────────────────────────────────────────────
 app.post('/reprint', async (req, res) => {
-  const { name, index } = req.body || {};
+  const { name, index, clubberId = null } = req.body || {};
   const history = loadHistory();
 
   let entry;
   if (typeof index === 'number' && index >= 0 && index < history.length) {
     entry = history[index];
-  } else if (name) {
-    const search = String(name).toLowerCase().trim();
-    // Award slips (isAward) are excluded from name-based lookup so
-    // reprinting "by name" always targets the check-in label, never an
-    // award slip that happens to share the same child's name.
-    entry = history.find(e =>
-      !e.isAward && `${e.firstName} ${e.lastName}`.toLowerCase().trim() === search
-    );
+  } else if (name || clubberId) {
+    // Award slips (isAward) are excluded from lookup so reprinting "by name"
+    // always targets the check-in label, never an award slip that happens to
+    // share the same child's name.
+    //
+    // historyRowMatches is id-first: when the caller knows the clubber id AND
+    // the stored row has one, a name collision can no longer reprint the wrong
+    // child's label. Rows predating the id fall back to name matching, so this
+    // is a strict improvement rather than a behaviour change.
+    const parts = String(name || '').trim().split(/\s+/);
+    const first = parts[0] || '';
+    const last = parts.slice(1).join(' ');
+    entry = history.find(e => !e.isAward && historyRowMatches(e, first, last, clubberId));
   }
 
   if (!entry) {
@@ -2320,7 +2367,7 @@ app.post('/reprint', async (req, res) => {
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
       clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: true
+      printer: effectivePrinter, success: true, clubberId: entry.clubberId
     });
 
     console.log(`[reprint] ${entry.firstName} ${entry.lastName}`);
@@ -2330,7 +2377,7 @@ app.post('/reprint', async (req, res) => {
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
       clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: false
+      printer: effectivePrinter, success: false, clubberId: entry.clubberId
     });
     recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
     res.status(500).json({ error: err.message });
@@ -2423,6 +2470,7 @@ app.post('/print-award', async (req, res) => {
     addHistoryEntry({
       firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: true, isAward: true, award: awardText,
+      clubberId,
     });
 
     console.log(`[print-award] ${firstName} ${lastName} — ${awardText}`);
@@ -2432,6 +2480,7 @@ app.post('/print-award', async (req, res) => {
     addHistoryEntry({
       firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: false, isAward: true, award: awardText,
+      clubberId,
     });
     recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
     res.status(500).json({ error: err.message });
@@ -2605,7 +2654,10 @@ app.get('/checkin-csv-export', (req, res) => {
     const first = String(e.firstName || '').trim();
     const last  = String(e.lastName  || '').trim();
     if (!first && !last) continue;
-    const key = `${first} ${last}`.toLowerCase();
+    // Id-first: this export is imported BACK INTO TwoTimTwo, so merging two
+    // same-named children into one row would silently under-report attendance
+    // for one of them.
+    const key = historyIdentityKey(e);
     if (seen.has(key)) continue;         // one row per child even with reprints
     seen.add(key);
     rows.push({ first, last });
@@ -3322,6 +3374,7 @@ module.exports = {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
+  historyRowMatches, historyIdentityKey,
   // The security policy itself is tested through print-server/security.js;
   // re-exported here so a test can assert the server wires up the same module.
   security,

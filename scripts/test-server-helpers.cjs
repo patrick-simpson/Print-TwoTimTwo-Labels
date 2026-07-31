@@ -544,6 +544,59 @@ console.log('packaging — every print-server module must ship inside the Window
   check('server.js exposes the same security module', serverExports.security === sec);
 }
 
+
+// ── Child identity on history rows ────────────────────────────────────────────
+// Print history was keyed on a lowercased "first last" string, so two children
+// who share a name merged into one row — under-reporting attendance in the CSV
+// export that gets imported BACK INTO TwoTimTwo, and letting a reprint fetch the
+// wrong child's label. Rows now carry TwoTimTwo's clubber id, with a name
+// fallback so rows written before the field existed still resolve.
+{
+  const { historyRowMatches, historyIdentityKey } = require(
+    path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  const withId = (id, first, last) => ({ clubberId: id, firstName: first, lastName: last });
+  const noId = (first, last) => ({ firstName: first, lastName: last });
+
+  // Id-first: same name, different ids = different children. The whole point.
+  check('identity: same name + different ids do NOT match',
+    historyRowMatches(withId('101', 'Amy', 'Zephyr'), 'Amy', 'Zephyr', '202') === false);
+  check('identity: same id matches even if the name was edited',
+    historyRowMatches(withId('101', 'Amy', 'Zephyr'), 'Amie', 'Zephyr', '101') === true);
+  check('identity: same id and name matches',
+    historyRowMatches(withId('101', 'Amy', 'Zephyr'), 'Amy', 'Zephyr', '101') === true);
+
+  // Backward compatibility: a row from before the id existed must still resolve
+  // by name, or a mid-season upgrade would orphan every earlier check-in.
+  check('identity: legacy row (no id) falls back to the name',
+    historyRowMatches(noId('Amy', 'Zephyr'), 'Amy', 'Zephyr', '101') === true);
+  check('identity: caller without an id falls back to the name',
+    historyRowMatches(withId('101', 'Amy', 'Zephyr'), 'Amy', 'Zephyr', null) === true);
+  check('identity: legacy row with a different name does not match',
+    historyRowMatches(noId('Cal', 'Zephyr'), 'Amy', 'Zephyr', null) === false);
+
+  // Case and whitespace behave as before.
+  check('identity: name match is case-insensitive',
+    historyRowMatches(noId('AMY', 'zephyr'), 'amy', 'ZEPHYR', null) === true);
+  check('identity: blank names never match',
+    historyRowMatches(noId('', ''), '', '', null) === false);
+  check('identity: null row never matches', historyRowMatches(null, 'Amy', 'Zephyr', '1') === false);
+
+  // The dedup key drives "one row per child" in tonight's stats and the CSV
+  // export. Two same-named children must produce two keys.
+  check('dedup key: same name + different ids give DIFFERENT keys',
+    historyIdentityKey(withId('101', 'Amy', 'Zephyr')) !== historyIdentityKey(withId('202', 'Amy', 'Zephyr')));
+  check('dedup key: same id gives the same key',
+    historyIdentityKey(withId('101', 'Amy', 'Zephyr')) === historyIdentityKey(withId('101', 'Amy', 'Zephyr')));
+  check('dedup key: legacy rows still collapse by name',
+    historyIdentityKey(noId('Amy', 'Zephyr')) === historyIdentityKey(noId('amy', 'ZEPHYR')));
+  check('dedup key: an id key can never collide with a name key',
+    historyIdentityKey(withId('101', 'Amy', 'Z')).startsWith('id:')
+      && historyIdentityKey(noId('Amy', 'Z')).startsWith('name:'));
+  check('dedup key: blank/None id is treated as absent',
+    historyIdentityKey({ clubberId: '  ', firstName: 'Amy', lastName: 'Z' }).startsWith('name:'));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
