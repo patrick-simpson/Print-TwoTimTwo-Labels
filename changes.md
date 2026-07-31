@@ -1,4 +1,29 @@
-﻿## [5.3.0] - 2026-07-27
+﻿## [5.4.0] - 2026-07-31
+Volunteer training mode, a child-identity fix, and CI that actually runs the tests.
+
+### Demo mode: print a real label, touch nothing else
+There was no safe way to rehearse. Driving a fake check-in through `POST /print` does the real thing in every respect, and each effect causes lasting damage during a practice run: `print-history.json` feeds `/checkin-csv-export`, which is imported **back into TwoTimTwo**, so a pretend child gets recorded as having attended; `attendance.json` is the permanent season ledger, and padding it makes real milestone lines ("10th club night!") wrong for the rest of the year; the `checkin` publish and recap buffer put a fake child's name on the lobby TV by name, mid-service; and `publishTally` inflates tonight's counts on every screen.
+
+`POST /print` now takes `demo: true`. It prints a REAL label — so a volunteer sees actual output, with real roster enrichment and allergy icons — carrying the same diagonal TEST band `/canary` already uses, and skips all four effects plus the duplicate window (repeating a demonstration is the normal case, not a double-tap). A failing demo print is also silent: no history row and no `ops` print-failure event, so a training mishap never looks like a lost label. This generalises what `/canary` already did for one hardcoded name.
+
+### Same-named children no longer merge into one history row
+Print history was keyed on a lowercased "first last" string, so two children who share a name became one row. Three real consequences: the CSV export that TwoTimTwo re-imports recorded only one of them as present; tonight's stats under-reported the room; and a by-name `/reprint` could fetch the wrong child's label — and a label is a safety artifact carrying allergy icons and photo-consent flags.
+
+The extension solved this on its side long ago with `identityKey()`, and has been **sending** TwoTimTwo's `clubberId` on every check-in all along — the server simply discarded it. It is now stored on the row and threaded through every writer. Identity is id-first with a name fallback, so rows written before the field existed still resolve and a mid-season upgrade doesn't orphan the night's history.
+
+### The offline label now says what it cannot know
+The extension's offline fallback renderer draws only first name, last name, club and icon — no allergy icons, no birthday, no photo-consent flag. It cannot do better: that path fires only when the print **server** is unreachable, and every safety field is derived server-side from the roster CSV, which the extension has never held.
+
+So the hazard was never the missing icons — it was that the label still *looked* complete. A volunteer who has learned "no peanut icon means no peanut allergy" would read an offline label as safe. It now carries an inverted `OFFLINE — CHECK ALLERGY LIST` band (inverted so it survives a 1-bit thermal print and can't be mistaken for part of the normal layout). A label that admits what it doesn't know is safe; one that quietly omits an allergy is not.
+
+### CI runs the test suites now
+All four suites — event contracts, server helpers, the v5.3.0 trust model, extension identity — existed and passed for several releases while being invoked **only by hand**. The only automated check was the label render smoke test. So the security suite proving the roster isn't reachable from the network could have started failing and no push would have noticed.
+
+`webpack.yml` gains a test job and its push trigger widens from `main` to every branch; `build-electron.yml` gains the same job and `build` now needs it, so a tag cut from a green `main` still can't publish an `.exe` without re-verifying the contract and the trust model. Verified by breaking `security.js`'s loopback check and watching CI go red.
+
+A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 454 assertions now pass across five suites.
+
+## [5.3.0] - 2026-07-27
 Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.
 
 **Nothing was leaked into git.** No roster CSV, history file or Pusher secret has ever been committed to this repo — that was checked across the full history. The exposure was on the running server, and in what a *future* commit could have published (see the `.gitignore` item below).
