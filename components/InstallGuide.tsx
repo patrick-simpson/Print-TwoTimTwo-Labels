@@ -110,22 +110,35 @@ export const InstallGuide: React.FC = () => {
 
         <Step n={2} title="Load the browser extension">
           <p>
-            <a href="chrome-extension.zip" download className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg shadow transition-colors">
-              <i className="fa fa-download"></i> Download chrome-extension.zip
-            </a>
-            <span className="ml-3 text-xs text-slate-400">and extract it to a folder</span>
+            The app already installed the extension's files for you. You just have to point your
+            browser at them <em>once</em>.
           </p>
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs space-y-1.5">
-            <p className="font-bold text-slate-700 mb-1">Then, in Edge or Chrome:</p>
+            <p className="font-bold text-slate-700 mb-1">In Edge or Chrome:</p>
             <ol className="list-decimal list-inside space-y-1 text-slate-600">
               <li>Open <code className="bg-white px-1 rounded border border-slate-200">edge://extensions</code> or <code className="bg-white px-1 rounded border border-slate-200">chrome://extensions</code></li>
               <li>Turn on <strong>Developer Mode</strong> (top right)</li>
-              <li>Click <strong>Load unpacked</strong> and pick the extracted <code className="bg-white px-1 rounded border border-slate-200">chrome-extension</code> folder</li>
+              <li>Click <strong>Load unpacked</strong> and pick <code className="bg-white px-1 rounded border border-slate-200">%APPDATA%\Awana Label Printer\chrome-extension</code></li>
             </ol>
+            <p className="text-slate-500 pt-1">
+              Can't find it? The tray menu has <strong>Open Chrome extension folder</strong>, and the
+              dashboard's <strong>Diagnostics</strong> tab has a <strong>Copy folder path</strong> button.
+            </p>
+          </div>
+          <div className="bg-brand-50 border border-brand-200 rounded-lg p-4 text-xs space-y-1.5 text-slate-700">
+            <p className="font-bold mb-1"><i className="fa fa-rotate mr-1.5"></i>Why that folder and not a download</p>
+            <p>
+              The app rewrites that folder every time it starts, so when the app updates itself the
+              extension updates with it — just <strong>restart Chrome</strong> to pick it up, and the
+              widget tells you when one is owed. A copy you download and unzip somewhere else never
+              updates, and quietly drifts behind the print server.
+            </p>
           </div>
           <p className="text-xs text-slate-500">
             The green <strong>Awana Print</strong> widget appears on your check-in page once it's loaded.
-            (Old script installs also have the folder at <code className="bg-slate-100 px-1 rounded">C:\output\Print-TwoTimTwo-Labels\chrome-extension</code>.)
+            (Old script installs have the folder at <code className="bg-slate-100 px-1 rounded">C:\output\Print-TwoTimTwo-Labels\chrome-extension</code>;{' '}
+            <a href="chrome-extension.zip" download className="text-brand-600 hover:underline">the zip</a> is
+            still there for anyone not using the Windows app.)
           </p>
         </Step>
 
