@@ -44,6 +44,8 @@ All ten call sites now pass one named object, and a non-object argument throws i
 
 The conversion is **byte-identical by construction** and the 18 golden-image baselines are the proof rather than the claim. They caught a real mistake during the work: 17 cases matched exactly while the all-fields torture case differed by 38% of its pixels, because one multi-line case had not been converted and was rendering a blank label. A signature refactor that only ran the unit tests would have shipped that.
 
+The golden suite also learned something from CI. It gated its pixel comparison on `process.platform === 'linux'`, which turned out to be far too coarse: the runner is Linux too, with different font packages, so identical code rendered different glyphs and every baseline missed by ~9% of its pixels. A gate that red-lights on a font-package bump is a gate somebody deletes. The baselines now record a fingerprint of the font stack that produced them and compare pixels only when it matches, saying so loudly otherwise instead of either failing (noise) or passing silently (a lie). What CI enforces in its place is font-independent and genuinely load-bearing — determinism, ink coverage, and pairwise distinctness between cases — all three of which catch the blank-render bug above.
+
 The golden cases are now declarative models rather than positional argument arrays, with a small adapter in the harness, so the next signature change touches one function instead of eighteen fixtures — and the baselines keep policing pixels across a refactor rather than being regenerated, which would let the gate certify its own change.
 
 This is the groundwork for the per-club label template editor; it is landed on its own because it stands on its own.

@@ -21,15 +21,26 @@
 // NO NEW DEPENDENCY: @napi-rs/canvas (already required for rendering) decodes a
 // PNG and exposes raw RGBA via getImageData, which is all a pixel diff needs.
 //
-// BASELINES ARE LINUX-ONLY
+// BASELINES ARE TIED TO A FONT STACK, NOT TO A PLATFORM
 // Text rendering depends on the host's installed fonts, so the same label is not
-// pixel-identical across platforms — this container has only the DejaVu family,
-// while the production print laptop is Windows with Arial and Segoe. Comparing a
-// Windows render against a Linux baseline would fail on font metrics alone and
-// tell you nothing. So the pixel comparison runs ONLY on linux (which is what CI
-// uses); everywhere else the structural and determinism checks still run and the
-// comparison is skipped loudly. This mirrors the display repo, whose visual suite
-// carries test.skip(process.platform !== 'linux') for the same reason.
+// pixel-identical across machines — this container has DejaVu and Liberation,
+// the production print laptop is Windows with Arial and Segoe, and a CI runner
+// is different again. This file originally gated the comparison on
+// `process.platform === 'linux'`, and CI proved that far too coarse: the runner
+// is also Linux, with different font packages, so every baseline missed by ~9%
+// of its pixels and the whole suite red-lighted on a change that altered nothing.
+//
+// A gate that fails on a font-package bump is a gate somebody deletes. So the
+// baselines now record a FINGERPRINT of the font stack that produced them, and
+// the pixel comparison runs only when it matches. Anywhere else the suite says
+// loudly that it cannot police pixels — rather than failing (noise) or passing
+// silently (a lie) — and falls back to checks that are font-independent:
+// determinism, ink coverage, and pairwise distinctness. Those are what CI
+// enforces, and they are real: both would have caught the case that silently
+// rendered blank during the options-object refactor.
+//
+// To police pixels on a given machine, regenerate the baselines there with
+// `npm run test:golden:update` — which rewrites the fingerprint too.
 //
 // A consequence worth knowing: a glyph missing from the LINUX font stack appears
 // as a tofu box in these baselines without necessarily being wrong in
@@ -50,6 +61,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 
 const BASELINE_DIR = path.join(__dirname, '__label_baselines__');
 const OUT_DIR = path.join(process.cwd(), 'label-golden-out');
@@ -191,31 +203,84 @@ async function render(model) {
   return buf;
 }
 
-const CAN_COMPARE = process.platform === 'linux';
+// ── Can we trust a pixel comparison here? ────────────────────────────────────
+//
+// `process.platform === 'linux'` was NOT a sufficient test, and CI proved it:
+// this dev container and ubuntu-latest are both Linux with entirely different
+// font packages, so the same code renders visibly different glyphs and every
+// baseline missed by ~9% of its pixels. A gate that red-lights every push on a
+// font-package bump is a gate people delete.
+//
+// So the baselines record a FINGERPRINT of the font stack that produced them:
+// a small probe canvas exercising the text sizes and symbol glyphs the labels
+// actually use, hashed. Identical hash means identical rasterisation, and the
+// pixel comparison means what it claims. Different hash means we genuinely
+// cannot police pixels here, and the suite says so loudly rather than failing
+// (which would be noise) or passing silently (which would be a lie).
+//
+// The structural checks below run EVERYWHERE and are what CI actually enforces.
+const FINGERPRINT_FILE = path.join(BASELINE_DIR, 'font-fingerprint.txt');
+
+function fontFingerprint() {
+  const c = createCanvas(600, 220);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 600, 220);
+  ctx.fillStyle = '#000';
+  // The same families and sizes the label renderer asks for, plus the symbol
+  // glyphs — those are the ones most likely to differ between font packages.
+  ctx.font = 'bold 48px Helvetica, Arial, sans-serif';
+  ctx.fillText('Bartholomew', 8, 56);
+  ctx.font = 'bold 20px Helvetica, Arial, sans-serif';
+  ctx.fillText('Truth & Training', 8, 92);
+  ctx.font = '12px Helvetica, Arial, sans-serif';
+  ctx.fillText('Go to: Music, Rm 4 — 10th club night', 8, 120);
+  ctx.font = '22px Helvetica, Arial, sans-serif';
+  ctx.fillText('\u2B50 \u2605 \u2606 \u272A \u2739', 8, 160);
+  return crypto.createHash('sha256').update(c.toBuffer('image/png')).digest('hex').slice(0, 16);
+}
+
+const FONT_ID = fontFingerprint();
+const BASELINE_FONT_ID = fs.existsSync(FINGERPRINT_FILE)
+  ? fs.readFileSync(FINGERPRINT_FILE, 'utf8').trim()
+  : null;
+const FONTS_MATCH = BASELINE_FONT_ID === null || BASELINE_FONT_ID === FONT_ID;
+const CAN_COMPARE = process.platform === 'linux' && FONTS_MATCH;
 
 async function main() {
   fs.mkdirSync(BASELINE_DIR, { recursive: true });
   if (!CAN_COMPARE) {
-    console.log(`  ! platform is ${process.platform}, not linux — baseline COMPARISON skipped`);
-    console.log('    (fonts differ per platform; baselines are generated on linux, as CI is)');
-    console.log('    structural + determinism checks still run.');
+    if (process.platform !== 'linux') {
+      console.log(`  ! platform is ${process.platform}, not linux — pixel COMPARISON skipped`);
+    } else {
+      console.log('  ! this machine\'s font stack does not match the one that produced');
+      console.log(`    the baselines (${BASELINE_FONT_ID} vs ${FONT_ID}), so identical code`);
+      console.log('    renders different glyphs here and a pixel diff would be pure noise.');
+      console.log('    Pixel COMPARISON skipped — structural + determinism checks still run.');
+      console.log('    To police pixels on this machine, regenerate on it:');
+      console.log('      npm run test:golden:update');
+    }
   }
 
   // ── Determinism, asserted rather than assumed ─────────────────────────────
   // The whole suite rests on this. If it ever fails, golden images are the wrong
   // tool and we want to know immediately.
   {
-    const a = await render(CASES[0].args);
-    const b = await render(CASES[0].args);
+    const a = await render(CASES[0].model);
+    const b = await render(CASES[0].model);
     check('renderer is byte-deterministic (golden images are valid)',
       Buffer.compare(a, b) === 0,
       `${a.length} vs ${b.length} bytes`);
-    const torture = await render(CASES[CASES.length - 1].args);
-    const torture2 = await render(CASES[CASES.length - 1].args);
+    const torture = await render(CASES[CASES.length - 1].model);
+    const torture2 = await render(CASES[CASES.length - 1].model);
     check('the torture case is deterministic too',
       Buffer.compare(torture, torture2) === 0);
   }
 
+  if (UPDATE) fs.writeFileSync(FINGERPRINT_FILE, `${FONT_ID}\n`);
+
+  /** Every rendered case, for the font-independent checks after the loop. */
+  const rendered = [];
   let updated = 0;
   for (const c of CASES) {
     const file = path.join(BASELINE_DIR, `${c.name}.png`);
@@ -229,6 +294,7 @@ async function main() {
 
     check(`${c.name}: renders a 1200x600 PNG`, actual.length > 1000
       && actual[0] === 0x89 && actual[1] === 0x50);
+    rendered.push({ name: c.name, buf: actual });
 
     if (!CAN_COMPARE) continue;   // the structural check above is all we can trust here
 
@@ -259,6 +325,39 @@ async function main() {
       d.sizeMismatch
         ? `size changed: ${d.sizeMismatch}`
         : `${d.count} px differ (${(d.ratio * 100).toFixed(3)}%) — see label-golden-out/${c.name}.diff.png`);
+  }
+
+  // ── Font-independent invariants ───────────────────────────────────────────
+  // These run EVERYWHERE, including on a runner whose fonts differ from the
+  // ones that made the baselines, so they are what CI actually enforces. They
+  // are not filler: during the options-object refactor one case silently
+  // rendered BLANK because its argument list had not been converted, and both
+  // checks below catch exactly that. The pixel gate caught it locally; without
+  // these, CI would not have.
+  {
+    for (const r of rendered) {
+      const px = await pixels(r.buf);
+      let ink = 0;
+      for (let i = 0; i < px.data.length; i += 4) {
+        // Anything meaningfully darker than white. Thermal output is 1-bit, so
+        // "ink" is unambiguous regardless of which font drew it.
+        if (px.data[i] < 200) ink++;
+      }
+      const ratio = ink / (px.w * px.h);
+      check(`${r.name}: renders actual ink, not a blank label`,
+        ratio > 0.005, `only ${(ratio * 100).toFixed(3)}% of pixels are marked`);
+    }
+
+    // Two different cases producing an identical image means a field stopped
+    // reaching the renderer — the exact signature of a mis-mapped argument.
+    const seen = new Map();
+    for (const r of rendered) {
+      const h = crypto.createHash('sha256').update(r.buf).digest('hex');
+      const twin = seen.get(h);
+      check(`${r.name}: is distinguishable from every other case`,
+        twin === undefined, `identical to ${twin}`);
+      if (twin === undefined) seen.set(h, r.name);
+    }
   }
 
   if (updated) {
