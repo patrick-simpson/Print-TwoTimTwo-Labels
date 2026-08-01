@@ -14,6 +14,7 @@ const path = require('path');
 const {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor, isSafePrinterName,
+  effectiveHandbookGroup,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -595,6 +596,58 @@ console.log('packaging — every print-server module must ship inside the Window
       && historyIdentityKey(noId('Amy', 'Z')).startsWith('name:'));
   check('dedup key: blank/None id is treated as absent',
     historyIdentityKey({ clubberId: '  ', firstName: 'Amy', lastName: 'Z' }).startsWith('name:'));
+}
+
+// ── effectiveHandbookGroup — the group line's routing test ───────────────────
+// The line exists to send a child to the right handbook table. Values that
+// route nowhere print as nothing. "Puggles group" is verbatim what TwoTimTwo
+// assigns to Puggles kids (seen live on kvbchurch's check-in page 2026-08-01);
+// it printed as a redundant italic line under every Puggles name.
+console.log('effectiveHandbookGroup — no line unless it routes somewhere');
+{
+  // The rules, one by one
+  check('Puggles never get a group line — the toddler program has no handbooks',
+    effectiveHandbookGroup('Puggles group', 'Puggles') === '');
+  check('...whatever the group value says',
+    effectiveHandbookGroup('Red Team', 'Puggles') === '');
+  check('...and however the club is spelled',
+    effectiveHandbookGroup('Puggles group', ' puggles ') === '');
+  check("TwoTimTwo's 'all' placeholder is dropped (pre-existing rule, now centralized)",
+    effectiveHandbookGroup('all', 'Sparks') === ''
+    && effectiveHandbookGroup(' ALL ', 'Sparks') === '');
+  check('a group named after its own club routes nowhere — dropped',
+    effectiveHandbookGroup('Sparks group', 'Sparks') === ''
+    && effectiveHandbookGroup('sparks', 'Sparks') === '');
+  check('...including class/room variants and punctuation drift',
+    effectiveHandbookGroup('Cubbies class', 'Cubbies ') === ''
+    && effectiveHandbookGroup('T&T group', 'T&T ') === '');
+
+  // What must SURVIVE — these carry real routing information
+  check('a lettered group survives', effectiveHandbookGroup('Sparks A', 'Sparks') === 'Sparks A');
+  check('a named group survives', effectiveHandbookGroup('Flight 3:16', 'Sparks') === 'Flight 3:16');
+  check('a group survives even when the club is unknown to clubKey',
+    effectiveHandbookGroup('Eagles', 'Youth Group') === 'Eagles');
+  check('club-name matching never fires on an empty club',
+    effectiveHandbookGroup('group', '') === 'group');
+
+  // Shape
+  check('empty and null inputs come back as the empty string',
+    effectiveHandbookGroup('', 'Sparks') === ''
+    && effectiveHandbookGroup(null, 'Sparks') === ''
+    && effectiveHandbookGroup(undefined, 'Sparks') === '');
+  check('surviving values are trimmed',
+    effectiveHandbookGroup('  Flight 3:16  ', 'Sparks') === 'Flight 3:16');
+
+  // Wiring: all four enrichment sites must go through the helper. The old
+  // pattern was the same two lines pasted four times, and a fifth paste is
+  // exactly how a future call site would miss the policy.
+  const fs = require('fs');
+  const serverSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  const calls = (serverSrc.match(/handbookGroup = effectiveHandbookGroup\(/g) || []).length;
+  check('all four enrichment sites route through the helper', calls === 4, `found ${calls}`);
+  check("the old inline 'all' check is gone from every call site",
+    !/rawGroup\.trim\(\)\.toLowerCase\(\) === 'all'/.test(serverSrc));
 }
 
 console.log('');

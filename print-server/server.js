@@ -668,6 +668,35 @@ function nextClubFor(clubName) {
   return k ? (STEP_UP_NEXT_CLUB[k] || null) : null;
 }
 
+// The handbook-group line exists to route a child to the right table during
+// handbook time. Three kinds of value carry no routing information and only
+// clutter the label, so they render as NO line at all:
+//
+//   * "all"            — TwoTimTwo's placeholder for "not in a specific group".
+//                        (This rule predates this helper; it used to be pasted
+//                        at four call sites.)
+//   * any Puggles group — Puggles is the toddler program: no handbooks, no
+//                        handbook time, nothing to route to. TwoTimTwo still
+//                        assigns them a pseudo-group (literally "Puggles
+//                        group"), which printed as a redundant italic line on
+//                        every Puggles label.
+//   * "<club> group"   — a group named after the club itself ("Sparks group",
+//                        "Cubbies class") says only what the icon and club
+//                        line already say. "Sparks A" or "Flight 3:16" still
+//                        print — the comparison is against the WHOLE string,
+//                        so anything with an extra token survives.
+function effectiveHandbookGroup(rawGroup, clubName) {
+  const g = String(rawGroup == null ? '' : rawGroup).trim();
+  if (!g) return '';
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').trim();
+  const gN = norm(g);
+  if (gN === 'all') return '';
+  if (clubKey(clubName) === 'puggle') return '';
+  const cN = norm(clubName);
+  if (cN && (gN === cN || gN === `${cN} group` || gN === `${cN} class` || gN === `${cN} room`)) return '';
+  return g;
+}
+
 function parseBirthdate(s) {
   if (!s || String(s).trim() === '' || s === 'N/A') return null;
   try {
@@ -1028,6 +1057,94 @@ const PX_W = Math.round(4 * DPI);  // 1200 px
 const PX_H = Math.round(2 * DPI);  // 600 px
 const SCALE = DPI / 72;            // convert pt → px
 
+// ── Prepare a club logo for 1-bit thermal output ──────────────────────────────
+// A thermal printer has exactly two tones, so the driver dithers everything
+// else — and dithering destroys light colors. The real failure that motivated
+// this: one church's Puggles club image on TwoTimTwo is a custom upload, a
+// light-cyan wordmark. Drawn as-is, the cyan dithered to (almost) nothing and
+// the printed label showed only the duckling's dark eyes and beak — a tiny
+// unreadable speck floating in the icon zone.
+//
+// So logos are converted to what the printer can actually say:
+//
+//   * INK   = a pixel that is opaque enough AND far enough from white. The
+//     distance test is per-channel (Chebyshev), so light-but-saturated colors
+//     — cyan, yellow, pink — count as ink even though their gray luminance is
+//     high. That is the whole point: luminance is exactly the measure the
+//     dither uses to erase them.
+//   * Ink renders as solid black at the pixel's original alpha (edges keep
+//     their antialiasing, same as text). Everything else goes transparent.
+//   * The result is CROPPED to the ink's bounding box, so an asset with big
+//     transparent or white margins scales by its artwork, not its canvas.
+//
+// White-on-dark logos survive: the dark field is ink, the white lettering
+// stays white. A logo with NO ink at all (all-white, all-transparent, or
+// undecodable) returns null and the caller falls back to the monogram badge —
+// the icon zone never silently disappears.
+//
+// The dashboard's Label Preview shows the binarized logo too. That is a
+// feature: the preview now shows what the printer will actually produce,
+// instead of a colorful logo the thermal head cannot print.
+const LOGO_INK_ALPHA = 64;        // out of 255 — below this a pixel is "air"
+const LOGO_INK_WHITE_DIST = 40;   // max(255-r,255-g,255-b) at or above this is ink
+const LOGO_MAX_DECODE_SIDE = 2048; // decompression-bomb guard: scan at most this size
+
+async function prepareLogoForThermal(clubImageBuffer) {
+  if (!clubImageBuffer) return null;
+  let img;
+  try {
+    img = await loadImage(clubImageBuffer);
+  } catch {
+    return null;                   // undecodable — caller falls back to monogram
+  }
+  if (!img.width || !img.height) return null;
+
+  // Scan at a bounded size: a 2 MB PNG can decode to enormous dimensions, and
+  // this runs on the check-in path. Downscaling before the scan costs nothing
+  // visually — the icon zone is ~317 device px.
+  const scanScale = Math.min(1, LOGO_MAX_DECODE_SIDE / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scanScale));
+  const h = Math.max(1, Math.round(img.height * scanScale));
+  const scan = createCanvas(w, h);
+  const sctx = scan.getContext('2d');
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(img, 0, 0, w, h);
+
+  const data = sctx.getImageData(0, 0, w, h);
+  const px = data.data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let yPix = 0; yPix < h; yPix++) {
+    for (let xPix = 0; xPix < w; xPix++) {
+      const i = (yPix * w + xPix) * 4;
+      const a = px[i + 3];
+      const whiteDist = Math.max(255 - px[i], 255 - px[i + 1], 255 - px[i + 2]);
+      if (a >= LOGO_INK_ALPHA && whiteDist >= LOGO_INK_WHITE_DIST) {
+        // Ink: solid black, original alpha (keeps antialiased edges smooth).
+        px[i] = px[i + 1] = px[i + 2] = 0;
+        if (xPix < minX) minX = xPix;
+        if (xPix > maxX) maxX = xPix;
+        if (yPix < minY) minY = yPix;
+        if (yPix > maxY) maxY = yPix;
+      } else {
+        px[i + 3] = 0;             // air: fully transparent
+      }
+    }
+  }
+  if (maxX < 0) return null;       // no ink anywhere — monogram is the better label
+
+  sctx.putImageData(data, 0, 0);
+
+  // Crop to the ink plus a 1px breath so an antialiased edge is never shaved.
+  const cx = Math.max(0, minX - 1);
+  const cy = Math.max(0, minY - 1);
+  const cw = Math.min(w, maxX + 2) - cx;
+  const ch = Math.min(h, maxY + 2) - cy;
+  const out = createCanvas(cw, ch);
+  out.getContext('2d').drawImage(scan, cx, cy, cw, ch, 0, 0, cw, ch);
+  return { canvas: out, width: cw, height: ch };
+}
+
 // Render one 4x2in label to a PNG.
 //
 // ONE OPTIONS OBJECT, not fourteen positional parameters. The old signature was
@@ -1166,32 +1283,40 @@ async function generateLabel(input) {
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
     if (hasLogo) {
-      try {
-        const img = await loadImage(clubImageBuffer);
+      // Crop to the artwork and binarize for thermal — see
+      // prepareLogoForThermal. A null result (undecodable, or no ink at all)
+      // falls through to the monogram badge below.
+      const logo = await prepareLogoForThermal(clubImageBuffer);
+      if (logo) {
         // The icon zone is 76pt ≈ 317 device px at 300 DPI. A logo whose
-        // source is much smaller than that (the pre-5.5 extension captured
-        // club images at 64×64) would be upscaled 4–5×, and the thermal
-        // printer then dithers the blurry antialiased edges into speckle —
-        // the printed result is recognisably worse than no logo at all.
-        // Below half the target resolution, the solid-ink monogram badge is
-        // the better label: skip the image and fall through to it.
+        // ARTWORK (post-crop — a small graphic on a big padded canvas no
+        // longer gets credit for the padding) is much smaller than that
+        // (the pre-5.5 extension captured club images at 64×64) would be
+        // upscaled 4–5×, and the thermal printer then dithers the blurry
+        // antialiased edges into speckle — the printed result is
+        // recognisably worse than no logo at all. Below half the target
+        // resolution, the solid-ink monogram badge is the better label:
+        // skip the image and fall through to it.
         const targetPx = iconSize * SCALE;
-        if (Math.max(img.width, img.height) >= targetPx / 2) {
+        if (Math.max(logo.width, logo.height) >= targetPx / 2) {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
-          // Preserve aspect ratio
-          const aspect = img.width / img.height;
+          // Preserve aspect ratio within the 76pt square. Post-crop this is
+          // the aspect of the ARTWORK — a wordmark on a padded square canvas
+          // used to fit by its padding and shrink the art; now it fits by
+          // the art itself.
+          const aspect = logo.width / logo.height;
           let drawW = iconSize, drawH = iconSize;
           if (aspect > 1) { drawH = iconSize / aspect; }
           else { drawW = iconSize * aspect; }
           const dx = iconX + (iconSize - drawW) / 2;
           const dy = iconY + (iconSize - drawH) / 2;
-          ctx.drawImage(img, dx, dy, drawW, drawH);
+          ctx.drawImage(logo.canvas, dx, dy, drawW, drawH);
           logoDrawn = true;
         } else {
-          console.log(`[icon] Club image is ${img.width}x${img.height}px — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
+          console.log(`[icon] Club artwork is ${logo.width}x${logo.height}px after cropping — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
         }
-      } catch { /* decode failed — fall through to the monogram badge */ }
+      }
     }
     if (!logoDrawn) {
       // Monogram badge: solid disc + club initials in the club's own font.
@@ -1920,8 +2045,7 @@ app.post('/label', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const rawGroup = record.HandbookGroup || record.Group || '';
-    handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, clubName);
     birthday = isBirthdayWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
   } else {
@@ -2039,14 +2163,16 @@ app.post('/print', async (req, res) => {
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const _rawGroup = record.HandbookGroup || record.Group || '';
-    handbookGroup = _rawGroup.trim().toLowerCase() === 'all' ? '' : _rawGroup;
     birthday      = isBirthdayWeek(record.Birthdate);
     noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
     // roster so the label isn't club-less. Icon falls back to the monogram.
     if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
+    // After the roster fill, so the group is judged against the club that
+    // actually prints — a club-less POST for a Puggles kid must still drop
+    // the "Puggles group" pseudo-group.
+    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, effectiveClubName);
     console.log(`[csv] Enriched: ${firstName} ${lastName} | group: ${handbookGroup || '(none)'} | allergies: ${allergyTokens.join(', ') || '(none)'} | birthday: ${birthday}${noPhoto ? ' | NO PHOTO' : ''}`);
   } else {
     // Child not in CSV (new visitor, typo, or CSV unavailable) — print a basic
@@ -2371,8 +2497,7 @@ app.get('/preview', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    const rawGroup = record.HandbookGroup || record.Group || '';
-    handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, clubName);
     birthday = isBirthdayWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
   }
@@ -2429,8 +2554,7 @@ app.post('/reprint', async (req, res) => {
     if (record) {
       const allergySource = record.Allergies || record.Notes || '';
       allergyTokens = parseAllergies(allergySource);
-      const rawGroup = record.HandbookGroup || record.Group || '';
-      handbookGroup = rawGroup.trim().toLowerCase() === 'all' ? '' : rawGroup;
+      handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, entry.clubName);
       birthday = isBirthdayWeek(record.Birthdate);
       noPhoto = noPhotoFor(record);
     }
@@ -3656,6 +3780,11 @@ module.exports = {
   // through HTTP would also make every baseline depend on the route's defaults
   // rather than on the renderer itself.
   generateLabel,
+  // The thermal-logo pipeline and the group-line policy, exported so tests can
+  // exercise them directly: prepareLogoForThermal against synthetic light-ink /
+  // padded / blank images, effectiveHandbookGroup against TwoTimTwo's real
+  // pseudo-group values ("all", "Puggles group").
+  prepareLogoForThermal, effectiveHandbookGroup,
   // The security policy itself is tested through print-server/security.js;
   // re-exported here so a test can assert the server wires up the same module.
   security,
