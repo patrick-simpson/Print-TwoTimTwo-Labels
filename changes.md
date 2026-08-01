@@ -37,6 +37,17 @@ Two new suites, 104 assertions. `test-envelope.cjs` treats the negative cases as
 
 Both repos are pinned to one committed interop fixture (`envelope-vectors.json`, mirrored byte-identically like `contract-vectors.json`). Two implementations of one wire format — Node's `crypto` here, WebCrypto there — is exactly the situation where both sides pass their own tests and no name ever reaches a screen. Verified beyond the unit tests: real Chromium opens all seven Node-sealed envelopes exactly and rejects both a flipped byte and a cross-event replay.
 
+### `generateLabel` takes an options object
+The renderer had **fourteen positional parameters**. Reading a call site meant counting commas to work out whether the seventh `false` was `isBirthday` or `stepUp`, and two callers had already drifted in exactly the way that invites: `/reprint` passes nothing for visitor, step-up, shares, the "Go to:" line or the milestone line — because print history never stored them, so a reprint has quietly differed from the label it reprints — and the connect card smuggles its greeting through the `handbookGroup` slot, which is why that greeting inherits a 30-character truncation nobody chose.
+
+All ten call sites now pass one named object, and a non-object argument throws instead of rendering. That last part matters more than it looks: a leftover positional call would otherwise produce a label with a first name and nothing else — which prints, and looks almost right, which is the worst failure available for something carrying allergy icons.
+
+The conversion is **byte-identical by construction** and the 18 golden-image baselines are the proof rather than the claim. They caught a real mistake during the work: 17 cases matched exactly while the all-fields torture case differed by 38% of its pixels, because one multi-line case had not been converted and was rendering a blank label. A signature refactor that only ran the unit tests would have shipped that.
+
+The golden cases are now declarative models rather than positional argument arrays, with a small adapter in the harness, so the next signature change touches one function instead of eighteen fixtures — and the baselines keep policing pixels across a refactor rather than being regenerated, which would let the gate certify its own change.
+
+This is the groundwork for the per-club label template editor; it is landed on its own because it stands on its own.
+
 ### Who's still here — contract v4
 TwoTimTwo's `/clubber/checkout` page turns out not to be a checkout *form*: it is the live list of children **currently checked in**, each with a button to check them out, and a row vanishes once they are. So "who is still here" needs no departure event to miss — it is simply the set of rows.
 

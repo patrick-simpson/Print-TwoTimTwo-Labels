@@ -93,41 +93,45 @@ const { createCanvas, loadImage } = require(
   path.join(__dirname, '..', 'print-server', 'node_modules', '@napi-rs', 'canvas'));
 
 // ── Cases ────────────────────────────────────────────────────────────────────
-// generateLabel's positional signature:
-//  (firstName, lastName, clubName, clubImageBuffer, allergyTokens, handbookGroup,
-//   isBirthday, isVisitor, stepUp, stepUpNextClub, awanaShares, noPhoto,
-//   testBanner, extras)
+// Each case is a declarative MODEL — the fields that differ from a plain label —
+// rather than a positional argument list. That indirection is deliberate: it
+// lets generateLabel's signature change without touching a single case, so the
+// baselines keep policing the pixels across a refactor instead of having to be
+// regenerated (which would make the gate certify its own change).
 //
 // Every case exercises a distinct branch of the layout maths. The names are
 // chosen to hit the font-autosizing thresholds (>12 chars, >8 chars, short).
 const CASES = [
-  { name: 'plain',            args: ['Testkid', 'Sample', 'Cubbies', null, [], '', false, false, false, '', null, false, false, {}] },
-  { name: 'first-name-only',  args: ['Ava', '', '', null, [], '', false, false, false, '', null, false, false, {}] },
-  { name: 'long-name',        args: ['Bartholomew', 'Fitzwilliam', 'T&T', null, [], '', false, false, false, '', null, false, false, {}] },
-  { name: 'very-long-first',  args: ['Maximilianagnes', 'Sample', 'Sparks', null, [], '', false, false, false, '', null, false, false, {}] },
-  { name: 'handbook-group',   args: ['Testkid', 'Sample', 'Sparks', null, [], 'Flight 3:16', false, false, false, '', null, false, false, {}] },
-  { name: 'allergies-one',    args: ['Testkid', 'Sample', 'Sparks', null, ['NUTS'], '', false, false, false, '', null, false, false, {}] },
-  { name: 'allergies-all',    args: ['Testkid', 'Sample', 'Sparks', null, ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'], '', false, false, false, '', null, false, false, {}] },
-  { name: 'birthday',         args: ['Testkid', 'Sample', 'Sparks', null, [], '', true, false, false, '', null, false, false, {}] },
-  { name: 'visitor',          args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, true, false, '', null, false, false, {}] },
-  { name: 'visitor-inverted', args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, true, false, '', null, false, false, { inverted: true }] },
-  { name: 'step-up',          args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, false, true, 'T&T', null, false, false, {}] },
-  { name: 'shares',           args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, false, false, '', 12, false, false, {}] },
-  { name: 'no-photo',         args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, false, false, '', null, true, false, {}] },
-  { name: 'go-to-line',       args: ['Testkid', 'Sample', 'Sparks', null, [], 'Flight 3:16', false, false, false, '', null, false, false, { goToLine: 'Go to: Music, Rm 4' }] },
-  { name: 'milestone-line',   args: ['Testkid', 'Sample', 'Sparks', null, [], '', false, false, false, '', null, false, false, { milestoneLine: '⭐ 10th club night tonight!' }] },
-  { name: 'test-banner',      args: ['Canary 00:00:00', '', 'Test', null, [], '', false, false, false, '', null, false, true, {}] },
-  { name: 'club-monogram',    args: ['Testkid', 'Sample', 'Puggles', null, [], '', false, false, false, '', null, false, false, {}] },
+  { name: 'plain',            model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Cubbies' } },
+  { name: 'first-name-only',  model: { firstName: 'Ava', lastName: '', clubName: '' } },
+  { name: 'long-name',        model: { firstName: 'Bartholomew', lastName: 'Fitzwilliam', clubName: 'T&T' } },
+  { name: 'very-long-first',  model: { firstName: 'Maximilianagnes', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'handbook-group',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16' } },
+  { name: 'allergies-one',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', allergyTokens: ['NUTS'] } },
+  { name: 'allergies-all',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'] } },
+  { name: 'birthday',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isBirthday: true } },
+  { name: 'visitor',          model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true } },
+  { name: 'visitor-inverted', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true, extras: { inverted: true } } },
+  { name: 'step-up',          model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', stepUp: true, stepUpNextClub: 'T&T' } },
+  { name: 'shares',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', awanaShares: 12 } },
+  { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
+  { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
+  { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
+  { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
+  { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
   // the name block.
   {
     name: 'torture-all-fields',
-    args: ['Bartholomew', 'Fitzwilliam', 'Sparks', null,
-      ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'], 'Flight 3:16',
-      true, true, false, '', 99, true, false,
-      { goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 50th club night tonight!' }],
+    model: {
+      firstName: 'Bartholomew', lastName: 'Fitzwilliam', clubName: 'Sparks',
+      allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'],
+      handbookGroup: 'Flight 3:16',
+      isBirthday: true, isVisitor: true, awanaShares: 99, noPhoto: true,
+      extras: { goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 50th club night tonight!' },
+    },
   },
 ];
 
@@ -172,8 +176,14 @@ async function diff(actualBuf, baselineBuf) {
   return { ratio: count / (a.w * a.h), count, diffPng: c.toBuffer('image/png') };
 }
 
-async function render(args) {
-  const result = await generateLabel(...args);
+// generateLabel takes one options object. Kept as a named adapter so that if the
+// signature ever changes again, only this function moves.
+function callLabel(model) {
+  return generateLabel({ ...model });
+}
+
+async function render(model) {
+  const result = await callLabel(model);
   // generateLabel writes a temp PNG and also returns the buffer; use the buffer
   // and clean up the file so a test run leaves nothing behind.
   const buf = result.buffer || fs.readFileSync(result.pngPath);
@@ -211,7 +221,7 @@ async function main() {
     const file = path.join(BASELINE_DIR, `${c.name}.png`);
     let actual;
     try {
-      actual = await render(c.args);
+      actual = await render(c.model);
     } catch (e) {
       check(`render ${c.name}`, false, e.message);
       continue;

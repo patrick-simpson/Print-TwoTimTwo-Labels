@@ -1014,12 +1014,38 @@ const PX_W = Math.round(4 * DPI);  // 1200 px
 const PX_H = Math.round(2 * DPI);  // 600 px
 const SCALE = DPI / 72;            // convert pt → px
 
-async function generateLabel(
-  firstName, lastName, clubName, clubImageBuffer,
-  allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-  testBanner = false, extras = {}
-) {
+// Render one 4x2in label to a PNG.
+//
+// ONE OPTIONS OBJECT, not fourteen positional parameters. The old signature was
+// `generateLabel(firstName, lastName, clubName, clubImageBuffer, allergyTokens,
+// handbookGroup, isBirthday, isVisitor, stepUp, stepUpNextClub, awanaShares,
+// noPhoto, testBanner, extras)`, and reading a call site meant counting commas
+// to find out whether the seventh `false` was isBirthday or stepUp. Two of the
+// callers had already drifted: /reprint silently passed nothing for visitor,
+// stepUp, awanaShares, goToLine and milestoneLine because history never stored
+// them, and the connect card smuggles its greeting through `handbookGroup`,
+// which is why that greeting is subject to a 30-character truncation nobody
+// intended.
+//
+// The conversion is byte-identical by construction — every default below
+// matches the old parameter default — and the 18 golden-image baselines are the
+// proof. They compare pixels, so a mis-mapped argument would show up as a diff
+// rather than as a plausible-looking label.
+//
+// @param {object} input
+async function generateLabel(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    // Loud rather than mysterious: a leftover positional caller would otherwise
+    // render a label with a first name and nothing else, which prints and looks
+    // almost right — the worst possible failure for a safety artifact.
+    throw new TypeError('generateLabel() takes a single options object');
+  }
+  let {
+    firstName, lastName, clubName, clubImageBuffer,
+    allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
+    stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
+    testBanner = false, extras = {},
+  } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
   // would otherwise throw deep inside layout and turn a printable label into
@@ -1888,12 +1914,12 @@ app.post('/label', async (req, res) => {
     if (labelGoTo) labelExtras.goToLine = labelGoTo;
     if (visitor && config.firstTimerInverted !== false) labelExtras.inverted = true;
 
-    const result = await generateLabel(
+    const result = await generateLabel({
       firstName, lastName, clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor,
+      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
-      false, labelExtras
-    );
+      extras: labelExtras,
+    });
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
@@ -2037,12 +2063,13 @@ app.post('/print', async (req, res) => {
     }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
 
-    const result = await generateLabel(
-      firstName, lastName, effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor,
+    const result = await generateLabel({
+      firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
-      isDemo, extras   // 13th arg is testBanner — a demo label is visibly marked
-    );
+      testBanner: isDemo,   // a demo label is visibly marked
+      extras,
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
@@ -2055,12 +2082,16 @@ app.post('/print', async (req, res) => {
       try {
         const row = scheduleRowFor(effectiveClubName);
         const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
-        const card = await generateLabel(
-          firstName, lastName, effectiveClubName, clubImageBuffer,
-          [], "We're so glad you're here!", false, true,
-          false, '', null, false,
-          false, where ? { goToLine: where } : {}
-        );
+        const card = await generateLabel({
+          firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+          // The greeting rides in `handbookGroup` because that is the slot which
+          // renders a line under the name. Now that the fields are named, the
+          // oddity is at least visible: it means the greeting inherits that
+          // field's 30-character truncation.
+          handbookGroup: "We're so glad you're here!",
+          isVisitor: true,
+          extras: where ? { goToLine: where } : {},
+        });
         connectPngPath = card.pngPath;
         printImage(connectPngPath, effectivePrinter);
       } catch (e) {
@@ -2313,8 +2344,10 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
-    const result = await generateLabel(firstName, lastName, clubName, null, allergyTokens, handbookGroup, birthday,
-      false, false, '', null, noPhoto);
+    const result = await generateLabel({
+      firstName, lastName, clubName,
+      allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+    });
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
     // Clean up temp file
@@ -2369,11 +2402,14 @@ app.post('/reprint', async (req, res) => {
     }
 
     const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
-    const result = await generateLabel(
-      entry.firstName, entry.lastName, entry.clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday,
-      false, false, '', null, noPhoto
-    );
+    // NOTE: visitor, stepUp, awanaShares, goToLine and milestoneLine are all
+    // absent here because print history never stored them, so a reprint has
+    // quietly differed from the original label. Naming the fields makes that
+    // omission visible rather than hidden in a run of positional `false`s.
+    const result = await generateLabel({
+      firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
@@ -2470,12 +2506,11 @@ app.post('/print-award', async (req, res) => {
   let pngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
-    const result = await generateLabel(
-      firstName, lastName, effectiveClubName, clubImageBuffer,
-      allergyTokens, medalLine, birthday, false,
-      false, '', null, noPhoto,
-      false, { inverted: true }
-    );
+    const result = await generateLabel({
+      firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      extras: { inverted: true },
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
@@ -2860,10 +2895,9 @@ app.post('/canary', async (req, res) => {
 
   let pngPath = null;
   try {
-    const result = await generateLabel(
-      canaryName, '', 'Test', null, [], '', false, false,
-      false, '', null, false, true  // testBanner
-    );
+    const result = await generateLabel({
+      firstName: canaryName, lastName: '', clubName: 'Test', testBanner: true,
+    });
     pngPath = result.pngPath;
     const printerName = (req.body && req.body.printerName && String(req.body.printerName).trim()) || PRINTER_NAME;
     printImage(pngPath, printerName);
@@ -3414,7 +3448,7 @@ app.get('/diagnostics', async (req, res) => {
 
   // 4. Can render test label
   try {
-    const testResult = await generateLabel('Test', 'Child', '', null, [], '', false);
+    const testResult = await generateLabel({ firstName: 'Test', lastName: 'Child', clubName: '' });
     fs.unlink(testResult.pngPath, () => {});
     results.push({ test: 'Label rendering', passed: true, detail: `${testResult.buffer.length} bytes` });
   } catch (e) {
@@ -3456,7 +3490,7 @@ function prewarmPrinterIfConfigured() {
       setTimeout(async () => {
         try {
           console.log('[prewarm] Sending blank label to printer...');
-          const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
+          const result = await generateLabel({ firstName: ' ', lastName: ' ', clubName: '' });
           printImage(result.pngPath, PRINTER_NAME);
           fs.unlink(result.pngPath, () => {});
           console.log('[prewarm] Done');
