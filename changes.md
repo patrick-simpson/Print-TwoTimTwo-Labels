@@ -1,4 +1,21 @@
-﻿## [5.4.1] - 2026-08-01
+﻿
+﻿## [5.5.0] - 2026-08-01
+The server now starts on every launch of the app — including the very first one — plus a one-click Start Server button everywhere, an always-visible update status, club logos that print crisp instead of speckled, and a check-in panel that no longer traps you when you tick "Also register in TwoTimTwo".
+
+### The server starts the moment the app does
+Field testing surfaced the gap: install the app, and nothing is listening on port 3456 until the setup wizard is completed — the server literally did not exist before "Save & Start" was clicked. Now the print server starts on every launch, first run included. Before setup it prints to the system default printer; the wizard save restarts it with the chosen one. The tray icon and its status appear immediately too, and first-run also registers the launch-on-boot entry (the wizard checkbox can still turn it off), so an installed machine comes back up printing after a reboot even if setup was interrupted.
+
+Because the server module is require-cached across these restarts, its load-time printer name and config snapshot went stale the moment settings changed — with a pre-setup start it would have been frozen EMPTY. The Electron shell now pushes the saved printer and the merged config.json into the live module (`setPrinterName()` + `applySavedConfig()`) on every restart, the same live-sync rule that fixed the stale-PIN bug.
+
+### Launching the app IS the fix
+Double-clicking the desktop shortcut while the app was already in the tray used to just open the settings window. It now health-probes port 3456 first and starts the server if nothing answers — the operator's natural "it isn't printing" gesture actually repairs the situation. The same one-click start lives in the tray menu ("▶ Start print server" when it's down, "Restart print server" when it's up) and as a green **▶ Start Server** button right in the settings window's failure card.
+
+### Auto-update you can see
+The updater worked but was invisible until a download had already finished. The tray now always shows the installed version and exactly where the updater is: "Checking…", "Downloading update vX…", "⬇ Restart to update to vX", or "✓ Up to date". The settings window gained a permanent version card with a **Check for Updates** button that answers out loud — newest version, downloading (with percent), ready to restart, or can't reach the update server. `runAfterFinish` is now pinned explicitly in the NSIS config so install → app launches → server up stays true by contract, not by default.
+
+### Club logos print crisp instead of speckled
+The photo evidence: Sparks and T&T logos printing as pixelated mush. Root cause was in the extension — it captured every club image onto a fixed 64×64 canvas, and the label renderer then blew that up to a ~317-pixel icon zone (76pt at 300 DPI), a 5× upscale whose blurry edges the 1-bit thermal printer dithered into speckle. The extension now captures at up to 320px (never above the image's own resolution), and the renderer refuses to upscale any logo more than 2× — below that it falls back to the solid-ink monogram badge, which prints crisp, and keeps the club name in the text area since initials alone don't identify the club. Rejecting a too-small logo beats printing an unrecognizable one; update the extension to get real logos back at full quality.
+
 The check-in panel no longer traps you when you tick "Also register in TwoTimTwo".
 
 ### The panel could grow past the bottom of the screen with no way to scroll

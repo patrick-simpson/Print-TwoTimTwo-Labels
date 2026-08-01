@@ -9,6 +9,9 @@ export default function StatusPanel({ config, onReset }) {
   const [lanAddress, setLanAddress] = useState(null);
   const [testState, setTestState]   = useState('idle'); // idle | printing | ok | error
   const [fwState, setFwState]       = useState('idle'); // idle | working | ok | error
+  const [starting, setStarting]     = useState(false);  // Start Server button
+  const [checking, setChecking]     = useState(false);  // Check for Updates button
+  const [checkNote, setCheckNote]   = useState('');     // result of an explicit check
 
   useEffect(() => {
     let alive = true;
@@ -49,6 +52,34 @@ export default function StatusPanel({ config, onReset }) {
     setTimeout(() => setTestState('idle'), 5000);
   }
 
+  async function startServerNow() {
+    setStarting(true);
+    try { await window.awana.startServer?.(); } catch { /* older main process */ }
+    // Give the port a moment to bind, then let the next health poll repaint.
+    await new Promise(r => setTimeout(r, 1200));
+    try {
+      const res = await fetch(`${SERVER}/health`, { signal: AbortSignal.timeout(4000) });
+      const data = await res.json();
+      setHealth(data); setHealthErr(data.status !== 'ok');
+    } catch { /* still down — the failed card stays up */ }
+    setStarting(false);
+  }
+
+  async function checkForUpdatesNow() {
+    setChecking(true);
+    setCheckNote('');
+    try {
+      const r = await window.awana.checkForUpdates?.();
+      if (r) {
+        setServerState(st => ({ ...(st || {}), update: r }));
+        if (r.supported === false) setCheckNote('Automatic updates only run in the installed app.');
+        else if (r.upToDate) setCheckNote('You have the newest version.');
+        else if (!r.available && !r.downloaded) setCheckNote('Could not reach the update server — check your internet connection.');
+      }
+    } catch { setCheckNote('Update check failed.'); }
+    setChecking(false);
+  }
+
   async function enablePhone() {
     setFwState('working');
     try {
@@ -61,8 +92,11 @@ export default function StatusPanel({ config, onReset }) {
   }
 
   const failed = serverState?.status === 'failed' || (healthErr && !health);
-  const updateReady = serverState?.update?.downloaded;
-  const updateAvailable = health?.latestVersion && health.latestVersion !== health.version;
+  const upd = serverState?.update || {};
+  const updateReady = upd.downloaded;
+  const updateAvailable = upd.available
+    || (health?.latestVersion && health.latestVersion !== health.version ? health.latestVersion : null);
+  const appVersion = serverState?.version || health?.version;
   const csv = health?.csv;
   const warnings = health?.warnings || [];
 
@@ -82,25 +116,44 @@ export default function StatusPanel({ config, onReset }) {
         </div>
       </div>
 
-      {/* Server-failure detail: never hide a broken server */}
-      {serverState?.status === 'failed' && (
+      {/* Server down: never hide it, and give the one-click way back up */}
+      {failed && (
         <div style={s.errorCard}>
-          <b>The print server failed to start — labels cannot print.</b>
-          <pre style={s.errorPre}>{String(serverState.error || '').split('\n')[0]}</pre>
-          <span style={s.errorHint}>Send a screenshot of this window to your administrator.</span>
+          <b>The print server is not running — labels cannot print.</b>
+          {serverState?.status === 'failed' && (
+            <pre style={s.errorPre}>{String(serverState.error || '').split('\n')[0]}</pre>
+          )}
+          <button style={s.startBtn} onClick={startServerNow} disabled={starting}>
+            {starting ? 'Starting…' : '▶ Start Server'}
+          </button>
+          {serverState?.status === 'failed' && (
+            <div style={s.errorHint}>If it won't start, send a screenshot of this window to your administrator.</div>
+          )}
         </div>
       )}
 
-      {/* Update ready */}
-      {updateReady && (
+      {/* Updates: always visible, always says where the updater is */}
+      {updateReady ? (
         <div style={s.updateCard}>
-          <span>Update v{updateReady} is ready.</span>
+          <span>Update v{updateReady} is downloaded and ready.</span>
           <button style={s.updateBtn} onClick={() => window.awana.installUpdate()}>Restart to update</button>
         </div>
-      )}
-      {!updateReady && updateAvailable && (
+      ) : updateAvailable ? (
         <div style={s.updateCard}>
-          <span>Version {health.latestVersion} is available — downloading in the background.</span>
+          <span>
+            Version {updateAvailable} is available — downloading
+            {upd.percent != null ? ` (${upd.percent}%)` : ' in the background'}…
+          </span>
+        </div>
+      ) : (
+        <div style={s.updateCard}>
+          <span>
+            {appVersion ? `Version ${appVersion}` : 'Version …'}
+            {checkNote ? ` — ${checkNote}` : upd.upToDate ? ' — ✓ up to date' : ''}
+          </span>
+          <button style={s.updateBtn} onClick={checkForUpdatesNow} disabled={checking}>
+            {checking ? 'Checking…' : 'Check for Updates'}
+          </button>
         </div>
       )}
 
@@ -195,7 +248,8 @@ const s = {
   badgeBad:   { fontSize: '12px', color: '#c0392b', fontWeight: '700' },
   errorCard:  { backgroundColor: '#fdecea', border: '1px solid #f5c6cb', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px', fontSize: '12px', color: '#7a1f1a' },
   errorPre:   { whiteSpace: 'pre-wrap', margin: '8px 0', fontSize: '11px', fontFamily: 'Consolas, monospace' },
-  errorHint:  { fontSize: '11px', color: '#a94442' },
+  errorHint:  { fontSize: '11px', color: '#a94442', marginTop: '8px' },
+  startBtn:   { display: 'block', width: '100%', marginTop: '10px', padding: '10px', backgroundColor: '#27ae60', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' },
   updateCard: { backgroundColor: '#eef4ff', border: '1px solid #c9dcff', borderRadius: '8px', padding: '10px 14px', marginBottom: '14px', fontSize: '12px', color: '#1f3f7a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' },
   updateBtn:  { padding: '6px 10px', backgroundColor: PURPLE, color: '#fff', border: 'none', borderRadius: '5px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' },
   card:       { backgroundColor: '#fff', borderRadius: '10px', padding: '4px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.09)', marginBottom: '14px' },
