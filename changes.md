@@ -16,12 +16,23 @@ The extension's offline fallback renderer draws only first name, last name, club
 
 So the hazard was never the missing icons — it was that the label still *looked* complete. A volunteer who has learned "no peanut icon means no peanut allergy" would read an offline label as safe. It now carries an inverted `OFFLINE — CHECK ALLERGY LIST` band (inverted so it survives a 1-bit thermal print and can't be mistaken for part of the normal layout). A label that admits what it doesn't know is safe; one that quietly omits an allergy is not.
 
+### Saving Electron settings no longer erases the security config
+`config.json` has several writers with very different views of it. The print server owns the security and realtime keys — `phonePin`, `lanAccess`, `allowedOrigins`, the four Pusher credentials — plus the `schedule`, `historyRetentionDays`, `connectCard` and `worksheetPrinter`. The Electron setup wizard owns exactly three: `printerName`, `checkinUrl`, `launchOnBoot`.
+
+The Electron writer replaced the whole file with the renderer's three-key object, so one click on Save in Settings deleted every server-owned key — and because the handler restarts the server immediately afterwards, the loss went live at once. Three unrelated failures from one click, none of them reported: phone check-in refused every request (the v5.3.0 gate fails closed with no PIN, which is the safe direction but looks like a broken phone page), the lobby TV lost its Pusher credentials and went dark, and late arrivals stopped being routed because the schedule was gone. The realistic trigger is the worst possible moment — the printer jams mid-event, a volunteer opens Settings to pick the backup printer, and saves.
+
+Writes are now a **merge** of the renderer's patch over what is on disk, via a new `electron-app/src/config-store.js` that is deliberately Electron-free so it can be unit-tested, and are written tmp-then-rename so a crash mid-write cannot truncate the file either. The `save-config` handler now acts on the merged result rather than the patch, since the patch alone lacks everything `startServer` needs.
+
+Separately, the deprecated PowerShell installer read-modify-writes correctly but called `ConvertTo-Json` with no `-Depth`; PowerShell 5.1 defaults to depth 2, which serialises `schedule[].label` as a type-name string instead of JSON — silent corruption rather than clean loss. Both call sites now pass `-Depth 10`.
+
+A sixth suite (`test-config-store.cjs`, 31 assertions) covers the merge, first-run creation, corrupt and non-object config files, and the `-Depth` flag. Because the bug was a bare `writeFileSync` in `main.js` rather than a wrong merge, it also asserts at the source level that nothing bypasses the store. Both halves were verified by reintroducing each bug and watching the suite go red.
+
 ### CI runs the test suites now
 All four suites — event contracts, server helpers, the v5.3.0 trust model, extension identity — existed and passed for several releases while being invoked **only by hand**. The only automated check was the label render smoke test. So the security suite proving the roster isn't reachable from the network could have started failing and no push would have noticed.
 
 `webpack.yml` gains a test job and its push trigger widens from `main` to every branch; `build-electron.yml` gains the same job and `build` now needs it, so a tag cut from a green `main` still can't publish an `.exe` without re-verifying the contract and the trust model. Verified by breaking `security.js`'s loopback check and watching CI go red.
 
-A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 454 assertions now pass across five suites.
+A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 524 assertions now pass across seven suites.
 
 ## [5.3.0] - 2026-07-27
 Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.

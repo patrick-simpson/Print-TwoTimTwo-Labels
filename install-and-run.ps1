@@ -717,7 +717,10 @@ function Configure {
     if ($newCluster.Trim()) { $cfg.pusherCluster = $newCluster.Trim() }
 
     # Save config
-    $cfg | ConvertTo-Json | Set-Content $configPath
+    # -Depth 10: PowerShell 5.1 defaults to depth 2, which serialises the nested
+    # schedule array (config.schedule[].label) as a type-name string instead of
+    # JSON — silently corrupting late-arrival routing on save.
+    $cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath
     Write-Host ""
     Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
@@ -756,7 +759,10 @@ if ((-not $cfg.printerName -or -not $cfg.checkinUrl) -and -not $skipInteractive)
     Write-Host ""
 
     # Save config
-    $cfg | ConvertTo-Json | Set-Content $configPath
+    # -Depth 10: PowerShell 5.1 defaults to depth 2, which serialises the nested
+    # schedule array (config.schedule[].label) as a type-name string instead of
+    # JSON — silently corrupting late-arrival routing on save.
+    $cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath
     Write-Host "[OK] Settings saved." -ForegroundColor Green
 }
 

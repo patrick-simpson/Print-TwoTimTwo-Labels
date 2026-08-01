@@ -13,8 +13,9 @@
     "test:demo": "node scripts/test-server-demo.cjs",
     "test:golden": "node scripts/test-label-golden.cjs",
     "test:golden:update": "UPDATE_LABEL_BASELINES=1 node scripts/test-label-golden.cjs",
-    "test": "node scripts/test-contracts.cjs && node scripts/test-server-helpers.cjs && node scripts/test-extension-identity.cjs && node scripts/test-server-security.cjs && node scripts/test-server-demo.cjs && node scripts/test-label-golden.cjs",
-    "test:extension": "node scripts/test-extension-identity.cjs"
+    "test": "node scripts/test-contracts.cjs && node scripts/test-server-helpers.cjs && node scripts/test-extension-identity.cjs && node scripts/test-config-store.cjs && node scripts/test-server-security.cjs && node scripts/test-server-demo.cjs && node scripts/test-label-golden.cjs",
+    "test:extension": "node scripts/test-extension-identity.cjs",
+    "test:config-store": "node scripts/test-config-store.cjs"
   },
   "dependencies": {
     "jspdf": "^4.2.1",
