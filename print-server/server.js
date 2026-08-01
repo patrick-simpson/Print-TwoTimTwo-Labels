@@ -688,12 +688,15 @@ function nextClubFor(clubName) {
 function effectiveHandbookGroup(rawGroup, clubName) {
   const g = String(rawGroup == null ? '' : rawGroup).trim();
   if (!g) return '';
-  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9&]+/g, ' ').trim();
+  // Collapse to bare alphanumerics for the comparison: clubKey in this same
+  // file already treats "T&T", "T & T" and "tnt" as one club, so the
+  // self-named-group rule must not be defeated by ampersand spacing.
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const gN = norm(g);
   if (gN === 'all') return '';
   if (clubKey(clubName) === 'puggle') return '';
   const cN = norm(clubName);
-  if (cN && (gN === cN || gN === `${cN} group` || gN === `${cN} class` || gN === `${cN} room`)) return '';
+  if (cN && (gN === cN || gN === `${cN}group` || gN === `${cN}class` || gN === `${cN}room`)) return '';
   return g;
 }
 
@@ -1071,9 +1074,19 @@ const SCALE = DPI / 72;            // convert pt → px
 //     distance test is per-channel (Chebyshev), so light-but-saturated colors
 //     — cyan, yellow, pink — count as ink even though their gray luminance is
 //     high. That is the whole point: luminance is exactly the measure the
-//     dither uses to erase them.
-//   * Ink renders as solid black at the pixel's original alpha (edges keep
-//     their antialiasing, same as text). Everything else goes transparent.
+//     dither uses to erase them. The threshold sits at 64 so a pale wash
+//     (#d0d0d0 card backgrounds and lighter) reads as PAPER, not ink — at 40
+//     a pale-gray card came back as a featureless black slab that swallowed
+//     the artwork inside it.
+//   * Ink renders as ONE solid color. Where the source's antialiasing lives in
+//     the ALPHA channel (transparent-background PNG, the extension's capture
+//     format) the edge alpha is preserved and edges stay smooth like text;
+//     where the source is opaque (JPEG, PNG flattened on white) the edge is
+//     hard-thresholded, which is what the 1-bit printer would do to it anyway.
+//     The color follows the label's palette: black on a normal label, WHITE on
+//     an inverted one — the inverted icon panel is near-black, and near-black
+//     prints as black, so black ink there is an invisible logo. (Both review
+//     lenses caught exactly that on the first-timer label.)
 //   * The result is CROPPED to the ink's bounding box, so an asset with big
 //     transparent or white margins scales by its artwork, not its canvas.
 //
@@ -1082,15 +1095,34 @@ const SCALE = DPI / 72;            // convert pt → px
 // undecodable) returns null and the caller falls back to the monogram badge —
 // the icon zone never silently disappears.
 //
-// The dashboard's Label Preview shows the binarized logo too. That is a
-// feature: the preview now shows what the printer will actually produce,
-// instead of a colorful logo the thermal head cannot print.
+// POST /label (the extension's Print Dialog mode) is the surface that shows
+// this output before paper. GET /preview takes no image parameter, so the
+// dashboard preview always renders the monogram badge.
 const LOGO_INK_ALPHA = 64;        // out of 255 — below this a pixel is "air"
-const LOGO_INK_WHITE_DIST = 40;   // max(255-r,255-g,255-b) at or above this is ink
-const LOGO_MAX_DECODE_SIDE = 2048; // decompression-bomb guard: scan at most this size
+const LOGO_INK_WHITE_DIST = 64;   // max(255-r,255-g,255-b) at or above this is ink
+const LOGO_MAX_DECODE_SIDE = 2048; // bound on the scan canvas (see sniff below for decode)
 
-async function prepareLogoForThermal(clubImageBuffer) {
+// PNG dimensions live in the IHDR chunk at a fixed offset, readable without
+// decoding a single pixel. loadImage() decodes at natural size, and PNG
+// compresses flat color at extreme ratios — a small buffer can decode to a
+// bitmap large enough to hurt, and this runs on the check-in path. Non-PNG
+// formats skip the sniff (JPEG can't reach PNG's compression ratios and the
+// buffer itself is already size-capped upstream); the scan canvas below is
+// bounded regardless.
+function pngDimensions(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 24) return null;
+  if (buf.readUInt32BE(0) !== 0x89504e47) return null;   // not PNG magic
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+const LOGO_MAX_SOURCE_SIDE = 8192;  // refuse to DECODE anything bigger
+
+async function prepareLogoForThermal(clubImageBuffer, { ink = [0, 0, 0] } = {}) {
   if (!clubImageBuffer) return null;
+  const sniffed = Buffer.isBuffer(clubImageBuffer) ? pngDimensions(clubImageBuffer) : null;
+  if (sniffed && Math.max(sniffed.width, sniffed.height) > LOGO_MAX_SOURCE_SIDE) {
+    console.log(`[icon] Club image claims ${sniffed.width}x${sniffed.height}px — refusing to decode it`);
+    return null;
+  }
   let img;
   try {
     img = await loadImage(clubImageBuffer);
@@ -1099,9 +1131,8 @@ async function prepareLogoForThermal(clubImageBuffer) {
   }
   if (!img.width || !img.height) return null;
 
-  // Scan at a bounded size: a 2 MB PNG can decode to enormous dimensions, and
-  // this runs on the check-in path. Downscaling before the scan costs nothing
-  // visually — the icon zone is ~317 device px.
+  // Scan at a bounded size regardless of what decoded. Downscaling before the
+  // scan costs nothing visually — the icon zone is ~317 device px.
   const scanScale = Math.min(1, LOGO_MAX_DECODE_SIDE / Math.max(img.width, img.height));
   const w = Math.max(1, Math.round(img.width * scanScale));
   const h = Math.max(1, Math.round(img.height * scanScale));
@@ -1120,8 +1151,8 @@ async function prepareLogoForThermal(clubImageBuffer) {
       const a = px[i + 3];
       const whiteDist = Math.max(255 - px[i], 255 - px[i + 1], 255 - px[i + 2]);
       if (a >= LOGO_INK_ALPHA && whiteDist >= LOGO_INK_WHITE_DIST) {
-        // Ink: solid black, original alpha (keeps antialiased edges smooth).
-        px[i] = px[i + 1] = px[i + 2] = 0;
+        // Ink: one solid color, original alpha (keeps antialiased edges smooth).
+        px[i] = ink[0]; px[i + 1] = ink[1]; px[i + 2] = ink[2];
         if (xPix < minX) minX = xPix;
         if (xPix > maxX) maxX = xPix;
         if (yPix < minY) minY = yPix;
@@ -1142,7 +1173,14 @@ async function prepareLogoForThermal(clubImageBuffer) {
   const ch = Math.min(h, maxY + 2) - cy;
   const out = createCanvas(cw, ch);
   out.getContext('2d').drawImage(scan, cx, cy, cw, ch, 0, 0, cw, ch);
-  return { canvas: out, width: cw, height: ch };
+  // width/height are scan-space (what the canvas holds); sourceWidth/Height
+  // undo the scan downscale so the caller's too-small gate measures the
+  // artwork's TRUE resolution — otherwise identical artwork passed or failed
+  // depending on how much empty canvas happened to surround it.
+  return {
+    canvas: out, width: cw, height: ch,
+    sourceWidth: Math.round(cw / scanScale), sourceHeight: Math.round(ch / scanScale),
+  };
 }
 
 // Render one 4x2in label to a PNG.
@@ -1285,8 +1323,12 @@ async function generateLabel(input) {
     if (hasLogo) {
       // Crop to the artwork and binarize for thermal — see
       // prepareLogoForThermal. A null result (undecodable, or no ink at all)
-      // falls through to the monogram badge below.
-      const logo = await prepareLogoForThermal(clubImageBuffer);
+      // falls through to the monogram badge below. Ink follows the palette:
+      // on an inverted label the icon panel prints black, so the logo must be
+      // white there or it vanishes into its own background.
+      const inkWhite = Boolean(extras && extras.inverted);
+      const logo = await prepareLogoForThermal(clubImageBuffer,
+        { ink: inkWhite ? [255, 255, 255] : [0, 0, 0] });
       if (logo) {
         // The icon zone is 76pt ≈ 317 device px at 300 DPI. A logo whose
         // ARTWORK (post-crop — a small graphic on a big padded canvas no
@@ -1298,7 +1340,7 @@ async function generateLabel(input) {
         // resolution, the solid-ink monogram badge is the better label:
         // skip the image and fall through to it.
         const targetPx = iconSize * SCALE;
-        if (Math.max(logo.width, logo.height) >= targetPx / 2) {
+        if (Math.max(logo.sourceWidth, logo.sourceHeight) >= targetPx / 2) {
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
           // Preserve aspect ratio within the 76pt square. Post-crop this is
@@ -1314,7 +1356,7 @@ async function generateLabel(input) {
           ctx.drawImage(logo.canvas, dx, dy, drawW, drawH);
           logoDrawn = true;
         } else {
-          console.log(`[icon] Club artwork is ${logo.width}x${logo.height}px after cropping — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
+          console.log(`[icon] Club artwork is ${logo.sourceWidth}x${logo.sourceHeight}px after cropping — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
         }
       }
     }
@@ -2042,12 +2084,18 @@ app.post('/label', async (req, res) => {
   const record = findClubber(firstName, lastName, clubberId);
 
   let allergyTokens, handbookGroup, birthday, noPhoto;
+  let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, clubName);
     birthday = isBirthdayWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
+    // Same roster fill (and same ordering) as /print: the group is judged
+    // against the club that actually prints, so a club-less request for a
+    // Puggles kid still drops the "Puggles group" pseudo-group. Review caught
+    // this path diverging from /print.
+    if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
+    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, effectiveClubName);
   } else {
     allergyTokens = [];
     handbookGroup = '';
@@ -2057,8 +2105,8 @@ app.post('/label', async (req, res) => {
 
   // Step Up Night eligibility — only kicks in when the client says it's
   // step-up night AND the kid is in a graduating cohort.
-  const stepUp = !!stepUpNight && isSteppingUp(record, clubName);
-  const stepUpNextClub = stepUp ? (nextClubFor(clubName) || '') : '';
+  const stepUp = !!stepUpNight && isSteppingUp(record, effectiveClubName);
+  const stepUpNextClub = stepUp ? (nextClubFor(effectiveClubName) || '') : '';
 
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
@@ -2068,12 +2116,12 @@ app.post('/label', async (req, res) => {
     // milestoneLine is deliberately NOT computed here: it comes from recording
     // attendance, and a preview/dialog render must not record a check-in.
     const labelExtras = {};
-    const labelGoTo = lateGoToLine(clubName);
+    const labelGoTo = lateGoToLine(effectiveClubName);
     if (labelGoTo) labelExtras.goToLine = labelGoTo;
     if (visitor && config.firstTimerInverted !== false) labelExtras.inverted = true;
 
     const result = await generateLabel({
-      firstName, lastName, clubName, clubImageBuffer,
+      firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       extras: labelExtras,
@@ -2494,17 +2542,21 @@ app.get('/preview', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName);
   let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
+  let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, clubName);
     birthday = isBirthdayWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
+    // Same roster fill (and same ordering) as /print — a preview must show the
+    // label the same request would PRINT, pseudo-group suppression included.
+    if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
+    handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, effectiveClubName);
   }
 
   try {
     const result = await generateLabel({
-      firstName, lastName, clubName,
+      firstName, lastName, clubName: effectiveClubName,
       allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
     });
     res.set('Content-Type', 'image/png');
