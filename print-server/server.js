@@ -61,6 +61,20 @@ try {
   console.warn('[config] Failed to load config.json:', e.message);
 }
 
+// Install the display key into the publisher. The three name-bearing events
+// (checkin, recap, birthdays) are sealed with it so the PUBLIC Pusher channel
+// carries ciphertext instead of children's first names — see the sealed-envelope
+// block in events.js. With no key set the publisher stays plaintext, which is
+// what makes the rollout safe in either order; /health says which mode we are in
+// so "am I actually encrypted?" is answerable rather than assumed.
+if (events.setDisplayKey(config.displayKey)) {
+  console.log(`[realtime] Display key loaded (kid ${events.getDisplayKeyState().kid}) — names are encrypted on the channel`);
+} else if (config.displayKey) {
+  console.warn('[realtime] config.displayKey is INVALID — names will be published in the clear until it is fixed');
+} else {
+  console.warn('[realtime] No display key set — children\'s first names are published UNENCRYPTED on a public channel. Generate one in the dashboard (Realtime).');
+}
+
 // Brute-force protection for the phone PIN. Lives at module scope so the
 // failure counts survive across requests but not across restarts — a restart
 // mid-event must never leave a volunteer locked out.
@@ -1000,12 +1014,38 @@ const PX_W = Math.round(4 * DPI);  // 1200 px
 const PX_H = Math.round(2 * DPI);  // 600 px
 const SCALE = DPI / 72;            // convert pt → px
 
-async function generateLabel(
-  firstName, lastName, clubName, clubImageBuffer,
-  allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
-  stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-  testBanner = false, extras = {}
-) {
+// Render one 4x2in label to a PNG.
+//
+// ONE OPTIONS OBJECT, not fourteen positional parameters. The old signature was
+// `generateLabel(firstName, lastName, clubName, clubImageBuffer, allergyTokens,
+// handbookGroup, isBirthday, isVisitor, stepUp, stepUpNextClub, awanaShares,
+// noPhoto, testBanner, extras)`, and reading a call site meant counting commas
+// to find out whether the seventh `false` was isBirthday or stepUp. Two of the
+// callers had already drifted: /reprint silently passed nothing for visitor,
+// stepUp, awanaShares, goToLine and milestoneLine because history never stored
+// them, and the connect card smuggles its greeting through `handbookGroup`,
+// which is why that greeting is subject to a 30-character truncation nobody
+// intended.
+//
+// The conversion is byte-identical by construction — every default below
+// matches the old parameter default — and the 18 golden-image baselines are the
+// proof. They compare pixels, so a mis-mapped argument would show up as a diff
+// rather than as a plausible-looking label.
+//
+// @param {object} input
+async function generateLabel(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    // Loud rather than mysterious: a leftover positional caller would otherwise
+    // render a label with a first name and nothing else, which prints and looks
+    // almost right — the worst possible failure for a safety artifact.
+    throw new TypeError('generateLabel() takes a single options object');
+  }
+  let {
+    firstName, lastName, clubName, clubImageBuffer,
+    allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
+    stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
+    testBanner = false, extras = {},
+  } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
   // would otherwise throw deep inside layout and turn a printable label into
@@ -1874,12 +1914,12 @@ app.post('/label', async (req, res) => {
     if (labelGoTo) labelExtras.goToLine = labelGoTo;
     if (visitor && config.firstTimerInverted !== false) labelExtras.inverted = true;
 
-    const result = await generateLabel(
+    const result = await generateLabel({
       firstName, lastName, clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor,
+      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
-      false, labelExtras
-    );
+      extras: labelExtras,
+    });
     fs.unlink(result.pngPath, () => {});
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
@@ -1900,8 +1940,26 @@ app.post('/print', async (req, res) => {
     visitor       = false,
     stepUpNight   = false,
     awanaShares   = null,
-    clubberId     = null
+    clubberId     = null,
+    demo          = false
   } = req.body || {};
+
+  // ── Demo / training mode ────────────────────────────────────────────────────
+  // A demo check-in prints a REAL label (so a volunteer sees the actual output)
+  // carrying the same diagonal TEST band /canary uses, and touches nothing else.
+  // Every persistent side effect below is skipped, because each one causes real
+  // damage during training:
+  //   • addHistoryEntry   → print-history.json feeds /checkin-csv-export, which
+  //                         is imported BACK INTO TwoTimTwo. Fake kids would be
+  //                         recorded as having attended.
+  //   • recordAttendance  → the season ledger is permanent; a padded count makes
+  //                         real milestone lines ("10th club night!") wrong for
+  //                         the rest of the year.
+  //   • publish + buffer  → fake children celebrated by name on the lobby TV.
+  //   • publishTally      → inflates tonight's counts on every screen.
+  // This is the same set /canary already skips; demo mode generalises it to an
+  // arbitrary name and club.
+  const isDemo = demo === true || demo === 'true';
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
 
@@ -1925,7 +1983,9 @@ app.post('/print', async (req, res) => {
   // the name for walk-ins and older extensions that send no id.
   const dupKey = (clubberId ? `id:${String(clubberId).trim()}` : `${firstName} ${lastName}`)
     .toLowerCase().trim();
-  if (isDuplicatePrint(dupKey)) {
+  // Demo mode skips the duplicate window: a trainer demonstrating the same
+  // child twice in a row is the normal case, not a double-tap to suppress.
+  if (!isDemo && isDuplicatePrint(dupKey)) {
     console.log(`[print] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
     return res.json({ success: true, duplicate: true });
   }
@@ -1993,22 +2053,27 @@ app.post('/print', async (req, res) => {
 
     // Attendance is recorded before rendering so the milestone prints on
     // the very night it's earned. Never blocks the label on a ledger error.
+    // Skipped for demo prints — the ledger is permanent, and padding it would
+    // corrupt real milestone lines for the rest of the season.
     let milestoneLine = '';
-    try {
-      milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
-    } catch { /* ledger trouble must not stop the print */ }
+    if (!isDemo) {
+      try {
+        milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
+      } catch { /* ledger trouble must not stop the print */ }
+    }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
 
-    const result = await generateLabel(
-      firstName, lastName, effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday, !!visitor,
+    const result = await generateLabel({
+      firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
-      false, extras
-    );
+      testBanner: isDemo,   // a demo label is visibly marked
+      extras,
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
-    recordPrint(dupKey);
+    if (!isDemo) recordPrint(dupKey);
 
     // Connect card (#27): visitors optionally get a second label pointing
     // their family to the club's time and place. Failure here never fails
@@ -2017,12 +2082,16 @@ app.post('/print', async (req, res) => {
       try {
         const row = scheduleRowFor(effectiveClubName);
         const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
-        const card = await generateLabel(
-          firstName, lastName, effectiveClubName, clubImageBuffer,
-          [], "We're so glad you're here!", false, true,
-          false, '', null, false,
-          false, where ? { goToLine: where } : {}
-        );
+        const card = await generateLabel({
+          firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+          // The greeting rides in `handbookGroup` because that is the slot which
+          // renders a line under the name. Now that the fields are named, the
+          // oddity is at least visible: it means the greeting inherits that
+          // field's 30-character truncation.
+          handbookGroup: "We're so glad you're here!",
+          isVisitor: true,
+          extras: where ? { goToLine: where } : {},
+        });
         connectPngPath = card.pngPath;
         printImage(connectPngPath, effectivePrinter);
       } catch (e) {
@@ -2030,33 +2099,46 @@ app.post('/print', async (req, res) => {
       }
     }
 
-    // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
-    // plus a fresh tally so displays update within seconds of the check-in.
-    const checkinEvent = events.buildCheckin({
-      firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
-    });
-    events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
-    pushEventToBuffer(checkinEvent);
+    if (isDemo) {
+      // The label printed and nothing else happened: no broadcast, no history,
+      // no tally, no ledger. Deliberately logged so a demo run is obvious when
+      // reading the console after a training session.
+      console.log(`[demo] Printed a TEST label for '${firstName} ${lastName}' (${effectiveClubName || 'no club'}) — nothing recorded or broadcast`);
+      res.json({ success: true, demo: true });
+    } else {
+      // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
+      // plus a fresh tally so displays update within seconds of the check-in.
+      const checkinEvent = events.buildCheckin({
+        firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+      });
+      events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
+      pushEventToBuffer(checkinEvent);
 
-    // Log to print history
-    addHistoryEntry({
-      firstName, lastName, clubName: effectiveClubName, clubImageData,
-      printer: effectivePrinter, success: true, visitor: !!visitor
-    });
+      // Log to print history
+      addHistoryEntry({
+        firstName, lastName, clubName: effectiveClubName, clubImageData,
+        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId
+      });
 
-    publishTally();
+      publishTally();
 
-    res.json({ success: true });
+      res.json({ success: true });
+    }
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
     // A jammed printer or corrupted PDF is not a reason to bring down the server.
     console.error('[print] Error:', err.message);
-    addHistoryEntry({
-      firstName, lastName, clubName: effectiveClubName, clubImageData,
-      printer: effectivePrinter, success: false, visitor: !!visitor
-    });
-    recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
-    res.status(500).json({ error: err.message });
+    // A failed DEMO print is a training problem, not an operational one: it must
+    // not appear in the history the dashboard shows, and must not raise an `ops`
+    // print-failure event that makes the church think a real label was lost.
+    if (!isDemo) {
+      addHistoryEntry({
+        firstName, lastName, clubName: effectiveClubName, clubImageData,
+        printer: effectivePrinter, success: false, visitor: !!visitor, clubberId
+      });
+      recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
+    }
+    res.status(500).json({ error: err.message, ...(isDemo ? { demo: true } : {}) });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
     if (connectPngPath) fs.unlink(connectPngPath, () => {});
@@ -2095,6 +2177,35 @@ function saveHistory(entries) {
   }
 }
 
+// Does a history row refer to this child?
+//
+// Identity is id-first with a name fallback, because rows written before the
+// clubberId field existed have none — and a mid-season upgrade must not make
+// every earlier check-in unrecognisable. The rules, in order:
+//   1. Both sides know an id → the ids decide, and a mismatch is a DIFFERENT
+//      child even when the names are identical. This is the whole point.
+//   2. Either side lacks an id → fall back to the lowercased full name, which
+//      is exactly the old behaviour.
+// Mirrors the extension's identityKey()/migrateLegacyKey() pair, which solved
+// this on its side (roadmap R-4) while the server never followed.
+function historyRowMatches(row, firstName, lastName, clubberId) {
+  if (!row) return false;
+  const rowId = row.clubberId != null ? String(row.clubberId).trim() : '';
+  const wantId = clubberId != null ? String(clubberId).trim() : '';
+  if (rowId && wantId) return rowId === wantId;
+  const rowName = `${row.firstName || ''} ${row.lastName || ''}`.toLowerCase().trim();
+  const wantName = `${firstName || ''} ${lastName || ''}`.toLowerCase().trim();
+  return !!rowName && rowName === wantName;
+}
+
+// The dedup key for "one row per child" aggregations. Prefers the id so two
+// same-named children stay two children; falls back to the name for older rows.
+function historyIdentityKey(row) {
+  const id = row && row.clubberId != null ? String(row.clubberId).trim() : '';
+  if (id) return `id:${id}`;
+  return `name:${`${(row && row.firstName) || ''} ${(row && row.lastName) || ''}`.toLowerCase().trim()}`;
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -2116,6 +2227,16 @@ function addHistoryEntry(entry) {
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
     award: security.sanitizeStoredText(entry.award || ''),
+    // TwoTimTwo's own clubber id, when the caller knew it. Everything here was
+    // keyed on a lowercased "first last" string, so two children who share a
+    // name merged into one row — the same defect the extension already fixed on
+    // its side with identityKey(), which the server never followed. Stored as a
+    // bounded string (ids are numeric today, but that is TwoTimTwo's business
+    // to change). Absent on rows written before this, so every consumer must
+    // fall back to the name — see historyRowMatches().
+    clubberId: entry.clubberId != null && String(entry.clubberId).trim()
+      ? security.sanitizeStoredText(String(entry.clubberId), 40)
+      : null,
     timestamp: new Date().toISOString()
   });
   if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
@@ -2156,7 +2277,10 @@ function computeTonightStats() {
 
   entries.forEach(e => {
     const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
-    const key = name.toLowerCase();
+    // Keyed on the clubber id when the row has one, so two children who share a
+    // name count as two. Older rows without an id keep the name key, which is
+    // the previous behaviour.
+    const key = historyIdentityKey(e);
     if (!name || seen.has(key)) return;
     seen.add(key);
     const club = (e.clubName || '').trim() || 'No club';
@@ -2220,8 +2344,10 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
-    const result = await generateLabel(firstName, lastName, clubName, null, allergyTokens, handbookGroup, birthday,
-      false, false, '', null, noPhoto);
+    const result = await generateLabel({
+      firstName, lastName, clubName,
+      allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+    });
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
     // Clean up temp file
@@ -2234,20 +2360,25 @@ app.get('/preview', async (req, res) => {
 
 // ── Reprint ──────────────────────────────────────────────────────────────────
 app.post('/reprint', async (req, res) => {
-  const { name, index } = req.body || {};
+  const { name, index, clubberId = null } = req.body || {};
   const history = loadHistory();
 
   let entry;
   if (typeof index === 'number' && index >= 0 && index < history.length) {
     entry = history[index];
-  } else if (name) {
-    const search = String(name).toLowerCase().trim();
-    // Award slips (isAward) are excluded from name-based lookup so
-    // reprinting "by name" always targets the check-in label, never an
-    // award slip that happens to share the same child's name.
-    entry = history.find(e =>
-      !e.isAward && `${e.firstName} ${e.lastName}`.toLowerCase().trim() === search
-    );
+  } else if (name || clubberId) {
+    // Award slips (isAward) are excluded from lookup so reprinting "by name"
+    // always targets the check-in label, never an award slip that happens to
+    // share the same child's name.
+    //
+    // historyRowMatches is id-first: when the caller knows the clubber id AND
+    // the stored row has one, a name collision can no longer reprint the wrong
+    // child's label. Rows predating the id fall back to name matching, so this
+    // is a strict improvement rather than a behaviour change.
+    const parts = String(name || '').trim().split(/\s+/);
+    const first = parts[0] || '';
+    const last = parts.slice(1).join(' ');
+    entry = history.find(e => !e.isAward && historyRowMatches(e, first, last, clubberId));
   }
 
   if (!entry) {
@@ -2271,11 +2402,14 @@ app.post('/reprint', async (req, res) => {
     }
 
     const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
-    const result = await generateLabel(
-      entry.firstName, entry.lastName, entry.clubName, clubImageBuffer,
-      allergyTokens, handbookGroup, birthday,
-      false, false, '', null, noPhoto
-    );
+    // NOTE: visitor, stepUp, awanaShares, goToLine and milestoneLine are all
+    // absent here because print history never stored them, so a reprint has
+    // quietly differed from the original label. Naming the fields makes that
+    // omission visible rather than hidden in a run of positional `false`s.
+    const result = await generateLabel({
+      firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
@@ -2283,7 +2417,7 @@ app.post('/reprint', async (req, res) => {
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
       clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: true
+      printer: effectivePrinter, success: true, clubberId: entry.clubberId
     });
 
     console.log(`[reprint] ${entry.firstName} ${entry.lastName}`);
@@ -2293,7 +2427,7 @@ app.post('/reprint', async (req, res) => {
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
       clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: false
+      printer: effectivePrinter, success: false, clubberId: entry.clubberId
     });
     recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
     res.status(500).json({ error: err.message });
@@ -2372,12 +2506,11 @@ app.post('/print-award', async (req, res) => {
   let pngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
-    const result = await generateLabel(
-      firstName, lastName, effectiveClubName, clubImageBuffer,
-      allergyTokens, medalLine, birthday, false,
-      false, '', null, noPhoto,
-      false, { inverted: true }
-    );
+    const result = await generateLabel({
+      firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
+      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      extras: { inverted: true },
+    });
     pngPath = result.pngPath;
 
     printImage(pngPath, effectivePrinter);
@@ -2386,6 +2519,7 @@ app.post('/print-award', async (req, res) => {
     addHistoryEntry({
       firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: true, isAward: true, award: awardText,
+      clubberId,
     });
 
     console.log(`[print-award] ${firstName} ${lastName} — ${awardText}`);
@@ -2395,6 +2529,7 @@ app.post('/print-award', async (req, res) => {
     addHistoryEntry({
       firstName, lastName, clubName: effectiveClubName, clubImageData,
       printer: effectivePrinter, success: false, isAward: true, award: awardText,
+      clubberId,
     });
     recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
     res.status(500).json({ error: err.message });
@@ -2554,6 +2689,36 @@ function csvField(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// How many distinct children this server printed a label for TODAY, in LOCAL
+// time. Feeds the checkout board's honest denominator.
+//
+// Local, not UTC, and that distinction is load-bearing. History timestamps are
+// ISO/UTC, and a 17:30-20:00 local club night straddles UTC midnight for most of
+// the US winter — at 19:00 EST it is already Thursday in UTC. A UTC-day filter
+// would therefore drop the second half of the night, and the board would publish
+// a FRESH, plausible, badly-wrong denominator right in the middle of pickup,
+// which no staleness check can catch.
+//
+// It counts LABELS PRINTED BY THIS SERVER, which is not the same population as
+// "children in the building": another station, a manual check-in or a printer jam
+// all break the equivalence. Consumers must word it as the former.
+function distinctChildrenPrintedToday(now = new Date()) {
+  const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = localDay(now);
+  const seen = new Set();
+  for (const e of loadHistory()) {
+    if (!e || !e.timestamp) continue;
+    const when = new Date(e.timestamp);
+    if (Number.isNaN(when.getTime()) || localDay(when) !== today) continue;
+    if (e.success === false) continue;   // a failed print never checked anyone in
+    if (e.isAward) continue;             // award slips are not check-ins
+    const key = historyIdentityKey(e);
+    if (!key) continue;
+    seen.add(key);                       // reprints must not inflate the count
+  }
+  return seen.size;
+}
+
 app.get('/checkin-csv-export', (req, res) => {
   const dateParam = String(req.query.date || '').trim();
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : new Date().toISOString().slice(0, 10);
@@ -2568,7 +2733,10 @@ app.get('/checkin-csv-export', (req, res) => {
     const first = String(e.firstName || '').trim();
     const last  = String(e.lastName  || '').trim();
     if (!first && !last) continue;
-    const key = `${first} ${last}`.toLowerCase();
+    // Id-first: this export is imported BACK INTO TwoTimTwo, so merging two
+    // same-named children into one row would silently under-report attendance
+    // for one of them.
+    const key = historyIdentityKey(e);
     if (seen.has(key)) continue;         // one row per child even with reprints
     seen.add(key);
     rows.push({ first, last });
@@ -2606,6 +2774,26 @@ app.post('/feed/tonight',  makeFeedRoute('tonight'));
 app.post('/feed/points',   makeFeedRoute('points'));
 app.post('/feed/schedule', makeFeedRoute('schedule'));
 app.post('/feed/notice',   makeFeedRoute('notice'));
+// Who is still in the building (contract v4). The extension scrapes
+// TwoTimTwo's /clubber/checkout page — which IS the live list of children
+// currently checked in — and posts the rows here. The print server cannot fetch
+// that page itself: only the volunteer's browser holds the TwoTimTwo session.
+//
+// Consequence to accept honestly: this only works while someone has that tab
+// open, so the board must degrade by showing its age rather than by silently
+// claiming everyone is still present.
+//
+// `printed` is filled in HERE rather than trusted from the extension, because the
+// server is the only thing that knows how many labels it printed. It means
+// exactly "labels this server printed tonight" — NOT "children in the building".
+// Those are different populations (another station, a manual check-in, a printer
+// jam) and the display is required to word it as the former.
+app.post('/feed/checkout', (req, res, next) => {
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) {
+    req.body.printed = distinctChildrenPrintedToday();
+  }
+  return makeFeedRoute('checkout')(req, res, next);
+});
 
 // ── Event-bus publishers ──────────────────────────────────────────────────────
 // Interval publishers are gated by the church-config club-night window so the
@@ -2621,7 +2809,14 @@ function publishTally() {
 
 function publishRecap() {
   try {
-    if (!eventBuffer.length) return;
+    // An EMPTY recap is published on purpose once names are encrypted, where it
+    // used to be skipped. It costs one sealed frame every two minutes and buys
+    // the screens a continuous key-health heartbeat: a screen needs two failed
+    // frames before it admits it cannot read names, so without this the first two
+    // children of the night are silently missed before anything appears on the
+    // wall. With it, a wrong key is on screen before the doors even open.
+    // The consumer's handleRecap iterates `entries`, so [] is a clean no-op.
+    if (!eventBuffer.length && !events.getDisplayKeyState().configured) return;
     events.publish(pusher, EVENT_CHANNEL, 'recap', events.buildRecap(eventBuffer));
   } catch (e) { console.warn('[events] recap publish skipped:', e.message); }
 }
@@ -2700,10 +2895,9 @@ app.post('/canary', async (req, res) => {
 
   let pngPath = null;
   try {
-    const result = await generateLabel(
-      canaryName, '', 'Test', null, [], '', false, false,
-      false, '', null, false, true  // testBanner
-    );
+    const result = await generateLabel({
+      firstName: canaryName, lastName: '', clubName: 'Test', testBanner: true,
+    });
     pngPath = result.pngPath;
     const printerName = (req.body && req.body.printerName && String(req.body.printerName).trim()) || PRINTER_NAME;
     printImage(pngPath, printerName);
@@ -2720,6 +2914,31 @@ app.post('/canary', async (req, res) => {
     passed: published,
     detail: pusher ? (published ? `canary event on ${EVENT_CHANNEL}` : 'publish failed') : 'Pusher not configured',
   });
+
+  // Third stage: prove the ENCRYPTED path works, not just the channel. A screen
+  // that can reach Pusher but cannot open a sealed frame shows no banners, and
+  // without this stage the only symptom is "the wall stopped welcoming children"
+  // — discovered mid-service rather than at 5:45.
+  const keyState = events.getDisplayKeyState();
+  if (keyState.configured) {
+    // An empty recap on purpose: the consumer's handleRecap iterates entries, so
+    // [] is a clean no-op that still exercises seal -> publish -> open.
+    const sealedOk = await events.publish(
+      pusher, EVENT_CHANNEL, 'recap', events.buildRecap([]));
+    stages.push({
+      stage: 'display key',
+      passed: sealedOk,
+      detail: sealedOk
+        ? `sealed recap sent (key ${keyState.kid}) — each screen should flash "key OK"`
+        : 'could not publish the sealed test event',
+    });
+  } else {
+    stages.push({
+      stage: 'display key',
+      passed: false,
+      detail: "No display key set — names are going out UNENCRYPTED on a public channel. Generate one under Realtime.",
+    });
+  }
 
   lastCanary = { at: new Date().toISOString(), stages };
   console.log(`[canary] ${stages.map(s => `${s.stage}:${s.passed ? 'ok' : 'FAIL'}`).join(' ')}`);
@@ -2826,6 +3045,16 @@ app.get('/health', async (req, res) => {
   if (config.lanAccess === true && !security.isAcceptablePin(config.phonePin)) {
     warnings.push('Phone check-in is enabled but no PIN is set, so the server is only listening on this computer. Set a PIN in Settings and restart.');
   }
+  // Surface the realtime privacy mode where the operator already looks. An
+  // unencrypted channel is not broken, so it cannot be an error — but it must
+  // never be INVISIBLE, or "we set that up" becomes a belief rather than a fact.
+  const keyState = events.getDisplayKeyState();
+  if (pusher && !keyState.configured) {
+    warnings.push("No display key is set, so children's first names are published unencrypted on a channel anyone can subscribe to. Generate one under Realtime, then paste it into each screen.");
+  }
+  if (config.displayKey && !keyState.configured) {
+    warnings.push('The saved display key is invalid, so names are going out in the clear. Generate a new one under Realtime.');
+  }
   let csvUpdatedAt = null;
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
@@ -2843,6 +3072,13 @@ app.get('/health', async (req, res) => {
     warnings,
     clubNight: events.isClubNightNow(churchConfig.clubNights),
     pusher: events.getPublishState(),
+    // Never the key itself — only whether one is installed, plus its public
+    // `kid` fingerprint, which is what lets a screen confirm it holds the SAME
+    // key rather than merely some key. "Are we actually encrypted?" has to be
+    // answerable from the dashboard, not a belief.
+    displayKeyConfigured: keyState.configured,
+    displayKeyId: keyState.kid,
+    encryptingNames: keyState.configured,
     selectorSelfTest: lastSelfTest,
     lastCanary,
     printFailures: printFailures.length,
@@ -2897,7 +3133,29 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey'];
+
+// Make the live `config` object exactly mirror what was just written to disk.
+//
+// Object.assign() alone was NOT enough, and the gap was security-relevant. Both
+// POST /config paths can DELETE a key — `delete next.phonePin` when the operator
+// clears the PIN, `delete next.displayKey` when they clear the display key — and
+// Object.assign copies properties but never removes them. So the file said the
+// PIN was gone while the live auth gate, which reads config.phonePin per
+// request, kept accepting the OLD one until someone restarted the server. An
+// operator clearing a leaked PIN had every reason to believe it was revoked.
+// Same for the display key: clearing it left the publisher still sealing with
+// the key it was supposed to have forgotten.
+function applySavedConfig(next) {
+  for (const key of Object.keys(config)) {
+    if (!(key in next)) delete config[key];
+  }
+  Object.assign(config, next);
+  // Sealing is per-publish, so a key change takes effect immediately — a
+  // volunteer fixing a name outage mid-event must not have to restart the server
+  // that is currently printing labels.
+  events.setDisplayKey(config.displayKey);
+}
 
 function isTrustedConfigOrigin(req) {
   if (!security.isLoopbackRequest(req)) return false;
@@ -2931,12 +3189,27 @@ app.get('/config', (req, res) => {
   res.json(saved);
 });
 
+// Generate a fresh display key for the dashboard's button. Loopback-only via
+// isTrustedConfigOrigin: a phone on the venue Wi-Fi must never be able to mint
+// the key that reads children's names, PIN or no PIN. Deliberately does NOT save
+// it — the operator copies it, pastes it into the screens, and only then commits
+// it here, so a mistyped paste cannot leave the screens keyed to a key the
+// server has already replaced.
+app.post('/config/display-key/generate', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The display key can only be generated from the dashboard on this computer' });
+  }
+  const key = events.generateDisplayKey();
+  console.log('[realtime] Generated a new display key (not yet saved)');
+  res.json({ key });
+});
+
 app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
-    worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays,
+    worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -2978,6 +3251,22 @@ app.post('/config', (req, res) => {
         next.phonePin = wanted;
       }
     }
+    // The AES key that lets the church's own screens read children's names off
+    // the public Pusher channel. Clearing it stops the three name-bearing events
+    // from being published at all (they fail closed rather than reverting to
+    // plaintext) — which is the whole-system rollback lever, no deploy needed.
+    if (displayKey !== undefined) {
+      const wanted = String(displayKey).trim();
+      if (wanted === '') {
+        delete next.displayKey;
+      } else if (!events.isValidDisplayKey(wanted)) {
+        return res.status(400).json({
+          error: 'Display key must be 32 bytes of base64 — use the Generate button rather than typing one',
+        });
+      } else {
+        next.displayKey = wanted;
+      }
+    }
     // Binding beyond loopback is an explicit choice, not a default. Takes
     // effect on restart (the listening socket is already bound).
     if (lanAccess !== undefined) next.lanAccess = !!lanAccess;
@@ -3003,9 +3292,9 @@ app.post('/config', (req, res) => {
     }
 
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
-    // Keep the live process in sync so schedule/PIN/toggle changes apply
+    // Keep the live process in sync so schedule/PIN/toggle/key changes apply
     // without a restart (Pusher creds still need one — noted in the UI).
-    Object.assign(config, next);
+    applySavedConfig(next);
     console.log('[config] Saved');
     res.json({ ok: true });
   } catch (e) {
@@ -3032,7 +3321,7 @@ app.post('/config/schedule', (req, res) => {
     next.schedule = rows;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
-    Object.assign(config, next);
+    applySavedConfig(next);
     res.json({ ok: true, schedule: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3159,7 +3448,7 @@ app.get('/diagnostics', async (req, res) => {
 
   // 4. Can render test label
   try {
-    const testResult = await generateLabel('Test', 'Child', '', null, [], '', false);
+    const testResult = await generateLabel({ firstName: 'Test', lastName: 'Child', clubName: '' });
     fs.unlink(testResult.pngPath, () => {});
     results.push({ test: 'Label rendering', passed: true, detail: `${testResult.buffer.length} bytes` });
   } catch (e) {
@@ -3201,7 +3490,7 @@ function prewarmPrinterIfConfigured() {
       setTimeout(async () => {
         try {
           console.log('[prewarm] Sending blank label to printer...');
-          const result = await generateLabel(' ', ' ', '', null, [], '', false, false);
+          const result = await generateLabel({ firstName: ' ', lastName: ' ', clubName: '' });
           printImage(result.pngPath, PRINTER_NAME);
           fs.unlink(result.pngPath, () => {});
           console.log('[prewarm] Done');
@@ -3285,6 +3574,13 @@ module.exports = {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
+  historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
+  // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
+  // has to render field combinations GET /preview cannot express — a visitor
+  // with allergies, a step-up night, an all-fields-on torture case. Going
+  // through HTTP would also make every baseline depend on the route's defaults
+  // rather than on the renderer itself.
+  generateLabel,
   // The security policy itself is tested through print-server/security.js;
   // re-exported here so a test can assert the server wires up the same module.
   security,

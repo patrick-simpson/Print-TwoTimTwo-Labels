@@ -33,9 +33,12 @@ export default function SetupWizard({ onSaved }) {
     setSaving(true);
     setError('');
     const config = { printerName, checkinUrl, launchOnBoot };
+    // Only the keys this wizard owns — the main process merges them into the
+    // config on disk, so the server-owned keys (PIN, Pusher credentials,
+    // schedule) survive. It hands back the merged result to render from.
     const result = await window.awana.saveConfig(config);
     if (result?.success) {
-      onSaved(config);
+      onSaved(result.config || config);
     } else {
       setError('Failed to save settings. Please try again.');
       setSaving(false);

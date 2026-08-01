@@ -1,4 +1,92 @@
-﻿## [5.3.0] - 2026-07-27
+﻿## [5.4.0] - 2026-08-01
+Children's names are encrypted on the realtime channel. Plus volunteer training mode, a child-identity fix, two config-loss bugs, and CI that actually runs the tests.
+
+### Demo mode: print a real label, touch nothing else
+There was no safe way to rehearse. Driving a fake check-in through `POST /print` does the real thing in every respect, and each effect causes lasting damage during a practice run: `print-history.json` feeds `/checkin-csv-export`, which is imported **back into TwoTimTwo**, so a pretend child gets recorded as having attended; `attendance.json` is the permanent season ledger, and padding it makes real milestone lines ("10th club night!") wrong for the rest of the year; the `checkin` publish and recap buffer put a fake child's name on the lobby TV by name, mid-service; and `publishTally` inflates tonight's counts on every screen.
+
+`POST /print` now takes `demo: true`. It prints a REAL label — so a volunteer sees actual output, with real roster enrichment and allergy icons — carrying the same diagonal TEST band `/canary` already uses, and skips all four effects plus the duplicate window (repeating a demonstration is the normal case, not a double-tap). A failing demo print is also silent: no history row and no `ops` print-failure event, so a training mishap never looks like a lost label. This generalises what `/canary` already did for one hardcoded name.
+
+### Same-named children no longer merge into one history row
+Print history was keyed on a lowercased "first last" string, so two children who share a name became one row. Three real consequences: the CSV export that TwoTimTwo re-imports recorded only one of them as present; tonight's stats under-reported the room; and a by-name `/reprint` could fetch the wrong child's label — and a label is a safety artifact carrying allergy icons and photo-consent flags.
+
+The extension solved this on its side long ago with `identityKey()`, and has been **sending** TwoTimTwo's `clubberId` on every check-in all along — the server simply discarded it. It is now stored on the row and threaded through every writer. Identity is id-first with a name fallback, so rows written before the field existed still resolve and a mid-season upgrade doesn't orphan the night's history.
+
+### The offline label now says what it cannot know
+The extension's offline fallback renderer draws only first name, last name, club and icon — no allergy icons, no birthday, no photo-consent flag. It cannot do better: that path fires only when the print **server** is unreachable, and every safety field is derived server-side from the roster CSV, which the extension has never held.
+
+So the hazard was never the missing icons — it was that the label still *looked* complete. A volunteer who has learned "no peanut icon means no peanut allergy" would read an offline label as safe. It now carries an inverted `OFFLINE — CHECK ALLERGY LIST` band (inverted so it survives a 1-bit thermal print and can't be mistaken for part of the normal layout). A label that admits what it doesn't know is safe; one that quietly omits an allergy is not.
+
+### Children's first names are now encrypted on the realtime channel
+The Pusher channel is **public**. Subscription is granted by possession of the app key, and that key must ship in the display's public bundle for a screen to connect at all — so anyone who viewed the page source could subscribe to `awana-channel` from anywhere in the world and watch every child's first name arrive live, every Wednesday, forever. This was not a misconfiguration: Pusher public channels have **no server-side authorization primitive**. It is absent from the product. The display repo's SECURITY.md documented the exposure at length and concluded that closing it would require a backend neither repo has.
+
+It does not. `checkin`, `recap` and `birthdays` are now sealed with AES-256-GCM under a key only this server and the church's own screens hold, so Pusher relays ciphertext it cannot read. The other seven events (`tally`, `tonight`, `points`, `schedule`, `notice`, `ops`, `canary`) stay in the clear **on purpose**: they are counts and church-authored copy, none of it PII, and their readability is what lets a screen tell "the pipe is down" from "I can't read the names" from "quiet night". Encrypt everything and all three look identical — and the last one is the dangerous case, because nobody investigates a quiet night.
+
+**The name events are the only thing that can stop.** Clock, weather, counts, countdown, slides and any CLUB CANCELLED notice never need the key. A missed setup step is never an emergency.
+
+Setup is once, ever: dashboard → **Realtime → Generate display key**, then paste the same value into each screen (Settings → Connection → Display key), then press **Test Night Systems**, which gained a third `display key` stage that publishes a sealed test frame so a wrong key surfaces at 5:45 rather than mid-service. `/health` reports whether names are actually being encrypted and warns loudly when they are not, because "we set that up" must be a fact rather than a belief. Generating deliberately does **not** save the key — the operator copies it into the screens first, so a mistyped paste cannot lock every screen out of a key the server has already committed to.
+
+Rollout has no flag day. The display shipped first and is plaintext-tolerant with no key set, and this server publishes plaintext until a key exists, so neither side can break the other by deploying first. Anti-downgrade lives on the consumer, where it belongs: once a *screen* holds a key it refuses an unsealed name event, so a silent downgrade is impossible in the configuration that matters.
+
+Three details are load-bearing rather than polish:
+
+- **Padding is part of the spec.** GCM is CTR-based and adds no padding, so an unpadded envelope reveals `len(firstName) + len(club)` exactly — and club is inferable by correlating the *plaintext* `tally`. Against a known roster over a season that is a real re-identification channel; it would quietly reduce the claim from "cannot read the names" to "can often guess the names". Every sealed `checkin` is padded to one identical size and a test fails the build if two ever differ. The bulk events use a coarse ladder instead, because a fixed worst-case pad would exceed Pusher's 10 KB per-event ceiling outright.
+- **AAD binds a frame to its event name**, so a `checkin` ciphertext cannot be replayed as a `recap`.
+- **A fresh random IV per frame.** Never a counter, never derived from a clock — a repeated (key, IV) pair in GCM is catastrophic rather than merely weak.
+
+Two new suites, 104 assertions. `test-envelope.cjs` treats the negative cases as the actual product: wrong key, mismatched key id, a single flipped ciphertext byte, a tampered auth tag, a substituted IV, a truncated frame, and cross-event replay must all be **refused**, with no partial plaintext ever returned. `test-server-realtime.cjs` runs a real server and asserts a name genuinely leaves the process as ciphertext, that the key applies without a restart, and that printing still succeeds through all of it — the printing guarantee outranks the pipe, always.
+
+Both repos are pinned to one committed interop fixture (`envelope-vectors.json`, mirrored byte-identically like `contract-vectors.json`). Two implementations of one wire format — Node's `crypto` here, WebCrypto there — is exactly the situation where both sides pass their own tests and no name ever reaches a screen. Verified beyond the unit tests: real Chromium opens all seven Node-sealed envelopes exactly and rejects both a flipped byte and a cross-event replay.
+
+### `generateLabel` takes an options object
+The renderer had **fourteen positional parameters**. Reading a call site meant counting commas to work out whether the seventh `false` was `isBirthday` or `stepUp`, and two callers had already drifted in exactly the way that invites: `/reprint` passes nothing for visitor, step-up, shares, the "Go to:" line or the milestone line — because print history never stored them, so a reprint has quietly differed from the label it reprints — and the connect card smuggles its greeting through the `handbookGroup` slot, which is why that greeting inherits a 30-character truncation nobody chose.
+
+All ten call sites now pass one named object, and a non-object argument throws instead of rendering. That last part matters more than it looks: a leftover positional call would otherwise produce a label with a first name and nothing else — which prints, and looks almost right, which is the worst failure available for something carrying allergy icons.
+
+The conversion is **byte-identical by construction** and the 18 golden-image baselines are the proof rather than the claim. They caught a real mistake during the work: 17 cases matched exactly while the all-fields torture case differed by 38% of its pixels, because one multi-line case had not been converted and was rendering a blank label. A signature refactor that only ran the unit tests would have shipped that.
+
+The golden suite also learned something from CI. It gated its pixel comparison on `process.platform === 'linux'`, which turned out to be far too coarse: the runner is Linux too, with different font packages, so identical code rendered different glyphs and every baseline missed by ~9% of its pixels. A gate that red-lights on a font-package bump is a gate somebody deletes. The baselines now record a fingerprint of the font stack that produced them and compare pixels only when it matches, saying so loudly otherwise instead of either failing (noise) or passing silently (a lie). What CI enforces in its place is font-independent and genuinely load-bearing — determinism, ink coverage, and pairwise distinctness between cases — all three of which catch the blank-render bug above.
+
+The golden cases are now declarative models rather than positional argument arrays, with a small adapter in the harness, so the next signature change touches one function instead of eighteen fixtures — and the baselines keep policing pixels across a refactor rather than being regenerated, which would let the gate certify its own change.
+
+This is the groundwork for the per-club label template editor; it is landed on its own because it stands on its own.
+
+### Who's still here — contract v4
+TwoTimTwo's `/clubber/checkout` page turns out not to be a checkout *form*: it is the live list of children **currently checked in**, each with a button to check them out, and a row vanishes once they are. So "who is still here" needs no departure event to miss — it is simply the set of rows.
+
+The extension scrapes that page (the print server cannot: only the volunteer's browser holds the TwoTimTwo session) and POSTs first names and clubs to `POST /feed/checkout`, which publishes a new `checkout` event. It is **sealed with the same AES-256-GCM transport** as the other name-bearing events, and it needs that more than they do: a list of children not yet with a parent is the most sensitive payload this system produces.
+
+Four scraper guards, each stopping one specific way this could tell a lobby the building is clear while children are still in it: the page must positively identify itself (a redirect or session timeout reads as *unknown*, not *empty*); the data table is the **second** table, so a naive `querySelector('table')` would parse an unrelated notices table and find nobody; a **club filter left touched** by a volunteer makes whole clubs look picked up, so a filtered page is refused outright; and rows found but none parsed means selector drift, which is again *unknown* rather than *empty*. Only the page's own "nobody is checked in" placeholder may publish an empty board. All four were verified by removing each guard and watching the suite go red.
+
+The `printed` count is filled in by the **server**, not trusted from the extension, and is computed on the **local** calendar day. That distinction matters: history timestamps are UTC, and a 17:30–20:00 club night straddles UTC midnight for most of the US winter, so a UTC-day filter would silently drop the second half of the night and publish a fresh, plausible, badly-wrong number in the middle of pickup.
+
+**This feature is not a headcount and the display is required to say so.** It reflects whether volunteers *recorded* checkout, which during a pickup rush often lags. The board is off by default, stops naming individuals once the list gets short (a list of two names points at two specific unattended children), and words everything as "not checked out yet".
+
+A new suite (`test-checkout-parser.cjs`, 42 assertions) covers the parser, all four guards, the feed validator and the transport. It needs a DOM, so `jsdom` joins devDependencies — pinned to `^25` deliberately, because jsdom 26+ pulls an undici that calls a Node 21+ API and would break `npm test` on the Node 20 that CI and the shipped Electron app both run.
+
+### Clearing a PIN or a key now actually clears it
+Found while testing the above, and the more serious half of it is **pre-existing**. Both `POST /config` paths can delete a key — `delete next.phonePin` when the operator clears the PIN, `delete next.displayKey` for the display key — but the live-process sync was `Object.assign(config, next)`, and `Object.assign` copies properties without ever removing them.
+
+So clearing the phone PIN wrote `config.json` correctly while the running auth gate, which reads `config.phonePin` per request, **kept accepting the old PIN until someone restarted the server**. An operator revoking a PIN they believed had leaked had every reason to think it was gone; it was not. `applySavedConfig()` now makes the live config mirror the file exactly, deletions included, and the regression test asserts both the PIN and the display key really do stop working the moment they are cleared. Verified by restoring the old one-line behaviour and watching all three assertions fail.
+
+### Saving Electron settings no longer erases the security config
+`config.json` has several writers with very different views of it. The print server owns the security and realtime keys — `phonePin`, `lanAccess`, `allowedOrigins`, the four Pusher credentials — plus the `schedule`, `historyRetentionDays`, `connectCard` and `worksheetPrinter`. The Electron setup wizard owns exactly three: `printerName`, `checkinUrl`, `launchOnBoot`.
+
+The Electron writer replaced the whole file with the renderer's three-key object, so one click on Save in Settings deleted every server-owned key — and because the handler restarts the server immediately afterwards, the loss went live at once. Three unrelated failures from one click, none of them reported: phone check-in refused every request (the v5.3.0 gate fails closed with no PIN, which is the safe direction but looks like a broken phone page), the lobby TV lost its Pusher credentials and went dark, and late arrivals stopped being routed because the schedule was gone. The realistic trigger is the worst possible moment — the printer jams mid-event, a volunteer opens Settings to pick the backup printer, and saves.
+
+Writes are now a **merge** of the renderer's patch over what is on disk, via a new `electron-app/src/config-store.js` that is deliberately Electron-free so it can be unit-tested, and are written tmp-then-rename so a crash mid-write cannot truncate the file either. The `save-config` handler now acts on the merged result rather than the patch, since the patch alone lacks everything `startServer` needs.
+
+Separately, the deprecated PowerShell installer read-modify-writes correctly but called `ConvertTo-Json` with no `-Depth`; PowerShell 5.1 defaults to depth 2, which serialises `schedule[].label` as a type-name string instead of JSON — silent corruption rather than clean loss. Both call sites now pass `-Depth 10`.
+
+A sixth suite (`test-config-store.cjs`, 31 assertions) covers the merge, first-run creation, corrupt and non-object config files, and the `-Depth` flag. Because the bug was a bare `writeFileSync` in `main.js` rather than a wrong merge, it also asserts at the source level that nothing bypasses the store. Both halves were verified by reintroducing each bug and watching the suite go red.
+
+### CI runs the test suites now
+All four suites — event contracts, server helpers, the v5.3.0 trust model, extension identity — existed and passed for several releases while being invoked **only by hand**. The only automated check was the label render smoke test. So the security suite proving the roster isn't reachable from the network could have started failing and no push would have noticed.
+
+`webpack.yml` gains a test job and its push trigger widens from `main` to every branch; `build-electron.yml` gains the same job and `build` now needs it, so a tag cut from a green `main` still can't publish an `.exe` without re-verifying the contract and the trust model. Verified by breaking `security.js`'s loopback check and watching CI go red.
+
+A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 713 assertions now pass across ten suites.
+
+## [5.3.0] - 2026-07-27
 Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.
 
 **Nothing was leaked into git.** No roster CSV, history file or Pusher secret has ever been committed to this repo — that was checked across the full history. The exposure was on the running server, and in what a *future* commit could have published (see the `.gitignore` item below).

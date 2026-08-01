@@ -1,11 +1,41 @@
 {
-  "contractVersion": 3,
+  "contractVersion": 4,
   "channel": "awana-channel",
-  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — the only free-text field on the channel, bounded and plain-text-forced).",
+  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel \u2014 no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement \u2014 the only free-text field on the channel, bounded and plain-text-forced).",
+  "transport": {
+    "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the three name-bearing events are sealed with AES-256-GCM before publish. This is a TRANSPORT change only: every payload vector below is unchanged, and both repos' sanitizers run on the OPENED payload exactly as before. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
+    "encryptedEvents": [
+      "checkin",
+      "recap",
+      "birthdays",
+      "checkout"
+    ],
+    "plaintextEvents": [
+      "tally",
+      "tonight",
+      "points",
+      "schedule",
+      "notice",
+      "ops",
+      "canary"
+    ],
+    "plaintextRationale": "Deliberate. Counts and church-authored copy carry no PII, and their readability is what lets a screen distinguish \"the pipe is down\" from \"I cannot read the names\" from \"quiet night\" \u2014 the last being the dangerous case, because nobody investigates a quiet night.",
+    "fixture": "envelope-vectors.json"
+  },
   "events": {
     "checkin": {
-      "fields": ["id", "at", "firstName", "club", "isBirthday", "isFirstTimer"],
-      "optionalForConsumers": ["id", "at"],
+      "fields": [
+        "id",
+        "at",
+        "firstName",
+        "club",
+        "isBirthday",
+        "isFirstTimer"
+      ],
+      "optionalForConsumers": [
+        "id",
+        "at"
+      ],
       "valid": [
         {
           "id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
@@ -36,7 +66,10 @@
             "isBirthday": false,
             "isFirstTimer": false
           },
-          "mustNotContain": ["lastName", "Smith"]
+          "mustNotContain": [
+            "lastName",
+            "Smith"
+          ]
         },
         {
           "reason": "allergy / contact info must never leak",
@@ -48,18 +81,46 @@
             "allergies": "peanuts",
             "phone": "555-0100"
           },
-          "mustNotContain": ["allergies", "peanuts", "phone", "555-0100"]
+          "mustNotContain": [
+            "allergies",
+            "peanuts",
+            "phone",
+            "555-0100"
+          ]
         }
       ],
       "reject": [
-        { "reason": "missing firstName", "payload": { "club": "Sparks", "isBirthday": false, "isFirstTimer": false } },
-        { "reason": "non-object", "payload": "Alice checked in" },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "missing firstName",
+          "payload": {
+            "club": "Sparks",
+            "isBirthday": false,
+            "isFirstTimer": false
+          }
+        },
+        {
+          "reason": "non-object",
+          "payload": "Alice checked in"
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
     "recap": {
-      "fields": ["entries", "at"],
-      "entryFields": ["id", "at", "firstName", "club", "isBirthday", "isFirstTimer"],
+      "fields": [
+        "entries",
+        "at"
+      ],
+      "entryFields": [
+        "id",
+        "at",
+        "firstName",
+        "club",
+        "isBirthday",
+        "isFirstTimer"
+      ],
       "maxEntries": 30,
       "valid": [
         {
@@ -75,7 +136,10 @@
           ],
           "at": "2026-09-16T22:07:00.000Z"
         },
-        { "entries": [], "at": "2026-09-16T22:07:00.000Z" }
+        {
+          "entries": [],
+          "at": "2026-09-16T22:07:00.000Z"
+        }
       ],
       "dirty": [
         {
@@ -94,13 +158,21 @@
             ],
             "at": "2026-09-16T22:07:00.000Z"
           },
-          "mustNotContain": ["lastName", "Jones"]
+          "mustNotContain": [
+            "lastName",
+            "Jones"
+          ]
         },
         {
-          "reason": "entries without id/at cannot be deduped — dropped",
+          "reason": "entries without id/at cannot be deduped \u2014 dropped",
           "payload": {
             "entries": [
-              { "firstName": "Chase", "club": "T&T", "isBirthday": false, "isFirstTimer": false }
+              {
+                "firstName": "Chase",
+                "club": "T&T",
+                "isBirthday": false,
+                "isFirstTimer": false
+              }
             ],
             "at": "2026-09-16T22:07:00.000Z"
           },
@@ -108,67 +180,260 @@
         }
       ],
       "reject": [
-        { "reason": "entries not an array", "payload": { "entries": "Alice", "at": "2026-09-16T22:07:00.000Z" } },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "entries not an array",
+          "payload": {
+            "entries": "Alice",
+            "at": "2026-09-16T22:07:00.000Z"
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
-    "tally": {
-      "fields": ["counts", "total", "at"],
-      "maxClubs": 30,
+    "checkout": {
+      "note": "Who is still in the building. TwoTimTwo's /clubber/checkout page IS the live list of children currently checked in, so this event carries that set rather than a departure signal. Same data class as `checkin` (first name + club, never a last name or an allergy), and sealed by the same transport. IMPORTANT for consumers: this is derived from whether volunteers PERFORMED checkout, not from whether children actually left, so it can be confidently wrong during a pickup rush. It also identifies unattended children once a count gets small, so a consumer MUST gate it behind an operator setting and must stop naming individuals below a threshold. See SECURITY.md in the display repo.",
+      "fields": [
+        "entries",
+        "printed",
+        "at"
+      ],
+      "optionalForConsumers": [
+        "printed"
+      ],
+      "entryFields": [
+        "firstName",
+        "club"
+      ],
       "valid": [
         {
-          "counts": { "Sparks": 12, "T&T": 19, "Cubbies": 7, "Puggles": 3 },
-          "total": 41,
-          "at": "2026-09-16T22:07:00.000Z"
+          "entries": [
+            {
+              "firstName": "Amy",
+              "club": "Sparks"
+            },
+            {
+              "firstName": "Marcos",
+              "club": "Truth & Training"
+            }
+          ],
+          "printed": 43,
+          "at": "2026-09-16T23:55:00.000Z"
         },
-        { "counts": {}, "total": 0, "at": "2026-09-16T22:07:00.000Z" }
+        {
+          "entries": [],
+          "printed": 43,
+          "at": "2026-09-16T23:59:00.000Z"
+        }
       ],
       "dirty": [
         {
-          "reason": "counts must be numbers only — a name smuggled as a value is dropped",
+          "reason": "a last name, allergy or clubber id smuggled into an entry must be dropped",
           "payload": {
-            "counts": { "Sparks": 12, "T&T": "Alice Smith" },
-            "total": 12,
-            "at": "2026-09-16T22:07:00.000Z"
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks",
+                "lastName": "Hendricks",
+                "allergies": "peanuts",
+                "clubberId": "8821",
+                "guardian": "R. Hendricks"
+              }
+            ],
+            "printed": 43,
+            "at": "2026-09-16T23:55:00.000Z"
           },
-          "mustNotContain": ["Alice Smith"]
+          "expect": {
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ],
+            "printed": 43
+          }
+        },
+        {
+          "reason": "an entry with no usable firstName is dropped, not rendered blank",
+          "payload": {
+            "entries": [
+              {
+                "firstName": "   ",
+                "club": "Sparks"
+              },
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ],
+            "at": "2026-09-16T23:55:00.000Z"
+          },
+          "expect": {
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ]
+          }
         }
       ],
       "reject": [
-        { "reason": "counts missing", "payload": { "total": 5, "at": "2026-09-16T22:07:00.000Z" } },
-        { "reason": "no timestamp", "payload": { "counts": { "Sparks": 1 }, "total": 1 } }
+        {
+          "reason": "entries must be an array",
+          "payload": {
+            "entries": "Amy",
+            "at": "2026-09-16T23:55:00.000Z"
+          }
+        },
+        {
+          "reason": "a missing entries array is not an empty board",
+          "payload": {
+            "printed": 43,
+            "at": "2026-09-16T23:55:00.000Z"
+          }
+        },
+        {
+          "reason": "at is required so a consumer can age out a stale board",
+          "payload": {
+            "entries": []
+          }
+        },
+        {
+          "reason": "not an object",
+          "payload": "Amy"
+        }
+      ]
+    },
+    "tally": {
+      "fields": [
+        "counts",
+        "total",
+        "at"
+      ],
+      "maxClubs": 30,
+      "valid": [
+        {
+          "counts": {
+            "Sparks": 12,
+            "T&T": 19,
+            "Cubbies": 7,
+            "Puggles": 3
+          },
+          "total": 41,
+          "at": "2026-09-16T22:07:00.000Z"
+        },
+        {
+          "counts": {},
+          "total": 0,
+          "at": "2026-09-16T22:07:00.000Z"
+        }
+      ],
+      "dirty": [
+        {
+          "reason": "counts must be numbers only \u2014 a name smuggled as a value is dropped",
+          "payload": {
+            "counts": {
+              "Sparks": 12,
+              "T&T": "Alice Smith"
+            },
+            "total": 12,
+            "at": "2026-09-16T22:07:00.000Z"
+          },
+          "mustNotContain": [
+            "Alice Smith"
+          ]
+        }
+      ],
+      "reject": [
+        {
+          "reason": "counts missing",
+          "payload": {
+            "total": 5,
+            "at": "2026-09-16T22:07:00.000Z"
+          }
+        },
+        {
+          "reason": "no timestamp",
+          "payload": {
+            "counts": {
+              "Sparks": 1
+            },
+            "total": 1
+          }
+        }
       ]
     },
     "birthdays": {
-      "fields": ["entries", "at"],
-      "entryFields": ["firstName", "club", "month", "day"],
+      "fields": [
+        "entries",
+        "at"
+      ],
+      "entryFields": [
+        "firstName",
+        "club",
+        "month",
+        "day"
+      ],
       "maxEntries": 40,
       "valid": [
         {
           "entries": [
-            { "firstName": "Maya", "club": "Puggles", "month": 9, "day": 18 },
-            { "firstName": "Sydney", "club": "Sparks", "month": 12, "day": 30 }
+            {
+              "firstName": "Maya",
+              "club": "Puggles",
+              "month": 9,
+              "day": 18
+            },
+            {
+              "firstName": "Sydney",
+              "club": "Sparks",
+              "month": 12,
+              "day": 30
+            }
           ],
           "at": "2026-09-16T22:00:00.000Z"
         },
-        { "entries": [], "at": "2026-09-16T22:00:00.000Z" }
+        {
+          "entries": [],
+          "at": "2026-09-16T22:00:00.000Z"
+        }
       ],
       "dirty": [
         {
-          "reason": "no lastName, no birth year — ever",
+          "reason": "no lastName, no birth year \u2014 ever",
           "payload": {
             "entries": [
-              { "firstName": "Maya", "lastName": "Nguyen", "club": "Puggles", "month": 9, "day": 18, "year": 2020 }
+              {
+                "firstName": "Maya",
+                "lastName": "Nguyen",
+                "club": "Puggles",
+                "month": 9,
+                "day": 18,
+                "year": 2020
+              }
             ],
             "at": "2026-09-16T22:00:00.000Z"
           },
-          "mustNotContain": ["lastName", "Nguyen", "year", "2020"]
+          "mustNotContain": [
+            "lastName",
+            "Nguyen",
+            "year",
+            "2020"
+          ]
         },
         {
           "reason": "out-of-range month/day entries are dropped",
           "payload": {
             "entries": [
-              { "firstName": "Ghost", "club": "Sparks", "month": 13, "day": 40 }
+              {
+                "firstName": "Ghost",
+                "club": "Sparks",
+                "month": 13,
+                "day": 40
+              }
             ],
             "at": "2026-09-16T22:00:00.000Z"
           },
@@ -176,44 +441,109 @@
         }
       ],
       "reject": [
-        { "reason": "entries not an array", "payload": { "entries": {}, "at": "2026-09-16T22:00:00.000Z" } },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "entries not an array",
+          "payload": {
+            "entries": {},
+            "at": "2026-09-16T22:00:00.000Z"
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
     "ops": {
-      "fields": ["type", "at"],
-      "optionalFields": ["club"],
-      "types": ["print-failure", "canary", "selector-fail"],
+      "fields": [
+        "type",
+        "at"
+      ],
+      "optionalFields": [
+        "club"
+      ],
+      "types": [
+        "print-failure",
+        "canary",
+        "selector-fail"
+      ],
       "valid": [
-        { "type": "print-failure", "club": "Sparks", "at": "2026-09-16T22:10:00.000Z" },
-        { "type": "selector-fail", "at": "2026-09-16T22:10:00.000Z" }
+        {
+          "type": "print-failure",
+          "club": "Sparks",
+          "at": "2026-09-16T22:10:00.000Z"
+        },
+        {
+          "type": "selector-fail",
+          "at": "2026-09-16T22:10:00.000Z"
+        }
       ],
       "dirty": [
         {
-          "reason": "ops events carry type/club/at ONLY — never a name",
-          "payload": { "type": "print-failure", "club": "Sparks", "name": "Alice Smith", "at": "2026-09-16T22:10:00.000Z" },
-          "mustNotContain": ["name", "Alice Smith"]
+          "reason": "ops events carry type/club/at ONLY \u2014 never a name",
+          "payload": {
+            "type": "print-failure",
+            "club": "Sparks",
+            "name": "Alice Smith",
+            "at": "2026-09-16T22:10:00.000Z"
+          },
+          "mustNotContain": [
+            "name",
+            "Alice Smith"
+          ]
         }
       ],
       "reject": [
-        { "reason": "unknown type", "payload": { "type": "reboot-everything", "at": "2026-09-16T22:10:00.000Z" } },
-        { "reason": "missing type", "payload": { "club": "Sparks", "at": "2026-09-16T22:10:00.000Z" } }
+        {
+          "reason": "unknown type",
+          "payload": {
+            "type": "reboot-everything",
+            "at": "2026-09-16T22:10:00.000Z"
+          }
+        },
+        {
+          "reason": "missing type",
+          "payload": {
+            "club": "Sparks",
+            "at": "2026-09-16T22:10:00.000Z"
+          }
+        }
       ]
     },
     "canary": {
-      "fields": ["at"],
-      "optionalFields": ["nonce"],
+      "fields": [
+        "at"
+      ],
+      "optionalFields": [
+        "nonce"
+      ],
       "valid": [
-        { "at": "2026-09-16T21:40:00.000Z", "nonce": "a1b2c3d4e5f60718" },
-        { "at": "2026-09-16T21:40:00.000Z" }
+        {
+          "at": "2026-09-16T21:40:00.000Z",
+          "nonce": "a1b2c3d4e5f60718"
+        },
+        {
+          "at": "2026-09-16T21:40:00.000Z"
+        }
       ],
       "dirty": [],
       "reject": [
-        { "reason": "no timestamp", "payload": { "nonce": "a1b2c3d4e5f60718" } }
+        {
+          "reason": "no timestamp",
+          "payload": {
+            "nonce": "a1b2c3d4e5f60718"
+          }
+        }
       ]
     },
     "tonight": {
-      "fields": ["checkedIn", "booksCompleted", "awardsEarned", "friendsBrought", "at"],
+      "fields": [
+        "checkedIn",
+        "booksCompleted",
+        "awardsEarned",
+        "friendsBrought",
+        "at"
+      ],
       "valid": [
         {
           "checkedIn": 63,
@@ -232,7 +562,7 @@
       ],
       "dirty": [
         {
-          "reason": "counters are numbers only — a name smuggled into a counter must not survive",
+          "reason": "counters are numbers only \u2014 a name smuggled into a counter must not survive",
           "payload": {
             "checkedIn": "Alice Smith",
             "booksCompleted": 4,
@@ -240,7 +570,9 @@
             "friendsBrought": 2,
             "at": "2026-09-16T22:20:00.000Z"
           },
-          "mustNotContain": ["Alice Smith"]
+          "mustNotContain": [
+            "Alice Smith"
+          ]
         },
         {
           "reason": "no per-child detail may ride along",
@@ -249,49 +581,106 @@
             "booksCompleted": 4,
             "awardsEarned": 11,
             "friendsBrought": 2,
-            "kids": ["Alice Smith"],
+            "kids": [
+              "Alice Smith"
+            ],
             "at": "2026-09-16T22:20:00.000Z"
           },
-          "mustNotContain": ["kids", "Alice Smith"]
+          "mustNotContain": [
+            "kids",
+            "Alice Smith"
+          ]
         }
       ],
       "reject": [
-        { "reason": "no timestamp", "payload": { "checkedIn": 63, "booksCompleted": 0, "awardsEarned": 0, "friendsBrought": 0 } },
-        { "reason": "non-object", "payload": "63 kids" },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "no timestamp",
+          "payload": {
+            "checkedIn": 63,
+            "booksCompleted": 0,
+            "awardsEarned": 0,
+            "friendsBrought": 0
+          }
+        },
+        {
+          "reason": "non-object",
+          "payload": "63 kids"
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
     "points": {
-      "fields": ["groups", "at"],
-      "optionalFields": ["club"],
+      "fields": [
+        "groups",
+        "at"
+      ],
+      "optionalFields": [
+        "club"
+      ],
       "maxGroups": 20,
       "valid": [
         {
-          "groups": { "Red": 240, "Blue": 215, "Green": 198 },
+          "groups": {
+            "Red": 240,
+            "Blue": 215,
+            "Green": 198
+          },
           "club": "Sparks",
           "at": "2026-09-16T22:25:00.000Z"
         },
-        { "groups": {}, "at": "2026-09-16T22:25:00.000Z" }
+        {
+          "groups": {},
+          "at": "2026-09-16T22:25:00.000Z"
+        }
       ],
       "dirty": [
         {
-          "reason": "point values are numbers only — a name smuggled as a value is dropped",
+          "reason": "point values are numbers only \u2014 a name smuggled as a value is dropped",
           "payload": {
-            "groups": { "Red": 240, "Blue": "Alice Smith" },
+            "groups": {
+              "Red": 240,
+              "Blue": "Alice Smith"
+            },
             "at": "2026-09-16T22:25:00.000Z"
           },
-          "mustNotContain": ["Alice Smith"]
+          "mustNotContain": [
+            "Alice Smith"
+          ]
         }
       ],
       "reject": [
-        { "reason": "groups missing", "payload": { "at": "2026-09-16T22:25:00.000Z" } },
-        { "reason": "no timestamp", "payload": { "groups": { "Red": 1 } } },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "groups missing",
+          "payload": {
+            "at": "2026-09-16T22:25:00.000Z"
+          }
+        },
+        {
+          "reason": "no timestamp",
+          "payload": {
+            "groups": {
+              "Red": 1
+            }
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
     "schedule": {
-      "fields": ["at"],
-      "optionalFields": ["nextMeetingDate", "title", "noClubThisWeek"],
+      "fields": [
+        "at"
+      ],
+      "optionalFields": [
+        "nextMeetingDate",
+        "title",
+        "noClubThisWeek"
+      ],
       "valid": [
         {
           "nextMeetingDate": "2026-09-23",
@@ -299,39 +688,80 @@
           "noClubThisWeek": false,
           "at": "2026-09-16T22:30:00.000Z"
         },
-        { "noClubThisWeek": true, "at": "2026-09-16T22:30:00.000Z" },
-        { "at": "2026-09-16T22:30:00.000Z" }
+        {
+          "noClubThisWeek": true,
+          "at": "2026-09-16T22:30:00.000Z"
+        },
+        {
+          "at": "2026-09-16T22:30:00.000Z"
+        }
       ],
       "dirty": [
         {
           "reason": "a malformed date must be dropped, never shown as-is",
-          "payload": { "nextMeetingDate": "next Wednesday-ish", "at": "2026-09-16T22:30:00.000Z" },
-          "mustNotContain": ["next Wednesday-ish"]
+          "payload": {
+            "nextMeetingDate": "next Wednesday-ish",
+            "at": "2026-09-16T22:30:00.000Z"
+          },
+          "mustNotContain": [
+            "next Wednesday-ish"
+          ]
         },
         {
           "reason": "iCal attendee/organizer detail must never ride along",
           "payload": {
             "nextMeetingDate": "2026-09-23",
-            "attendees": ["parent@example.com"],
+            "attendees": [
+              "parent@example.com"
+            ],
             "organizer": "Director Smith",
             "at": "2026-09-16T22:30:00.000Z"
           },
-          "mustNotContain": ["attendees", "parent@example.com", "organizer", "Director Smith"]
+          "mustNotContain": [
+            "attendees",
+            "parent@example.com",
+            "organizer",
+            "Director Smith"
+          ]
         }
       ],
       "reject": [
-        { "reason": "no timestamp", "payload": { "nextMeetingDate": "2026-09-23" } },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "no timestamp",
+          "payload": {
+            "nextMeetingDate": "2026-09-23"
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     },
     "notice": {
-      "fields": ["level", "message", "at"],
-      "levels": ["info", "warn", "critical"],
+      "fields": [
+        "level",
+        "message",
+        "at"
+      ],
+      "levels": [
+        "info",
+        "warn",
+        "critical"
+      ],
       "maxMessage": 200,
-      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design — but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
+      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design \u2014 but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
       "valid": [
-        { "level": "critical", "message": "CLUB CANCELLED TONIGHT — snow", "at": "2026-09-16T21:00:00.000Z" },
-        { "level": "info", "message": "Bring your Bible next week!", "at": "2026-09-16T21:00:00.000Z" }
+        {
+          "level": "critical",
+          "message": "CLUB CANCELLED TONIGHT \u2014 snow",
+          "at": "2026-09-16T21:00:00.000Z"
+        },
+        {
+          "level": "info",
+          "message": "Bring your Bible next week!",
+          "at": "2026-09-16T21:00:00.000Z"
+        }
       ],
       "dirty": [
         {
@@ -341,18 +771,43 @@
             "message": "Pickup moved <script>alert(1)</script> to the gym",
             "at": "2026-09-16T21:00:00.000Z"
           },
-          "mustNotContain": ["<script>", "</script>"]
+          "mustNotContain": [
+            "<script>",
+            "</script>"
+          ]
         },
         {
           "reason": "unknown level falls back to info rather than being trusted",
-          "payload": { "level": "emergency-broadcast", "message": "Doors open at 6", "at": "2026-09-16T21:00:00.000Z" },
-          "mustNotContain": ["emergency-broadcast"]
+          "payload": {
+            "level": "emergency-broadcast",
+            "message": "Doors open at 6",
+            "at": "2026-09-16T21:00:00.000Z"
+          },
+          "mustNotContain": [
+            "emergency-broadcast"
+          ]
         }
       ],
       "reject": [
-        { "reason": "empty message must not blank the screen", "payload": { "level": "info", "message": "   ", "at": "2026-09-16T21:00:00.000Z" } },
-        { "reason": "missing message", "payload": { "level": "info", "at": "2026-09-16T21:00:00.000Z" } },
-        { "reason": "null", "payload": null }
+        {
+          "reason": "empty message must not blank the screen",
+          "payload": {
+            "level": "info",
+            "message": "   ",
+            "at": "2026-09-16T21:00:00.000Z"
+          }
+        },
+        {
+          "reason": "missing message",
+          "payload": {
+            "level": "info",
+            "at": "2026-09-16T21:00:00.000Z"
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
       ]
     }
   }

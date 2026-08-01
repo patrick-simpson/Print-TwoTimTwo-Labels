@@ -114,7 +114,55 @@ Clicking a `.clubber` opens `#checkin-modal` and populates the hidden
 | Form Entry | `/clubber/checkin_form_entry?date&club_id` | HTML attendance-checkbox table (POST saves) | key in a paper sheet |
 | Import CSV | `/clubber/checkin_csv` (multipart POST `file`) | HTML w/ `.clubber_not_found` / `.multiple_clubbers` | **official external write-path** for check-ins |
 | KidCheck | `/clubber/checkin_kidcheck` | HTML | import from KidCheck |
-| Checkout | `/clubber/checkout` (POST `calendar_id`,`clubber_id` → `"OK"`) | HTML: parents, authorized-pickup, security code, photo | pickup security |
+| Checkout | `/clubber/checkout` (POST `calendar_id`,`clubber_id` → `"OK"`) | HTML: one row per child **currently checked in**, with parents / authorized-pickup / security code | pickup security — **and the live "still here" list**, see §2.1 |
+
+
+### 2.1 `GET /clubber/checkout` — the live "who is still here" list
+
+Structure captured 2026-07-31 from kvbchurch.twotimtwo.com. **Selectors and
+attribute names only — no roster data**, same discipline as the `/clubber/csv`
+header fixture in `scripts/test-server-helpers.cjs`.
+
+The important realisation: this page is not a checkout *form*, it is a list of
+the children **currently checked in**, each with a button to check them out. A
+child's row **disappears once they are checked out** — exactly the
+disappearing-row behaviour the check-in roster uses, and which
+`scanClubberList()` already knows how to diff. So "who is still here" needs no
+new departure event: it is simply the set of rows on this page.
+
+Page shape:
+
+- `<title>` ends `- Checkout Clubber`.
+- Two tables. The **second** (`table.table`) is the data table; the first
+  (`table.items.table`, header `Title`) is an unrelated messages/notices table
+  and must be skipped. Do not use `querySelector('table')`.
+- Data table headers: `["", "Clubber", "", "Parent/Guardian", "Other"]` — note
+  the blank first and third columns, so header count does not equal cell count.
+- One row per child, `<tr>` whose cells are:
+
+| cell | selector | carries |
+|---|---|---|
+| 0 | `a.checkout[clubber_id]` | **the identity hook** — `clubber_id` is TwoTimTwo's own clubber id, the same id `.clubber[recid]` carries on the check-in page. `href="#"`; the click is JS-bound, so the attribute is the only reliable read. |
+| 1 | `td.clubber.name` (plus a gender letter class, `M` / `F`) | the child's name |
+| 2 | `td.center > img.club-icon-20[alt]` | club name in `alt`, e.g. `"Sparks "` (trailing space) — same alt-based club read the check-in page uses |
+| 3–5 | plain `<td>` | guardian / authorized-pickup / security-code columns |
+
+- The name cell's parent row is `.clubber-row`.
+- **Club filter checkboxes** `input.filter[name="clubs[N]"]` sit above the table,
+  all `checked` by default (so the default view is all clubs). A scraper must not
+  assume the page is unfiltered if a volunteer has touched them.
+- No `recid` attribute anywhere on this page — `clubber_id` on `a.checkout` is
+  the id. There is no `?date=` parameter; the page reflects the current meeting.
+
+Guards a scraper needs, mirroring `fetchCheckinReport()`:
+
+- Skip `table.items` and any `td.empty` placeholder row (present when nobody is
+  checked in — the page renders `<span class="empty">`).
+- Treat "zero rows" as **unknown**, not "everyone has left", unless the page
+  positively parsed (title matched, data table found). An empty parse and an
+  empty room are indistinguishable otherwise, and the wrong guess tells a
+  volunteer the building is clear when it is not.
+
 
 Walk-in registration from the check-in page: `GET /clubber/register?default_visitor=Y`
 returns the registration form (see §4); a successful POST returns a

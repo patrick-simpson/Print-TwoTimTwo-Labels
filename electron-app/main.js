@@ -5,6 +5,7 @@ const net = require('net');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const { runMigration, removeShortcuts } = require('./src/migrate');
+const configStore = require('./src/config-store');
 
 // ── Safe external opens ───────────────────────────────────────────────────────
 // shell.openExternal() hands its argument to the OS handler, so on Windows a
@@ -81,18 +82,11 @@ let updateState = { available: null, downloaded: null };
 
 // ─── Config helpers ─────────────────────────────────────────────────────────
 
-function loadConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function saveConfig(config) {
-  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-}
+// Both delegate to src/config-store.js — see the long comment there for why a
+// write MUST be a merge rather than a whole-file replace. Kept as thin local
+// wrappers so the many call sites don't each have to thread CONFIG_PATH.
+const loadConfig = () => configStore.loadConfig(CONFIG_PATH);
+const saveConfig = (patch) => configStore.saveConfig(CONFIG_PATH, patch);
 
 // ─── Auto-launch on boot ─────────────────────────────────────────────────────
 
@@ -377,8 +371,11 @@ ipcMain.handle('get-printers', async () => {
 
 ipcMain.handle('get-config', () => loadConfig());
 
-ipcMain.handle('save-config', (event, config) => {
-  saveConfig(config);
+ipcMain.handle('save-config', (event, patch) => {
+  // Act on the MERGED config, not the renderer's patch — startServer needs the
+  // Pusher credentials and the PIN, and buildTray needs the printer name, none
+  // of which the setup wizard sends.
+  const config = saveConfig(patch);
   currentConfig = config;
   applyLoginItemSettings(config);
   startServer(config);
@@ -388,7 +385,9 @@ ipcMain.handle('save-config', (event, config) => {
     if (setupWindow) setupWindow.close();
     openExternalSafely(config.checkinUrl, 'setup wizard');
   }, 600);
-  return { success: true };
+  // Hand back the merged config so the renderer's state matches what is on
+  // disk rather than the partial patch it sent.
+  return { success: true, config };
 });
 
 ipcMain.handle('open-checkin-page', (event, url) => {

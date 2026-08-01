@@ -10,6 +10,7 @@
 //   points   -> events.buildPoints    (roadmap D-2)
 //   schedule -> events.buildSchedule  (roadmap D-3)
 //   notice   -> events.buildNotice    (roadmap D-5)
+//   checkout -> events.buildCheckout   (contract v4)
 //
 // This module is deliberately Express-free — server.js owns the HTTP layer
 // (routes, req/res, the actual pusher.trigger() call) and calls submitFeed()
@@ -17,11 +18,19 @@
 // scripts/test-server-helpers.cjs can unit test them directly without
 // booting Express or configuring Pusher.
 //
-// PRIVACY: these feeds only ever carry aggregate counters / team names /
-// calendar facts / church-authored notice text — never a child's name. The
-// shape is enforced by events.js's builders, which structurally cannot
+// PRIVACY: the original four feeds only ever carry aggregate counters / team
+// names / calendar facts / church-authored notice text — never a child's name.
+// The shape is enforced by events.js's builders, which structurally cannot
 // accept a name field; this module's job is just "is the body well-formed
 // enough to build a valid payload from."
+//
+// `checkout` is the ONE EXCEPTION and it is deliberate: it carries first names,
+// because a board that says "who is still here" without names is not the feature
+// the operator asked for. It is the same data class as `checkin` (first name +
+// club, nothing else, enforced by buildCheckout) and it is SEALED by the same
+// AES-256-GCM transport. It also gets a slower throttle than the others, because
+// a list of unattended children has no business being republished every 5
+// seconds.
 
 'use strict';
 
@@ -31,7 +40,13 @@ const events = require('./events');
 // re-scraping in a tight loop must not flood the shared Pusher channel.
 const THROTTLE_MS = 5000;
 
-const FEED_NAMES = ['tonight', 'points', 'schedule', 'notice'];
+const FEED_NAMES = ['tonight', 'points', 'schedule', 'notice', 'checkout'];
+
+// Per-feed throttle overrides. checkout is the most sensitive payload on the
+// channel and the least urgent: the board is useful at pickup-rush granularity,
+// not per-second, and every republish is another copy of "these children are
+// still unattended" on the wire.
+const FEED_THROTTLE_MS = { checkout: 20000 };
 
 function isPlainObject(v) {
   return !!v && typeof v === 'object' && !Array.isArray(v);
@@ -104,11 +119,49 @@ function validateNoticeBody(body) {
   return { ok: true, payload };
 }
 
+// The checkout board's entry list. Validation is deliberately strict about the
+// SHAPE and silent about the contents: buildCheckout() drops entries with no
+// usable first name and strips every field that is not firstName/club, so a
+// scraper that starts picking up guardian names or allergy text cannot leak them
+// through here. What this must catch is a body that is structurally wrong —
+// which, for this feed, usually means the scraper matched the wrong table and is
+// about to publish an EMPTY board that would read as "everyone has been picked
+// up" while the room is still full.
+function validateCheckoutBody(body) {
+  if (!isPlainObject(body)) return { ok: false, reason: 'body must be an object' };
+  if (!Array.isArray(body.entries)) {
+    // A missing array is NOT an empty board. "I could not read the page" and
+    // "everyone has gone home" are opposite facts and must never collapse.
+    return { ok: false, reason: 'entries must be an array (a missing array is not an empty board)' };
+  }
+  if (body.entries.length > events.CHECKOUT_MAX) {
+    return { ok: false, reason: `entries must not exceed ${events.CHECKOUT_MAX}` };
+  }
+  if (body.printed !== undefined) {
+    const p = Number(body.printed);
+    if (!Number.isFinite(p) || p < 0) {
+      return { ok: false, reason: 'printed must be a non-negative number when present' };
+    }
+  }
+  const payload = events.buildCheckout(body.entries, body.printed);
+  // Every entry was dropped from a NON-empty input: the scraper found rows but
+  // none of them had a readable name, which means the selectors have drifted.
+  // Publishing that as an empty board would tell the lobby everyone had left.
+  if (body.entries.length > 0 && payload.entries.length === 0) {
+    return {
+      ok: false,
+      reason: 'every entry was unusable — the checkout page selectors have probably drifted',
+    };
+  }
+  return { ok: true, payload };
+}
+
 const VALIDATORS = {
   tonight: validateTonightBody,
   points: validatePointsBody,
   schedule: validateScheduleBody,
   notice: validateNoticeBody,
+  checkout: validateCheckoutBody,
 };
 
 // ── Per-feed state ────────────────────────────────────────────────────────
@@ -142,7 +195,7 @@ function submitFeed(feedName, body, now = Date.now()) {
   state.lastPayload = result.payload;
 
   const last = lastPublishAt[feedName] || 0;
-  if (now - last < THROTTLE_MS) {
+  if (now - last < (FEED_THROTTLE_MS[feedName] || THROTTLE_MS)) {
     state.lastThrottled = true;
     return { valid: true, throttled: true, payload: result.payload };
   }
@@ -181,6 +234,7 @@ function _resetForTests() {
 
 module.exports = {
   FEED_NAMES,
+  FEED_THROTTLE_MS,
   THROTTLE_MS,
   submitFeed,
   recordPublishOutcome,
