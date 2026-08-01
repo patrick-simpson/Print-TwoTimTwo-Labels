@@ -178,6 +178,10 @@ const CASES = [
   { name: 'logo-padded',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', clubImageBuffer: paddedLogo() } },
   { name: 'logo-ghost',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', clubImageBuffer: ghostLogo() } },
   { name: 'logo-white-on-dark', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Trek', clubImageBuffer: whiteOnDarkLogo() } },
+  // Inverted (first-timer / award) labels print the icon panel near-black, so
+  // the logo must flip to WHITE ink or it vanishes into its own background —
+  // found by review, black-on-#1f2937, invisible on paper.
+  { name: 'logo-inverted-visitor', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo(), isVisitor: true, extras: { inverted: true } } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -440,6 +444,32 @@ async function main() {
       check(`${name}: icon zone carries ink a thermal printer can actually print`,
         ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
     }
+
+    // The inverted label is the mirror image: its icon panel prints BLACK, so
+    // the logo is legible only as LIGHT pixels. Counting dark ink here would
+    // pass trivially (the panel itself is dark) and prove nothing — which is
+    // exactly how the black-on-black regression slipped past the first five
+    // logo checks and had to be caught by review instead.
+    {
+      const buf = byName.get('logo-inverted-visitor');
+      if (!buf) {
+        check('logo-inverted-visitor: rendered (needed for icon-zone check)', false);
+      } else {
+        const px = await pixels(buf);
+        let light = 0, zone = 0;
+        for (let y = 0; y < px.h; y++) {
+          for (let x = 0; x < ICON_ZONE_X; x++) {
+            const i = (y * px.w + x) * 4;
+            zone++;
+            const lum = 0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2];
+            if (lum > 200) light++;
+          }
+        }
+        const ratio = light / zone;
+        check('logo-inverted-visitor: the logo is WHITE on the dark panel, not black-on-black',
+          ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
+      }
+    }
   }
 
   // ── prepareLogoForThermal, at unit level ──────────────────────────────────
@@ -469,6 +499,44 @@ async function main() {
       && padded.height <= 94 && padded.height >= 88,
       padded ? `${padded.width}x${padded.height}` : 'null');
 
+    // A pale-gray card must read as PAPER: at the old threshold of 40 the
+    // whole card became a featureless black slab and the artwork inside it
+    // was indistinguishable from its background.
+    const paleCard = await prepareLogoForThermal(logoCanvas(320, 320, (ctx) => {
+      ctx.fillStyle = '#d0d0d0';
+      ctx.fillRect(0, 0, 320, 320);          // pale card background
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(120, 120, 80, 80);        // the actual artwork
+    }));
+    check('pale-gray card: the card is paper, the mark inside is the artwork',
+      paleCard !== null && paleCard.width <= 84 && paleCard.width >= 78
+      && paleCard.height <= 84 && paleCard.height >= 78,
+      paleCard ? `${paleCard.width}x${paleCard.height}` : 'null');
+
+    // The too-small gate must measure the artwork's TRUE resolution, not its
+    // size after the bounded scan's downscale — identical artwork must not
+    // pass or fail depending on how much empty canvas surrounds it.
+    const big = await prepareLogoForThermal(logoCanvas(4000, 4000, (ctx) => {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(1850, 1850, 300, 300);    // 300px artwork, oversized canvas
+    }));
+    check('oversized canvas: sourceWidth reports the artwork at source scale',
+      big !== null && big.sourceWidth >= 295 && big.sourceWidth <= 310
+      && big.sourceHeight >= 295 && big.sourceHeight <= 310,
+      big ? `${big.sourceWidth}x${big.sourceHeight} (scan ${big.width}x${big.height})` : 'null');
+    check('...which clears the 158px too-small gate that scan-space size would fail',
+      big !== null && Math.max(big.sourceWidth, big.sourceHeight) >= 158
+      && Math.max(big.width, big.height) < 158,
+      big ? `source ${big.sourceWidth}, scan ${big.width}` : 'null');
+
+    // A PNG whose header claims absurd dimensions is refused before decode.
+    const bomb = Buffer.alloc(64);
+    bomb.writeUInt32BE(0x89504e47, 0); bomb.writeUInt32BE(0x0d0a1a0a, 4);
+    bomb.writeUInt32BE(13, 8); bomb.write('IHDR', 12);
+    bomb.writeUInt32BE(100000, 16); bomb.writeUInt32BE(100000, 20);
+    check('a PNG header claiming 100000x100000 is refused without decoding',
+      (await prepareLogoForThermal(bomb)) === null);
+
     check('near-white ghost art: rejected (would print as nothing)',
       (await prepareLogoForThermal(ghostLogo())) === null);
     check('fully transparent image: rejected',
@@ -476,6 +544,16 @@ async function main() {
     check('undecodable buffer: rejected without throwing',
       (await prepareLogoForThermal(Buffer.from('not a png'))) === null);
     check('null input: rejected', (await prepareLogoForThermal(null)) === null);
+
+    const whiteInk = await prepareLogoForThermal(lightCyanLogo(), { ink: [255, 255, 255] });
+    check('ink color is configurable: white ink for inverted labels', whiteInk !== null);
+    if (whiteInk) {
+      const d = readPx(whiteInk.canvas);
+      const mid = at(d, Math.round(whiteInk.width / 2), whiteInk.height - 20);
+      check('...and the ink really is white',
+        mid.a > 200 && mid.r === 255 && mid.g === 255 && mid.b === 255,
+        JSON.stringify(mid));
+    }
 
     const inverted = await prepareLogoForThermal(whiteOnDarkLogo());
     check('white-on-dark: the dark field is ink', inverted !== null);

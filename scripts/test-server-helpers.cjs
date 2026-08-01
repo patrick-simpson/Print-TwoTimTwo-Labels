@@ -621,6 +621,9 @@ console.log('effectiveHandbookGroup — no line unless it routes somewhere');
   check('...including class/room variants and punctuation drift',
     effectiveHandbookGroup('Cubbies class', 'Cubbies ') === ''
     && effectiveHandbookGroup('T&T group', 'T&T ') === '');
+  check("...and ampersand spacing, which clubKey already treats as one club",
+    effectiveHandbookGroup('T & T group', 'T&T') === ''
+    && effectiveHandbookGroup('T&T group', 'T & T') === '');
 
   // What must SURVIVE — these carry real routing information
   check('a lettered group survives', effectiveHandbookGroup('Sparks A', 'Sparks') === 'Sparks A');
