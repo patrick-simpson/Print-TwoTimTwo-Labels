@@ -179,8 +179,13 @@ async function main() {
     const env = ck[0] && ck[0].payload;
     check('the checkin on the wire is an envelope', isSealed(env),
       JSON.stringify(env || null).slice(0, 120));
-    check('the child\'s name appears nowhere in the frame',
-      !JSON.stringify(env || {}).includes('Bella'));
+    // Structural rather than a substring search over base64: a short name can
+    // collide with random ciphertext by chance (a 3-letter one did, in the
+    // checkout suite). Key-set equality tests the same property — that no
+    // plaintext payload field rode along beside the envelope — and cannot flake.
+    check('the frame carries only envelope fields — no plaintext rode along',
+      JSON.stringify(Object.keys(env || {}).sort()) === JSON.stringify(['ct', 'iv', 'kid', 'v']),
+      JSON.stringify(Object.keys(env || {})));
     let opened = null;
     try { opened = events.openForTest(KEY, 'checkin', env); } catch { /* reported */ }
     check('the church key opens it back to the real payload',

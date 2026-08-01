@@ -84,7 +84,7 @@ All four suites — event contracts, server helpers, the v5.3.0 trust model, ext
 
 `webpack.yml` gains a test job and its push trigger widens from `main` to every branch; `build-electron.yml` gains the same job and `build` now needs it, so a tag cut from a green `main` still can't publish an `.exe` without re-verifying the contract and the trust model. Verified by breaking `security.js`'s loopback check and watching CI go red.
 
-A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 676 assertions now pass across ten suites.
+A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 713 assertions now pass across ten suites.
 
 ## [5.3.0] - 2026-07-27
 Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.

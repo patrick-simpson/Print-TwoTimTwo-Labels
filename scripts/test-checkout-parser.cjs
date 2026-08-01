@@ -272,7 +272,19 @@ console.log('checkout transport: the board is sealed like a check-in');
   const sealed = events.seal('checkout', events.buildCheckout(
     [{ firstName: 'Amy', club: 'Sparks' }], 43));
   check('it seals', Boolean(sealed && sealed.ct));
-  check('and no name appears in the sealed frame', !JSON.stringify(sealed).includes('Amy'));
+  // Deterministic, unlike a substring search. Asserting that "Amy" does not
+  // appear in the base64 ciphertext looks reassuring and is actually FLAKY:
+  // three characters over a 64-symbol alphabet collide by chance roughly once
+  // every few hundred runs, and it did. A flaky assertion in a security suite is
+  // worse than none, because people learn to re-run it. These two properties
+  // prove the same thing and cannot coincide:
+  check('the frame carries only envelope fields — no plaintext payload rode along',
+    JSON.stringify(Object.keys(sealed).sort()) === JSON.stringify(['ct', 'iv', 'kid', 'v']),
+    JSON.stringify(Object.keys(sealed)));
+  const sealedAgain = events.seal('checkout', events.buildCheckout(
+    [{ firstName: 'Amy', club: 'Sparks' }], 43));
+  check('the same board seals differently every time (encrypted, not encoded)',
+    sealed.ct !== sealedAgain.ct && sealed.iv !== sealedAgain.iv);
   const opened = events.openForTest(fixture.testKey, 'checkout', sealed);
   check('and it opens back to the board', opened.entries[0].firstName === 'Amy');
   let replayed = false;
