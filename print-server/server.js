@@ -61,6 +61,20 @@ try {
   console.warn('[config] Failed to load config.json:', e.message);
 }
 
+// Install the display key into the publisher. The three name-bearing events
+// (checkin, recap, birthdays) are sealed with it so the PUBLIC Pusher channel
+// carries ciphertext instead of children's first names — see the sealed-envelope
+// block in events.js. With no key set the publisher stays plaintext, which is
+// what makes the rollout safe in either order; /health says which mode we are in
+// so "am I actually encrypted?" is answerable rather than assumed.
+if (events.setDisplayKey(config.displayKey)) {
+  console.log(`[realtime] Display key loaded (kid ${events.getDisplayKeyState().kid}) — names are encrypted on the channel`);
+} else if (config.displayKey) {
+  console.warn('[realtime] config.displayKey is INVALID — names will be published in the clear until it is fixed');
+} else {
+  console.warn('[realtime] No display key set — children\'s first names are published UNENCRYPTED on a public channel. Generate one in the dashboard (Realtime).');
+}
+
 // Brute-force protection for the phone PIN. Lives at module scope so the
 // failure counts survive across requests but not across restarts — a restart
 // mid-event must never leave a volunteer locked out.
@@ -2710,7 +2724,14 @@ function publishTally() {
 
 function publishRecap() {
   try {
-    if (!eventBuffer.length) return;
+    // An EMPTY recap is published on purpose once names are encrypted, where it
+    // used to be skipped. It costs one sealed frame every two minutes and buys
+    // the screens a continuous key-health heartbeat: a screen needs two failed
+    // frames before it admits it cannot read names, so without this the first two
+    // children of the night are silently missed before anything appears on the
+    // wall. With it, a wrong key is on screen before the doors even open.
+    // The consumer's handleRecap iterates `entries`, so [] is a clean no-op.
+    if (!eventBuffer.length && !events.getDisplayKeyState().configured) return;
     events.publish(pusher, EVENT_CHANNEL, 'recap', events.buildRecap(eventBuffer));
   } catch (e) { console.warn('[events] recap publish skipped:', e.message); }
 }
@@ -2809,6 +2830,31 @@ app.post('/canary', async (req, res) => {
     passed: published,
     detail: pusher ? (published ? `canary event on ${EVENT_CHANNEL}` : 'publish failed') : 'Pusher not configured',
   });
+
+  // Third stage: prove the ENCRYPTED path works, not just the channel. A screen
+  // that can reach Pusher but cannot open a sealed frame shows no banners, and
+  // without this stage the only symptom is "the wall stopped welcoming children"
+  // — discovered mid-service rather than at 5:45.
+  const keyState = events.getDisplayKeyState();
+  if (keyState.configured) {
+    // An empty recap on purpose: the consumer's handleRecap iterates entries, so
+    // [] is a clean no-op that still exercises seal -> publish -> open.
+    const sealedOk = await events.publish(
+      pusher, EVENT_CHANNEL, 'recap', events.buildRecap([]));
+    stages.push({
+      stage: 'display key',
+      passed: sealedOk,
+      detail: sealedOk
+        ? `sealed recap sent (key ${keyState.kid}) — each screen should flash "key OK"`
+        : 'could not publish the sealed test event',
+    });
+  } else {
+    stages.push({
+      stage: 'display key',
+      passed: false,
+      detail: "No display key set — names are going out UNENCRYPTED on a public channel. Generate one under Realtime.",
+    });
+  }
 
   lastCanary = { at: new Date().toISOString(), stages };
   console.log(`[canary] ${stages.map(s => `${s.stage}:${s.passed ? 'ok' : 'FAIL'}`).join(' ')}`);
@@ -2915,6 +2961,16 @@ app.get('/health', async (req, res) => {
   if (config.lanAccess === true && !security.isAcceptablePin(config.phonePin)) {
     warnings.push('Phone check-in is enabled but no PIN is set, so the server is only listening on this computer. Set a PIN in Settings and restart.');
   }
+  // Surface the realtime privacy mode where the operator already looks. An
+  // unencrypted channel is not broken, so it cannot be an error — but it must
+  // never be INVISIBLE, or "we set that up" becomes a belief rather than a fact.
+  const keyState = events.getDisplayKeyState();
+  if (pusher && !keyState.configured) {
+    warnings.push("No display key is set, so children's first names are published unencrypted on a channel anyone can subscribe to. Generate one under Realtime, then paste it into each screen.");
+  }
+  if (config.displayKey && !keyState.configured) {
+    warnings.push('The saved display key is invalid, so names are going out in the clear. Generate a new one under Realtime.');
+  }
   let csvUpdatedAt = null;
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
@@ -2932,6 +2988,13 @@ app.get('/health', async (req, res) => {
     warnings,
     clubNight: events.isClubNightNow(churchConfig.clubNights),
     pusher: events.getPublishState(),
+    // Never the key itself — only whether one is installed, plus its public
+    // `kid` fingerprint, which is what lets a screen confirm it holds the SAME
+    // key rather than merely some key. "Are we actually encrypted?" has to be
+    // answerable from the dashboard, not a belief.
+    displayKeyConfigured: keyState.configured,
+    displayKeyId: keyState.kid,
+    encryptingNames: keyState.configured,
     selectorSelfTest: lastSelfTest,
     lastCanary,
     printFailures: printFailures.length,
@@ -2986,7 +3049,29 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey'];
+
+// Make the live `config` object exactly mirror what was just written to disk.
+//
+// Object.assign() alone was NOT enough, and the gap was security-relevant. Both
+// POST /config paths can DELETE a key — `delete next.phonePin` when the operator
+// clears the PIN, `delete next.displayKey` when they clear the display key — and
+// Object.assign copies properties but never removes them. So the file said the
+// PIN was gone while the live auth gate, which reads config.phonePin per
+// request, kept accepting the OLD one until someone restarted the server. An
+// operator clearing a leaked PIN had every reason to believe it was revoked.
+// Same for the display key: clearing it left the publisher still sealing with
+// the key it was supposed to have forgotten.
+function applySavedConfig(next) {
+  for (const key of Object.keys(config)) {
+    if (!(key in next)) delete config[key];
+  }
+  Object.assign(config, next);
+  // Sealing is per-publish, so a key change takes effect immediately — a
+  // volunteer fixing a name outage mid-event must not have to restart the server
+  // that is currently printing labels.
+  events.setDisplayKey(config.displayKey);
+}
 
 function isTrustedConfigOrigin(req) {
   if (!security.isLoopbackRequest(req)) return false;
@@ -3020,12 +3105,27 @@ app.get('/config', (req, res) => {
   res.json(saved);
 });
 
+// Generate a fresh display key for the dashboard's button. Loopback-only via
+// isTrustedConfigOrigin: a phone on the venue Wi-Fi must never be able to mint
+// the key that reads children's names, PIN or no PIN. Deliberately does NOT save
+// it — the operator copies it, pastes it into the screens, and only then commits
+// it here, so a mistyped paste cannot leave the screens keyed to a key the
+// server has already replaced.
+app.post('/config/display-key/generate', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The display key can only be generated from the dashboard on this computer' });
+  }
+  const key = events.generateDisplayKey();
+  console.log('[realtime] Generated a new display key (not yet saved)');
+  res.json({ key });
+});
+
 app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
-    worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays,
+    worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -3067,6 +3167,22 @@ app.post('/config', (req, res) => {
         next.phonePin = wanted;
       }
     }
+    // The AES key that lets the church's own screens read children's names off
+    // the public Pusher channel. Clearing it stops the three name-bearing events
+    // from being published at all (they fail closed rather than reverting to
+    // plaintext) — which is the whole-system rollback lever, no deploy needed.
+    if (displayKey !== undefined) {
+      const wanted = String(displayKey).trim();
+      if (wanted === '') {
+        delete next.displayKey;
+      } else if (!events.isValidDisplayKey(wanted)) {
+        return res.status(400).json({
+          error: 'Display key must be 32 bytes of base64 — use the Generate button rather than typing one',
+        });
+      } else {
+        next.displayKey = wanted;
+      }
+    }
     // Binding beyond loopback is an explicit choice, not a default. Takes
     // effect on restart (the listening socket is already bound).
     if (lanAccess !== undefined) next.lanAccess = !!lanAccess;
@@ -3092,9 +3208,9 @@ app.post('/config', (req, res) => {
     }
 
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
-    // Keep the live process in sync so schedule/PIN/toggle changes apply
+    // Keep the live process in sync so schedule/PIN/toggle/key changes apply
     // without a restart (Pusher creds still need one — noted in the UI).
-    Object.assign(config, next);
+    applySavedConfig(next);
     console.log('[config] Saved');
     res.json({ ok: true });
   } catch (e) {
@@ -3121,7 +3237,7 @@ app.post('/config/schedule', (req, res) => {
     next.schedule = rows;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
-    Object.assign(config, next);
+    applySavedConfig(next);
     res.json({ ok: true, schedule: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });

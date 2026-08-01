@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 Senior Software Engineer focused on **Technical Integrity, Quality, and Operational Excellence**. Surgical fixes addressing root causes, not workarounds.
 
@@ -41,6 +41,33 @@ That workflow creates and pushes the `vX.Y.Z` tag using its own `GITHUB_TOKEN` (
 **Label Generation:**
 - Standalone: Canvas PNG (4x2 Landscape via PowerShell)
 - Electron: HTML/CSS in hidden BrowserWindow → PNG
+
+**Realtime privacy:** the Pusher channel is PUBLIC and Pusher public channels
+have no server-side authorization primitive, so `checkin`, `recap` and
+`birthdays` are sealed with AES-256-GCM before publish (`print-server/events.js`;
+consumer half is `src/lib/envelope.js` in the display repo). Rules that must
+survive any change:
+- **Fail closed, never plaintext.** If a key is configured but a payload cannot
+  be sealed, publish NOTHING. A silent downgrade is the worst outcome available.
+- With **no** key configured the publisher stays plaintext on purpose (an
+  operator who has not opted in must not have banners break on an auto-update),
+  and `/health` says so loudly. Anti-downgrade lives on the consumer.
+- Padding is part of the spec, not an optimisation — GCM leaks
+  `len(firstName) + len(club)` without it, and club is inferable from the
+  plaintext `tally`. `npm run test:envelope` fails the build if two `checkin`
+  frames differ in length.
+- The framing is pinned by `envelope-vectors.json`, mirrored byte-identically
+  into the display repo. Changing it means bumping `ENVELOPE_VERSION`,
+  `npm run gen:envelope-fixture`, and landing both repos together — there is no
+  partial failure, either the sides agree or no name renders anywhere.
+- **Printing is never gated on the pipe.** A child at the door gets a label even
+  if the key, Pusher and the network are all broken.
+
+**Config writes:** `config.json` has several writers with different views of it.
+Use `applySavedConfig()` for the live sync — plain `Object.assign` cannot DELETE,
+which is why clearing the phone PIN used to leave the old one accepted until a
+restart. The Electron app must merge via `electron-app/src/config-store.js`,
+never write the file whole.
 
 **Data Flow:**
 - Bookmarklet fetches CSV → POST /update-csv

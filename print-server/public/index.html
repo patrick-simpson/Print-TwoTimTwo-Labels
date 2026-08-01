@@ -245,6 +245,23 @@
               </div>
             </div>
             <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label style="color:#4caf50">Realtime privacy &mdash; display key</label>
+              <p style="font-size:11px; color:#64748b; margin-bottom:8px">
+                The Pusher channel is <strong>public</strong>: anyone who views a screen's page source can
+                subscribe to it from anywhere. So children's first names are <strong>encrypted</strong> before
+                they leave this PC. Generate the key once, then paste the same value into every screen
+                (Settings &rarr; Connection &rarr; Display key). Counts, clock, countdown and slides never need it
+                &mdash; without it only the welcome banners stop.
+              </p>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                <input type="text" id="settings-display-key" placeholder="none &mdash; names are NOT encrypted" style="flex:1 1 240px" readonly>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="generateDisplayKey()">Generate display key</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="copyDisplayKey()">Copy</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="clearDisplayKey()">Clear</button>
+              </div>
+              <p id="display-key-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
+            </div>
+            <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Check-in Features</label>
               <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:8px">
                 <div>
@@ -586,6 +603,10 @@ function loadSettings() {
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
     document.getElementById('settings-lan-access').checked = config.lanAccess === true;
+    // GET /config redacts displayKey like the Pusher secret, so we render its
+    // STATE rather than its value. Showing a fake masked string would invite
+    // someone to "copy" it into a screen.
+    setDisplayKeyState(config.displayKey || '');
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
     (config.schedule || []).forEach(addScheduleRow);
@@ -608,6 +629,67 @@ function loadSettings() {
   }).catch(function() {
     document.getElementById('settings-printer').innerHTML = '<option value="">Could not load printers</option>';
   });
+}
+
+// ── Display key ───────────────────────────────────────────────────────────────
+// The AES key that lets the church's own screens read children's first names off
+// the PUBLIC Pusher channel. Shown in full on purpose: this page is served to
+// loopback only, and a volunteer has to be able to READ the key to type it into
+// a TV stick that has no clipboard. Never rendered anywhere else, never logged,
+// and GET /config redacts it for any non-loopback caller.
+function setDisplayKeyState(value) {
+  var input = document.getElementById('settings-display-key');
+  var note = document.getElementById('display-key-note');
+  input.value = value || '';
+  if (value) {
+    note.textContent = 'Names are encrypted. Paste this exact value into every screen, then press "Test Night Systems" to confirm each one can read it. Keep a copy where the church keeps the Wi-Fi password.';
+    note.style.color = '#16a34a';
+  } else {
+    note.textContent = "No key: children's first names are published in the clear on a channel anyone can subscribe to. Press Generate, then Save Settings.";
+    note.style.color = '#dc2626';
+  }
+}
+
+function generateDisplayKey() {
+  // Rotating invalidates every screen at once — there is no partial rotation, so
+  // this has to be a deliberate act rather than a stray click during club.
+  var current = document.getElementById('settings-display-key').value.trim();
+  if (current && !confirm('Replace the current display key?\n\nEvery screen will stop showing names until you paste the NEW key into each one. Do this between events, not during club.')) return;
+  fetch(BASE + '/config/display-key/generate', { method: 'POST' })
+    .then(function(r) { if (!r.ok) throw new Error('generate failed'); return r.json(); })
+    .then(function(d) {
+      setDisplayKeyState(d.key);
+      var note = document.getElementById('display-key-note');
+      note.textContent = 'New key generated but NOT saved yet. Copy it into every screen first, then press Save Settings — that order means a mistyped paste cannot leave the screens locked out.';
+      note.style.color = '#b45309';
+    })
+    .catch(function() { alert('Could not generate a display key — is the server running on this computer?'); });
+}
+
+function copyDisplayKey() {
+  var input = document.getElementById('settings-display-key');
+  if (!input.value) { alert('There is no display key to copy. Press Generate first.'); return; }
+  // navigator.clipboard needs a secure context, which http://localhost is — but
+  // fall back rather than failing silently on an older embedded browser.
+  var done = function() {
+    var note = document.getElementById('display-key-note');
+    var was = note.textContent;
+    note.textContent = 'Copied. Paste it into each screen under Settings → Connection → Display key.';
+    setTimeout(function() { note.textContent = was; }, 4000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(done, function() { input.select(); });
+  } else {
+    input.removeAttribute('readonly');
+    input.select();
+    try { document.execCommand('copy'); done(); } catch (e) { /* leave it selected */ }
+    input.setAttribute('readonly', 'readonly');
+  }
+}
+
+function clearDisplayKey() {
+  if (!confirm("Clear the display key?\n\nThe name events will stop being published entirely — they fail closed rather than reverting to plaintext — so screens keep showing counts, the clock, the countdown and slides but no welcome banners. This is the whole-system rollback lever.")) return;
+  setDisplayKeyState('');
 }
 
 function saveSettings() {
@@ -633,7 +715,8 @@ function saveSettings() {
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
-      lanAccess: document.getElementById('settings-lan-access').checked
+      lanAccess: document.getElementById('settings-lan-access').checked,
+      displayKey: document.getElementById('settings-display-key').value.trim()
     })
   }).then(function(r) {
     if (!r.ok) throw new Error('config save failed');

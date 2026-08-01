@@ -1,4 +1,4 @@
-# Awana Event Bus Contract (v2)
+﻿# Awana Event Bus Contract (v2)
 
 This document pins the payload schemas for every event on the shared Pusher
 channel **`awana-channel`**. The **print server in this repo is the ONLY
@@ -104,3 +104,35 @@ exact key sets, correct types, PII structurally impossible, plus the
    sanitizers/tests in the same change.
 4. New fields must be optional for consumers for at least one release cycle so
    deploy order never matters.
+
+## The transport: sealed envelopes
+
+The Pusher channel is **public**, and Pusher public channels have no
+server-side authorization primitive — subscription is granted by possession of
+the app key, which must ship in the display's public bundle. So the three
+name-bearing events (`checkin`, `recap`, `birthdays`) are **encrypted** with
+AES-256-GCM before publish; the other seven ride in the clear on purpose.
+
+This is a **transport** layer, strictly outside the contract above:
+
+- No payload vector changes. A sealed frame is opened and then handed to the
+  same allowlist sanitizer a plaintext one would be — decryption sits *in front
+  of* the privacy boundary, never beside it. A frame that authenticates is
+  authenticated, not trusted.
+- The framing (envelope version, AAD construction, padding sizes, ciphertext
+  layout) and a cross-implementation interop fixture live in
+  **`envelope-vectors.json`**, mirrored byte-identically into the display repo
+  exactly like this file. Both repos assert they can open every envelope in it,
+  which is what stops the Node seal and the WebCrypto open from drifting.
+- **Changing the framing is a bigger deal than adding a field.** There is no
+  partial failure: either the two sides agree or no child's name renders
+  anywhere. Bump `ENVELOPE_VERSION` (which changes the AAD, so old frames stop
+  authenticating rather than silently misparsing), regenerate the fixture with
+  `npm run gen:envelope-fixture`, mirror it, and land both repos together.
+- Padding is part of the spec, not an optimisation. GCM adds no padding, so an
+  unpadded envelope reveals `len(firstName) + len(club)` — and club is inferable
+  by correlating the **plaintext** `tally`. `npm run test:envelope` fails the
+  build if two `checkin` frames ever differ in length.
+
+See the display repo's SECURITY.md for what remains exposed (timing and
+headcount, irreducibly) and for the operator-facing setup and rollback.
