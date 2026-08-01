@@ -1,4 +1,46 @@
-﻿## [5.5.1] - 2026-08-01
+﻿## [5.6.0] - 2026-08-01
+The display key is on the front page instead of buried, the extension says whether names are encrypted, and an app update now updates the extension too.
+
+### "Where do I access the display key?"
+It was in Settings → below Pusher → *Realtime privacy — display key*. Reachable, but only if you already knew it existed — which is a poor place for the one control that decides whether children's first names ride a public channel in the clear.
+
+Three changes:
+
+- **A "Names on the Welcome Screen" card at the top of the dashboard**, above the fold, before any tab. Green with the key fingerprint when names are encrypted; red and explicit when they are not — *"anyone who views a screen's page source can subscribe from anywhere and read every child's first name"*. Its **Set up the display key** button opens the Settings tab, scrolls to the key, and flashes it, so the button lands you on the control rather than at the top of a long form.
+- **`http://localhost:3456/#display-key` is now a real deep link**, which is what the extension points at.
+- **The card stays quiet for a church with no welcome screen.** No Pusher configured means no names on the wire and nothing to warn about.
+
+### The warnings that should have made this findable were rendering BLANK
+`/health` warnings are a mix of `{type, message}` objects and bare strings. The dashboard renders `w.message` — which is `undefined` for a string — so it painted an **empty yellow box**. Both realtime-privacy warnings and the phone-PIN warning were affected: the three loudest warnings in the codebase were the invisible ones. All warnings are objects now, and the renderer also tolerates strings so an older server paired with a newer page degrades to readable text rather than a blank rectangle.
+
+Related: `publishState.configured` was only set by `publish()`, so from startup until the first event of the night the server reported Pusher as *not configured*. The privacy banner would have said "no welcome screen connected" to a church that has one — and only turned red after the first child's name had already gone out plaintext. It is now set when the Pusher client is constructed.
+
+### The extension now says whether names are encrypted
+A status row in the check-in panel: locked and green with the key fingerprint, or red with a link straight to the dashboard setting.
+
+**State only, never the key.** The panel is injected into a page served by twotimtwo.com, so anything rendered there is readable by that site's scripts — which is also why the server redacts `displayKey` for every non-loopback caller. The extension has no way to obtain the key, and a test now asserts it stays that way even if `/health` were to send one.
+
+### An app update now updates the extension
+Previously the extension was not shipped in the `.exe` at all. Updating it meant: notice the version banner, find the zip, download, unzip, remove the old entry in `chrome://extensions`, Load unpacked again. In practice it drifts months behind the print server and nobody notices, because the check-in page keeps working — just against an older content script.
+
+**What is not possible:** Chrome never auto-updates an unpacked extension, and it only honours a self-hosted `update_url` for Web Store or enterprise-policy installs. There is no silent update available for how this extension is distributed, and this release does not pretend otherwise.
+
+**What is:** the folder Chrome loads is now a folder the installer owns.
+
+- `chrome-extension/` ships inside the `.exe` as an extra resource.
+- On every launch the app syncs it into `%APPDATA%\Awana Label Printer\chrome-extension` — a path that survives updates, unlike `resources/`, which an update replaces wholesale and would leave Chrome pointing at a folder that vanished.
+- Load *that* folder unpacked once. From then on the cost of an extension update is **restarting Chrome**, and the widget tells you when one is owed: *"Extension v5.6.0 is installed — restart Chrome to load it"*, instead of the old "reload extension", which read as "go download it again".
+- Tray → **Open Chrome extension folder**, and dashboard → Diagnostics → **Copy folder path**, so finding it is not a scavenger hunt.
+
+The copy is careful because Chrome may be reading that folder while it happens: every file is written to a temp name and renamed into place (a half-written `content.js` is a broken extension on the one page that must not break), files dropped by a new version are removed rather than left to be loaded alongside new code, an identical version is skipped entirely rather than rewritten on every launch, and an implausible source folder is refused rather than mirrored into the operator's profile next to `config.json` and `clubbers.csv`.
+
+The folder path is **loopback-only** in `/health`. The version travels to the check-in site (the extension needs it for the banner); the path does not, because it contains the operator's Windows username and `/health` is CORS-readable from that site.
+
+### Verification
+47 new assertions for the extension sync, plus new coverage of the privacy badge, the warning shape, and the loopback gate — 774 across eleven suites, all green. Each new guard was negative-controlled by removing it and confirming the tests go red: the stale-file prune, the source-size refusal, the loopback path gate, and the key-leak check. The dashboard was driven in real Chromium end to end — red banner and readable warnings with no key, the jump button scrolling and flashing the right block, the deep link, the Diagnostics path, and the banner turning green with only the fingerprint (never the key) after saving one.
+
+
+## [5.5.1] - 2026-08-01
 The check-in panel no longer traps you when you tick "Also register in TwoTimTwo".
 
 > Split out of 5.5.0 rather than folded into it: v5.5.0 was already tagged and

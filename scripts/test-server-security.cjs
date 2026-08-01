@@ -233,6 +233,47 @@ async function main() {
     }
   }
 
+  // ── The managed extension folder is loopback-only ───────────────────────────
+  // /health is deliberately CORS-readable from the check-in site (the extension
+  // polls it for the version banner and the privacy badge), and the folder path
+  // is %APPDATA%\… — which contains the operator's Windows USERNAME. So the
+  // version travels and the path does not.
+  {
+    server.setExtensionInfo({
+      targetDir: 'C:\\Users\\pastor.jane\\AppData\\Roaming\\Awana Label Printer\\chrome-extension',
+      version: '9.9.9',
+      action: 'updated',
+    });
+
+    const local = json(await request({ host: '127.0.0.1', pathname: '/health' }));
+    check('a loopback caller sees the extension folder',
+      local && local.extension && /chrome-extension$/.test(local.extension.dir || ''),
+      JSON.stringify(local && local.extension));
+    check('a loopback caller sees the extension version',
+      local && local.extension && local.extension.version === '9.9.9');
+
+    const remote = await request({
+      host: '127.0.0.1', pathname: '/health',
+      headers: { Origin: 'https://kvbchurch.twotimtwo.com' },
+    });
+    const remoteBody = json(remote);
+    check('the check-in site still sees the extension VERSION',
+      remoteBody && remoteBody.extension && remoteBody.extension.version === '9.9.9',
+      JSON.stringify(remoteBody && remoteBody.extension));
+    check('...but NOT the folder path',
+      remoteBody && remoteBody.extension && remoteBody.extension.dir === undefined,
+      JSON.stringify(remoteBody && remoteBody.extension));
+    check('...so the Windows username never crosses an origin',
+      !/pastor\.jane/.test(remote.body), remote.body.slice(0, 200));
+
+    // A standalone `node server.js` has no managed folder; reporting one would
+    // send an operator to a directory that does not exist.
+    server.setExtensionInfo(null);
+    const cleared = json(await request({ host: '127.0.0.1', pathname: '/health' }));
+    check('with no managed folder /health reports none', cleared && cleared.extension === null,
+      JSON.stringify(cleared && cleared.extension));
+  }
+
   // ── Origin policy ───────────────────────────────────────────────────────────
   {
     const res = await request({

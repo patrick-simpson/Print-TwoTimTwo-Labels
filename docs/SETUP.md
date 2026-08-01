@@ -18,15 +18,31 @@ is deprecated.
 
 ## 2. Chrome extension
 
-`chrome://extensions` → Developer mode → *Load unpacked* → pick the
-`chrome-extension/` folder. Open the TwoTimTwo check-in page — the
-green widget appears. Pin the page as the browser homepage.
+`chrome://extensions` → Developer mode → *Load unpacked* → pick
+**`%APPDATA%\Awana Label Printer\chrome-extension`**. Open the TwoTimTwo
+check-in page — the green widget appears. Pin the page as the browser
+homepage.
+
+Load *that* folder, not a copy from Downloads: the app rewrites it on
+every launch, so an app update also updates the extension — restart
+Chrome to pick it up. The tray menu has **Open Chrome extension folder**,
+and the dashboard's Diagnostics tab has a **Copy folder path** button.
+Details in `EXTENSION.md`.
 
 ## 3. Dashboard settings (`http://localhost:3456`)
 
+- **Names on the Welcome Screen** — front page, above the fold. Says
+  whether children's first names are leaving this PC encrypted, with a
+  button straight to the setting. If you run a lobby TV, this is the one
+  to green before club night; see `SECURITY.md`.
 - **Printer + check-in URL** — set once.
 - **Pusher** (optional) — powers the lobby welcome display and the
   countdown app's live counts. Only this server holds the secret.
+- **Realtime privacy → display key** (Settings tab) — *Generate display
+  key*, **Copy**, paste the same value into every screen (their Settings
+  → Connection → Display key), *then* **Save Settings**. That order means
+  a mistyped paste cannot lock every screen out at once. Without a key the
+  names ride a public channel in the clear.
 - **Check-in Features** — phone PIN, late-arrival grace, visitor label
   style, connect cards, and the driven-check-in kill switch.
 - **Group Schedule** — one row per club (start time, location, room);

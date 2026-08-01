@@ -74,6 +74,14 @@
   .flag-tokens { font-weight: 700; }
   .update-banner button { margin-left: 10px; padding: 4px 12px; border: none; border-radius: 6px; background: #f59e0b; color: #fff; font-weight: 700; font-size: 12px; cursor: pointer; }
   .update-banner button:hover { background: #d97706; }
+  /* Deep-link target highlight — see jumpToDisplayKey() */
+  @keyframes flash-highlight {
+    0%, 100% { background: transparent; }
+    20%, 60% { background: #fef9c3; }
+  }
+  .flash { animation: flash-highlight 1.6s ease-in-out 1; border-radius: 8px; }
+  .path-box { font-family: ui-monospace, Consolas, monospace; font-size: 12px; background: #f8fafc;
+    border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -137,6 +145,26 @@
     <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
       <div id="tonight-clubs" class="club-chips"><span class="empty" style="padding:0">No check-ins yet tonight</span></div>
       <div id="tonight-flags" class="flag-list" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Realtime privacy — top level on purpose. This used to live only inside
+       the Settings tab, below Pusher, where you had to already know it existed
+       to find it. Whether children's names go out encrypted is a front-page
+       fact, not a preference. -->
+  <div class="card" id="privacy-card">
+    <div class="card-header">
+      <span>Names on the Welcome Screen</span>
+      <button class="btn btn-primary btn-sm" onclick="jumpToDisplayKey()">Set up the display key</button>
+    </div>
+    <div class="card-body">
+      <div id="privacy-banner" class="traffic-light green" style="margin-bottom:0">
+        <div id="privacy-dot" class="traffic-dot green"></div>
+        <div>
+          <div id="privacy-text" class="traffic-text">Checking…</div>
+          <div id="privacy-detail" class="traffic-detail"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -244,7 +272,7 @@
                 </div>
               </div>
             </div>
-            <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+            <div id="display-key-section" style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Realtime privacy &mdash; display key</label>
               <p style="font-size:11px; color:#64748b; margin-bottom:8px">
                 The Pusher channel is <strong>public</strong>: anyone who views a screen's page source can
@@ -321,6 +349,20 @@
           <div id="diag-list" class="diag-list">
             <div class="empty">Click "Run Diagnostics" to check system health</div>
           </div>
+          <div id="extension-block" style="display:none;margin-top:16px;border-top:1px solid #e2e8f0;padding-top:12px">
+            <label style="font-size:12px;font-weight:600;color:#64748b">Chrome extension folder</label>
+            <p style="font-size:11px;color:#64748b;margin:6px 0 8px">
+              The app keeps this folder up to date on every launch. Load it once via
+              <strong>chrome://extensions &rarr; Developer mode &rarr; Load unpacked</strong>, and from then on
+              each app update refreshes the files in place &mdash; restart Chrome to pick them up.
+              Do <em>not</em> load a copy from Downloads; that copy never updates.
+            </p>
+            <div id="extension-path" class="path-box">&mdash;</div>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="copyExtensionPath()">Copy folder path</button>
+              <span id="extension-copy-note" style="font-size:11px;color:#94a3b8;align-self:center"></span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -353,14 +395,45 @@ function esc(value) {
 }
 
 // Tab switching
+function showTab(name) {
+  var tab = document.querySelector('.tab[data-tab="' + name + '"]');
+  var content = document.getElementById('tab-' + name);
+  if (!tab || !content) return false;
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+  tab.classList.add('active');
+  content.classList.add('active');
+  return true;
+}
+
 document.querySelectorAll('.tab').forEach(function(tab) {
-  tab.addEventListener('click', function() {
-    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
-    tab.classList.add('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-  });
+  tab.addEventListener('click', function() { showTab(tab.dataset.tab); });
 });
+
+// Open the Settings tab AND land on the display-key block, flashing it so the
+// eye has something to follow. A tab switch alone drops you at the top of a
+// long form, which is how this setting stayed invisible in the first place.
+function jumpToDisplayKey() {
+  showTab('settings');
+  var section = document.getElementById('display-key-section');
+  if (!section) return;
+  section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  section.classList.remove('flash');
+  // Reading offsetWidth restarts the animation when the button is pressed
+  // twice; without it the second press does nothing visible.
+  void section.offsetWidth;
+  section.classList.add('flash');
+}
+
+// http://localhost:3456/#display-key — the deep link the extension points at,
+// so "where is this thing?" is answerable by clicking rather than by explaining.
+function applyHashRoute() {
+  var hash = (location.hash || '').replace('#', '');
+  if (hash === 'display-key' || hash === 'privacy') jumpToDisplayKey();
+  else if (hash === 'extension') { showTab('diagnostics'); }
+  else if (hash) showTab(hash);
+}
+window.addEventListener('hashchange', applyHashRoute);
 
 function formatTime(iso) {
   if (!iso) return '--';
@@ -445,14 +518,21 @@ function loadHealth() {
     if (hasWarning) {
       warnCard.style.display = 'block';
       warnList.innerHTML = warnings.map(function(w) {
-        // WARNING_DESCRIPTIONS values are our own literals; w.message is not.
-        var known = WARNING_DESCRIPTIONS[w.type];
-        return '<div class="warning-item">' + (known || esc(w.message)) + '</div>';
+        // Tolerate a bare string as well as {type, message}: /health is also
+        // read by the extension, and an older server paired with this page
+        // must not paint a blank yellow box — which is precisely the bug this
+        // replaced. WARNING_DESCRIPTIONS values are our own literals; the
+        // message from the wire is not.
+        if (typeof w === 'string') return '<div class="warning-item">' + esc(w) + '</div>';
+        var known = WARNING_DESCRIPTIONS[w && w.type];
+        return '<div class="warning-item">' + (known || esc(w && w.message)) + '</div>';
       }).join('');
     } else {
       warnCard.style.display = 'none';
     }
 
+    renderPrivacy(data);
+    renderExtensionBlock(data);
     renderNightStatus(data);
   }).catch(function() {
     document.getElementById('status-badge').innerHTML = '<span class="status-dot err"></span> Offline';
@@ -464,6 +544,15 @@ function loadHealth() {
     td.className = 'traffic-dot red';
     tt.textContent = 'Server Offline';
     tdet.textContent = 'Cannot connect. Make sure the Awana Print window is open.';
+    // Say "unknown", never "encrypted". A stale green banner on an unreachable
+    // server is a claim about privacy we cannot currently stand behind.
+    var pb = document.getElementById('privacy-banner');
+    if (pb) {
+      pb.className = 'traffic-light yellow';
+      document.getElementById('privacy-dot').className = 'traffic-dot yellow';
+      document.getElementById('privacy-text').textContent = 'Unknown — server offline';
+      document.getElementById('privacy-detail').textContent = 'Cannot tell whether names are encrypted until the server answers.';
+    }
   });
 }
 
@@ -742,6 +831,73 @@ function statusRow(icon, label, detail) {
   return '<div class="diag-item"><span class="diag-icon">' + esc(icon) + '</span><span>' + esc(label) + '</span><span class="diag-detail">' + esc(detail || '') + '</span></div>';
 }
 
+// ── Front-page privacy banner ────────────────────────────────────────────────
+// Answers one question without a click: are children's first names leaving this
+// PC encrypted? Three states, and "no Pusher at all" is deliberately NOT a
+// warning — a church with no welcome screen has nothing to encrypt.
+function renderPrivacy(h) {
+  var card = document.getElementById('privacy-card');
+  var banner = document.getElementById('privacy-banner');
+  var dot = document.getElementById('privacy-dot');
+  var text = document.getElementById('privacy-text');
+  var detail = document.getElementById('privacy-detail');
+  if (!card) return;
+
+  var pusherOn = h.pusher && h.pusher.configured;
+  if (!pusherOn) {
+    banner.className = 'traffic-light green';
+    dot.className = 'traffic-dot green';
+    text.textContent = 'No welcome screen connected';
+    detail.textContent = 'Nothing is being broadcast, so there are no names to protect. Set up Pusher first if you want the lobby TV.';
+    return;
+  }
+
+  if (h.displayKeyConfigured) {
+    banner.className = 'traffic-light green';
+    dot.className = 'traffic-dot green';
+    text.textContent = '🔒 Names are encrypted';
+    detail.textContent = 'Key ' + (h.displayKeyId || '?') + ' — only screens holding this exact key can read names. '
+      + 'Press "Test Night Systems" to confirm each screen still can.';
+  } else {
+    banner.className = 'traffic-light red';
+    dot.className = 'traffic-dot red';
+    text.textContent = '⚠ Names are NOT encrypted';
+    detail.textContent = "The Pusher channel is public: anyone who views a screen's page source can subscribe from anywhere "
+      + "and read every child's first name. Press “Set up the display key” above — it takes about a minute.";
+  }
+}
+
+// ── Managed extension folder ─────────────────────────────────────────────────
+// Only rendered when the Electron shell reported a folder. A standalone
+// `node server.js` has no managed copy, and inventing a path there would send
+// someone to a folder that does not exist.
+function renderExtensionBlock(h) {
+  var block = document.getElementById('extension-block');
+  var pathBox = document.getElementById('extension-path');
+  if (!block) return;
+  var ext = h.extension;
+  if (!ext || !ext.dir) { block.style.display = 'none'; return; }
+  block.style.display = 'block';
+  pathBox.textContent = ext.dir;
+  pathBox.title = ext.version ? 'Extension v' + ext.version : '';
+}
+
+function copyExtensionPath() {
+  var pathBox = document.getElementById('extension-path');
+  var note = document.getElementById('extension-copy-note');
+  var value = pathBox.textContent.trim();
+  if (!value || value === '—') return;
+  var done = function() {
+    note.textContent = 'Copied — paste it into the Load unpacked dialog.';
+    setTimeout(function() { note.textContent = ''; }, 4000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(done, function() { note.textContent = 'Copy failed — select the path above.'; });
+  } else {
+    note.textContent = 'Select the path above and copy it.';
+  }
+}
+
 function renderNightStatus(h) {
   var el = document.getElementById('night-status');
   var rows = '';
@@ -845,6 +1001,8 @@ loadRoster();
 loadHistory();
 loadTonightStats();
 loadSettings();
+// After loadSettings() so the key state is already painted when we scroll to it.
+applyHashRoute();
 
 // Refresh periodically
 setInterval(loadHealth, 10000);

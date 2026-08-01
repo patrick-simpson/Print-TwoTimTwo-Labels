@@ -7,6 +7,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const { runMigration, removeShortcuts } = require('./src/migrate');
 const configStore = require('./src/config-store');
+const extensionSync = require('./src/extension-sync');
 
 // ── Safe external opens ───────────────────────────────────────────────────────
 // shell.openExternal() hands its argument to the OS handler, so on Windows a
@@ -85,6 +86,32 @@ let serverState = { status: 'starting', error: null };
 // upToDate is set by an explicit check that found nothing, so the UI can say
 // "✓ up to date" instead of silently doing nothing.
 let updateState = { checking: false, available: null, downloaded: null, percent: null, upToDate: false };
+// The managed copy of the Chrome extension — see src/extension-sync.js. Filled
+// in once at startup and then reported verbatim to the tray, the settings
+// window and /health, so the folder the operator must load unpacked is never
+// something they have to go hunting for.
+let extensionState = { action: 'skipped', version: null, targetDir: null };
+
+// ─── Chrome extension ────────────────────────────────────────────────────────
+
+// One stable path, deliberately NOT inside resources/: an app update replaces
+// resources/ wholesale, and Chrome would be left pointing at a folder that
+// vanished. userData survives every update and every uninstall-reinstall.
+const EXTENSION_DIR = path.join(app.getPath('userData'), 'chrome-extension');
+
+function syncBundledExtension() {
+  const sourceDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'chrome-extension')
+    : path.join(__dirname, '..', 'chrome-extension');
+  extensionState = extensionSync.syncExtension({ sourceDir, targetDir: EXTENSION_DIR });
+  const { action, version, error } = extensionState;
+  if (error) {
+    console.warn(`[extension] ${action}: ${error}`);
+  } else {
+    console.log(`[extension] ${action} v${version} at ${EXTENSION_DIR}`);
+  }
+  return extensionState;
+}
 
 // ─── Config helpers ─────────────────────────────────────────────────────────
 
@@ -262,6 +289,15 @@ function buildTray(config) {
     label: config.printerName ? 'Settings' : 'Finish Setup…',
     click: () => createSetupWindow()
   });
+  if (extensionState.targetDir && extensionState.action !== 'skipped') {
+    template.push({
+      // "Load unpacked" wants a folder, and a folder is exactly the thing a
+      // file dialog is worst at finding. Open it in Explorer so the operator
+      // can drag it onto the dialog or paste the path from the title bar.
+      label: 'Open Chrome extension folder',
+      click: () => shell.openPath(extensionState.targetDir)
+    });
+  }
 
   // Update status: always show exactly where the auto-updater is.
   if (autoUpdater && app.isPackaged) {
@@ -396,6 +432,7 @@ function startServer(config) {
     if (serverModule.applySavedConfig) serverModule.applySavedConfig(loadConfig() || {});
     serverModule.setUpdateHandler(() => installUpdateNow());
     if (updateState.available) serverModule.setLatestVersion(updateState.available);
+    if (serverModule.setExtensionInfo) serverModule.setExtensionInfo(extensionState);
     serverInstance = serverModule.startListening();
     serverState = { status: 'running', error: null };
     console.log('[server] Print server started from', fullServerDir);
@@ -506,6 +543,14 @@ ipcMain.handle('enable-phone-checkin', async () => {
 
 ipcMain.handle('install-update', () => { installUpdateNow(); return { ok: true }; });
 
+ipcMain.handle('get-extension-info', () => ({ ...extensionState }));
+
+ipcMain.handle('open-extension-folder', () => {
+  if (!extensionState.targetDir) return { ok: false, error: 'no managed extension folder' };
+  shell.openPath(extensionState.targetDir);
+  return { ok: true, path: extensionState.targetDir };
+});
+
 // The Settings window's "Start Server" button. Unconditional restart rather
 // than probe-first: the person clicking it believes the server is down, and a
 // restart of a healthy server is cheap and harmless.
@@ -543,6 +588,11 @@ app.whenReady().then(async () => {
   const migration = runMigration(app.getPath('userData'));
 
   await resolvePortConflict();
+
+  // Before the server starts, so the very first /health already reports the
+  // folder and version. An update landed this launch; the operator should be
+  // told about the owed Chrome restart from the moment the page loads.
+  syncBundledExtension();
 
   const config = loadConfig() || {};
   currentConfig = config;

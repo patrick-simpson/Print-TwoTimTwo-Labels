@@ -120,6 +120,18 @@ async function main() {
   const configFile = path.join(dataDir, 'config.json');
   const onDisk = () => JSON.parse(fs.readFileSync(configFile, 'utf8'));
 
+  // Every /health warning must be a {type, message} OBJECT. The dashboard
+  // renders `w.message`, so a bare string arrived as undefined and painted an
+  // EMPTY yellow box — the loudest warnings in the codebase were the invisible
+  // ones. Read warnings through here so a slip back to strings shows up as a
+  // named failure rather than a silently-never-matching regex.
+  const warningTexts = (warnings) => (warnings || []).map((w) => {
+    check('every /health warning is a {type, message} object',
+      w && typeof w === 'object' && typeof w.type === 'string' && typeof w.message === 'string',
+      JSON.stringify(w));
+    return (w && w.message) || '';
+  });
+
   // ── 1. Unkeyed: plaintext, and loudly said so ──────────────────────────────
   console.log('\nrealtime: with no display key');
   {
@@ -127,7 +139,10 @@ async function main() {
     check('/health reports no display key', h.body.displayKeyConfigured === false);
     check('/health reports it is not encrypting', h.body.encryptingNames === false);
     check('/health warns that names are unencrypted',
-      (h.body.warnings || []).some((w) => /unencrypted/i.test(w)),
+      warningTexts(h.body.warnings).some((w) => /unencrypted/i.test(w)),
+      JSON.stringify(h.body.warnings));
+    check('and the warning names the exact place to fix it',
+      warningTexts(h.body.warnings).some((w) => /Settings . Realtime privacy/i.test(w)),
       JSON.stringify(h.body.warnings));
 
     await post('/print', { firstName: 'Amy', lastName: 'Tester', clubName: 'Sparks' });
@@ -211,7 +226,7 @@ async function main() {
     check('/health NEVER exposes the key itself',
       !JSON.stringify(h.body).includes(KEY));
     check('/health stops warning once encrypted',
-      !(h.body.warnings || []).some((w) => /unencrypted/i.test(w)),
+      !warningTexts(h.body.warnings).some((w) => /unencrypted/i.test(w)),
       JSON.stringify(h.body.warnings));
 
     const canary = await post('/canary', { printerName: 'Fake' });
@@ -252,7 +267,7 @@ async function main() {
     // warning is derived from the LIVE `config` object at request time — exactly
     // the thing the Object.assign bug left stale. With lanAccess on, /health warns
     // if and only if the live config has no acceptable PIN.
-    const pinWarning = async () => ((await j('/health')).body.warnings || [])
+    const pinWarning = async () => warningTexts((await j('/health')).body.warnings)
       .some((w) => /no PIN is set/i.test(w));
     await post('/config', { lanAccess: true, phonePin: '4821' });
     check('with LAN on and a PIN set, /health does not warn about the PIN',
