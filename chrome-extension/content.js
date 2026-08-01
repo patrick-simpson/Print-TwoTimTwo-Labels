@@ -1068,16 +1068,43 @@
     pill.addEventListener('mouseenter', function() { pill.style.background = '#43a047'; });
     pill.addEventListener('mouseleave', function() { pill.style.background = '#4caf50'; });
 
+    // Where the widget sits, in one place. The panel's max-height is derived
+    // from these, so the "how far down the page" and "how tall may it be"
+    // numbers can never drift apart.
+    const PANEL_TOP = 55;   // clears TwoTimTwo's two nav bars
+    const PANEL_GAP = 12;   // breathing room at the bottom edge
+
     // ── Expanded state: full panel ──
     const panel = document.createElement('div');
     panel.id = 'awana-panel';
+    // A COLUMN BOUNDED BY THE VIEWPORT, not a box that grows without limit.
+    //
+    // This used to be `overflow: hidden` with no height cap, on a widget fixed at
+    // top:55px with nothing constraining it either. So the moment the panel grew
+    // taller than the screen — which is exactly what ticking "Also register in
+    // TwoTimTwo" does, revealing four more controls — the overflow was CLIPPED
+    // with no scrollbar. On a laptop at the check-in table the Print button and
+    // the registration fields simply became unreachable, mid-check-in, with no
+    // way to get at them.
+    //
+    // Now: the header stays pinned, the body scrolls, and the whole thing can
+    // never exceed the space between the site's nav bar and the bottom of the
+    // window.
     Object.assign(panel.style, {
       background: '#ffffff',
       border: '1px solid #c8e6c9',
       borderRadius: '8px',
-      boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+      boxShadow: '0 6px 20px rgba(15, 23, 42, 0.12)',
       overflow: 'hidden',
-      minWidth: '240px'
+      minWidth: '260px',
+      width: '320px',
+      maxWidth: 'calc(100vw - 24px)',
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'relative',   // positioning context for the "more below" fade
+      // Cannot outgrow the viewport: PANEL_TOP is where the widget is pinned,
+      // plus a matching gap at the bottom so it never kisses the taskbar.
+      maxHeight: 'calc(100vh - ' + (PANEL_TOP + PANEL_GAP) + 'px)'
     });
 
     // Panel header (purple bar with title + close X)
@@ -1088,7 +1115,10 @@
       justifyContent: 'space-between',
       padding: '8px 12px',
       background: '#4caf50',
-      color: '#ffffff'
+      color: '#ffffff',
+      // Never squeezed by a long body — the close button must always be
+      // reachable, which is the escape hatch when anything else goes wrong.
+      flex: '0 0 auto'
     });
 
     const headerLeft = document.createElement('div');
@@ -1121,7 +1151,20 @@
 
     // Panel body
     const panelBody = document.createElement('div');
-    Object.assign(panelBody.style, { padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' });
+    panelBody.id = 'awana-panel-body';
+    Object.assign(panelBody.style, {
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px',
+      // THE FIX: this is the scroll container. flex:1 1 auto lets it take the
+      // remaining height under the pinned header and no more.
+      flex: '1 1 auto',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      overscrollBehavior: 'contain',  // scrolling to the end must not scroll the page behind
+      scrollbarGutter: 'stable'       // no content jump when the scrollbar appears
+    });
 
     // Controls row
     const controls = document.createElement('div');
@@ -1352,9 +1395,19 @@
     var registerFields = document.createElement('div');
     registerFields.id = 'awana-register-fields';
     Object.assign(registerFields.style, {
-      display: 'none', flexDirection: 'column', gap: '4px',
-      padding: '6px', background: '#f8fafc', borderRadius: '6px',
+      display: 'none', flexDirection: 'column', gap: '6px',
+      padding: '10px', background: '#f8fafc', borderRadius: '8px',
       border: '1px solid #e2e8f0'
+    });
+
+    // Says what the four boxes are for and that all of them are needed. The
+    // register call refuses without every field, and previously said so only
+    // AFTER the operator pressed Print — at the door, with a child waiting.
+    var registerHint = document.createElement('div');
+    registerHint.textContent = 'All four are required by TwoTimTwo';
+    Object.assign(registerHint.style, {
+      fontSize: '10px', color: '#94a3b8', fontWeight: '600',
+      letterSpacing: '0.02em', marginBottom: '1px'
     });
 
     function regFieldInput(placeholder, type) {
@@ -1424,10 +1477,20 @@
     registerStatus.id = 'awana-register-status';
     Object.assign(registerStatus.style, { fontSize: '10px', color: '#94a3b8' });
 
-    registerFields.append(guardianInput, phoneInput, birthdateInput, genderGradeRow, registerStatus);
+    registerFields.append(registerHint, guardianInput, phoneInput, birthdateInput, genderGradeRow, registerStatus);
 
     registerCb.addEventListener('change', function() {
       registerFields.style.display = registerCb.checked ? 'flex' : 'none';
+      // Scroll the revealed form into view. The panel scrolls now, but a form
+      // that appears below the fold on an unchanged-looking panel is the same
+      // "where did it go" problem wearing a different hat.
+      if (registerCb.checked) {
+        try {
+          registerFields.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          guardianInput.focus({ preventScroll: true });
+        } catch (e) { /* older browsers: the panel still scrolls by hand */ }
+      }
+      updateScrollFade();
     });
 
     function setRegisterStatus(text, color) {
@@ -2039,18 +2102,71 @@
       queueBadge, reconcileRow, csvStatus, csvWarningBanner, updateRow,
       divider(), soundRow, helpBtn
     );
-    panel.append(panelHeader, panelBody);
+    // A scrollbar the operator can actually SEE. A body that scrolls but shows
+    // no affordance looks identical to content that is cut off — which is the
+    // impression this panel gave before, and the reason nobody tried scrolling.
+    if (!document.getElementById('awana-panel-scroll-style')) {
+      var scrollStyle = document.createElement('style');
+      scrollStyle.id = 'awana-panel-scroll-style';
+      scrollStyle.textContent =
+        '#awana-panel-body{scrollbar-width:thin;scrollbar-color:#cbd5e1 transparent;}' +
+        '#awana-panel-body::-webkit-scrollbar{width:8px;}' +
+        '#awana-panel-body::-webkit-scrollbar-track{background:transparent;}' +
+        '#awana-panel-body::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px;' +
+        'border:2px solid #ffffff;}' +
+        '#awana-panel-body::-webkit-scrollbar-thumb:hover{background:#94a3b8;}';
+      document.head.appendChild(scrollStyle);
+    }
+
+    var scrollFade = document.createElement('div');
+    Object.assign(scrollFade.style, {
+      position: 'absolute', left: '1px', right: '1px', bottom: '0',
+      height: '26px', pointerEvents: 'none', opacity: '0',
+      transition: 'opacity 0.15s ease',
+      borderRadius: '0 0 8px 8px',
+      background: 'linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.96))'
+    });
+
+    // Shown only when there is genuinely more below, so it never lies about
+    // content that is not there.
+    function updateScrollFade() {
+      var moreBelow = panelBody.scrollHeight - panelBody.scrollTop - panelBody.clientHeight > 4;
+      scrollFade.style.opacity = moreBelow ? '1' : '0';
+    }
+    panelBody.addEventListener('scroll', updateScrollFade, { passive: true });
+    // Content grows and shrinks as sections expand (the register form) and as
+    // the roster loads, so recompute on size changes rather than only on scroll.
+    if (typeof ResizeObserver === 'function') {
+      try { new ResizeObserver(updateScrollFade).observe(panelBody); } catch (e) { /* ignore */ }
+    }
+    window.addEventListener('resize', updateScrollFade);
+    setTimeout(updateScrollFade, 0);
+
+    panel.append(panelHeader, panelBody, scrollFade);
     widget.append(pill, panel);
 
     // ── Mount: fixed overlay on the right, below the site nav bars ──
-    Object.assign(widget.style, { position: 'fixed', top: '55px', right: '12px', zIndex: '99999' });
+    Object.assign(widget.style, {
+      position: 'fixed',
+      top: PANEL_TOP + 'px',
+      right: PANEL_GAP + 'px',
+      zIndex: '99999',
+      // Bound here too, so the widget itself can never be taller than the
+      // screen even if a future child ignores the panel's own cap.
+      maxHeight: 'calc(100vh - ' + (PANEL_TOP + PANEL_GAP) + 'px)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-end'
+    });
     document.body.appendChild(widget);
 
     // ── Toggle logic ──
     function applyMinimized(min) {
       isMinimized = min;
       pill.style.display = min ? 'flex' : 'none';
-      panel.style.display = min ? 'none' : 'block';
+      // 'flex', not 'block': the panel is a flex column (pinned header +
+      // scrolling body), and restoring it as a block would drop that layout.
+      panel.style.display = min ? 'none' : 'flex';
       localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
     }
 
