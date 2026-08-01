@@ -2,6 +2,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } = 
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const http = require('http');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const { runMigration, removeShortcuts } = require('./src/migrate');
@@ -78,7 +79,12 @@ let currentConfig = null;
 // Surfaced in the tray and settings window — a broken server must be SEEN,
 // never silently degraded (the old slim-fallback path hid exactly this).
 let serverState = { status: 'starting', error: null };
-let updateState = { available: null, downloaded: null };
+// Full update lifecycle, surfaced in the tray AND the settings window so
+// "is this thing updating itself?" is answerable at a glance:
+//   checking → available (downloading, percent) → downloaded (restart to apply)
+// upToDate is set by an explicit check that found nothing, so the UI can say
+// "✓ up to date" instead of silently doing nothing.
+let updateState = { checking: false, available: null, downloaded: null, percent: null, upToDate: false };
 
 // ─── Config helpers ─────────────────────────────────────────────────────────
 
@@ -108,20 +114,48 @@ try {
   console.warn('[update] electron-updater unavailable:', e.message);
 }
 
+// Rebuild the tray to reflect current server/update state. Safe to call from
+// any event handler: no-ops until the initial buildTray has run.
+function refreshTray() {
+  if (tray && currentConfig) buildTray(currentConfig);
+}
+
 function setupAutoUpdater() {
   if (!autoUpdater || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;  // never force a restart mid-club-night
 
+  autoUpdater.on('checking-for-update', () => {
+    updateState.checking = true;
+    refreshTray();
+  });
   autoUpdater.on('update-available', (info) => {
+    updateState.checking = false;
     updateState.available = info.version;
+    updateState.upToDate = false;
     if (serverModule && serverModule.setLatestVersion) serverModule.setLatestVersion(info.version);
+    refreshTray();  // shows "Downloading update vX…"
+  });
+  autoUpdater.on('update-not-available', () => {
+    updateState.checking = false;
+    updateState.available = null;
+    updateState.upToDate = true;
+    refreshTray();  // shows "✓ Up to date"
+  });
+  autoUpdater.on('download-progress', (p) => {
+    // Settings window polls this via get-server-state; no tray rebuild per tick.
+    updateState.percent = Math.round(p.percent || 0);
   });
   autoUpdater.on('update-downloaded', (info) => {
+    updateState.checking = false;
     updateState.downloaded = info.version;
-    if (currentConfig) buildTray(currentConfig);  // adds "Restart to update"
+    refreshTray();  // adds "Restart to update"
   });
-  autoUpdater.on('error', (e) => console.warn('[update] ', e && e.message));
+  autoUpdater.on('error', (e) => {
+    updateState.checking = false;
+    console.warn('[update] ', e && e.message);
+    refreshTray();
+  });
 
   const check = () => autoUpdater.checkForUpdates().catch(() => { /* offline is fine */ });
   check();
@@ -201,38 +235,52 @@ function buildTray(config) {
 
   const failed = serverState.status === 'failed';
   tray.setToolTip(failed
-    ? 'Awana Label Printer  •  SERVER FAILED — click for details'
-    : `Awana Label Printer  •  ${config.printerName}`);
+    ? 'Awana Label Printer  •  SERVER NOT RUNNING — click to start it'
+    : `Awana Label Printer  •  ${config.printerName || 'system default printer'}`);
 
   const template = [
-    { label: 'Awana Label Printer', enabled: false },
+    { label: `Awana Label Printer v${app.getVersion()}`, enabled: false },
     failed
-      ? { label: '⚠ Print server FAILED — open Settings', click: () => createSetupWindow() }
-      : { label: `Printer: ${config.printerName}`, enabled: false },
+      ? { label: '⚠ Print server NOT RUNNING — open Settings', click: () => createSetupWindow() }
+      : { label: `Printer: ${config.printerName || '(system default)'}`, enabled: false },
     { label: `Server: http://localhost:${PORT}`, enabled: false },
     { type: 'separator' },
     {
-      label: 'Open Check-in Page',
-      click: () => openExternalSafely(config.checkinUrl, 'tray menu')
-    },
-    {
-      label: 'Settings',
-      click: () => createSetupWindow()
+      // The easy button. When the server is down this (re)starts it in one
+      // click; when it's up, it's a harmless restart for "when in doubt".
+      label: failed ? '▶ Start print server' : 'Restart print server',
+      click: () => startServer(currentConfig || loadConfig() || {})
     },
   ];
+  if (config.checkinUrl) {
+    template.push({
+      label: 'Open Check-in Page',
+      click: () => openExternalSafely(config.checkinUrl, 'tray menu')
+    });
+  }
+  template.push({
+    label: config.printerName ? 'Settings' : 'Finish Setup…',
+    click: () => createSetupWindow()
+  });
 
-  if (updateState.downloaded) {
+  // Update status: always show exactly where the auto-updater is.
+  if (autoUpdater && app.isPackaged) {
     template.push({ type: 'separator' });
-    template.push({
-      label: `Restart to update to v${updateState.downloaded}`,
-      click: () => installUpdateNow()
-    });
-  } else if (autoUpdater && app.isPackaged) {
-    template.push({ type: 'separator' });
-    template.push({
-      label: 'Check for updates',
-      click: () => autoUpdater.checkForUpdates().catch(() => { /* offline */ })
-    });
+    if (updateState.downloaded) {
+      template.push({
+        label: `⬇ Restart to update to v${updateState.downloaded}`,
+        click: () => installUpdateNow()
+      });
+    } else if (updateState.available) {
+      template.push({ label: `Downloading update v${updateState.available}…`, enabled: false });
+    } else if (updateState.checking) {
+      template.push({ label: 'Checking for updates…', enabled: false });
+    } else {
+      template.push({
+        label: updateState.upToDate ? `✓ Up to date — check again` : 'Check for updates',
+        click: () => autoUpdater.checkForUpdates().catch(() => { /* offline */ })
+      });
+    }
   }
 
   template.push({ type: 'separator' });
@@ -340,6 +388,12 @@ function startServer(config) {
     const fullServerPath = path.join(fullServerDir, 'server.js');
     if (config.printerName) process.env.PRINTER_NAME = config.printerName;
     serverModule = require(fullServerPath);
+    // The require cache keeps this module alive across restarts, so its
+    // load-time state (printer name from env, config.json snapshot) goes
+    // stale the moment settings change — and is EMPTY when the server starts
+    // before first-time setup. Push the current truth into the live module.
+    if (serverModule.setPrinterName) serverModule.setPrinterName(config.printerName || '');
+    if (serverModule.applySavedConfig) serverModule.applySavedConfig(loadConfig() || {});
     serverModule.setUpdateHandler(() => installUpdateNow());
     if (updateState.available) serverModule.setLatestVersion(updateState.available);
     serverInstance = serverModule.startListening();
@@ -355,6 +409,30 @@ function startServer(config) {
     );
   }
   if (currentConfig) buildTray(currentConfig);
+}
+
+// True when something is actually answering on the server port — the ground
+// truth "is it running?", regardless of what this process thinks it started.
+function probeServer(timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: '127.0.0.1', port: PORT, path: '/health', timeout: timeoutMs },
+      (res) => { res.resume(); resolve(res.statusCode === 200); }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+// Launching the app is the operator's "make it work" gesture — every entry
+// point (fresh launch, second launch via the desktop shortcut, the Start
+// Server button) funnels through here: if nothing answers on the port, start
+// the server.
+async function ensureServerRunning(context) {
+  if (await probeServer()) return true;
+  console.log(`[server] Nothing answering on port ${PORT} (${context}) — starting the print server.`);
+  startServer(currentConfig || loadConfig() || {});
+  return false;
 }
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
@@ -428,6 +506,30 @@ ipcMain.handle('enable-phone-checkin', async () => {
 
 ipcMain.handle('install-update', () => { installUpdateNow(); return { ok: true }; });
 
+// The Settings window's "Start Server" button. Unconditional restart rather
+// than probe-first: the person clicking it believes the server is down, and a
+// restart of a healthy server is cheap and harmless.
+ipcMain.handle('start-server', () => {
+  startServer(currentConfig || loadConfig() || {});
+  return { ...serverState };
+});
+
+// Explicit update check with a real answer. checkForUpdates() resolves after
+// the feed is fetched, so the event handlers above have already stamped
+// updateState by the time we return it.
+ipcMain.handle('check-for-updates', async () => {
+  if (!autoUpdater || !app.isPackaged) {
+    return { supported: false, ...updateState };
+  }
+  updateState.upToDate = false;
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (e) {
+    updateState.checking = false;  // offline — leave upToDate false, no lie
+  }
+  return { supported: true, ...updateState };
+});
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.setAppUserModelId('com.kvbc.awana-label-printer');
@@ -442,19 +544,25 @@ app.whenReady().then(async () => {
 
   await resolvePortConflict();
 
-  const config = loadConfig();
+  const config = loadConfig() || {};
   currentConfig = config;
-  if (!config || !config.printerName) {
+
+  // The server starts on EVERY launch — including the very first one, before
+  // setup has been completed. Pre-5.5 the server didn't exist until the
+  // wizard was saved, so "I installed it and nothing is listening" was the
+  // designed behaviour. Without a configured printer it prints to the system
+  // default until the wizard save restarts it with the chosen one.
+  applyLoginItemSettings(config);
+  startServer(config);
+  buildTray(config);
+
+  if (!config.printerName) {
     // First run — show setup wizard (prefilled from legacy config if migrated)
     createSetupWindow();
-  } else {
-    // Already configured — go straight to tray
-    applyLoginItemSettings(config);
-    startServer(config);
-    buildTray(config);
+  } else if (!isAutoStart) {
     // On login-item auto-start stay silent; only open the browser when a
     // person launched the app.
-    if (!isAutoStart) openExternalSafely(config.checkinUrl, 'startup');
+    openExternalSafely(config.checkinUrl, 'startup');
   }
 
   // Legacy shortcuts re-launch the old script install on every boot and fight
@@ -473,7 +581,13 @@ app.whenReady().then(async () => {
   }
 });
 
-app.on('second-instance', () => createSetupWindow());
+app.on('second-instance', () => {
+  // The operator double-clicked the shortcut while the app was already in the
+  // tray — almost always because "it isn't printing". Make sure the server is
+  // actually up, not just assumed up, then show the window.
+  ensureServerRunning('app relaunched');
+  createSetupWindow();
+});
 
 // Keep process alive for the tray when all windows are closed
 app.on('window-all-closed', () => {

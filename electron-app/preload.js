@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('awana', {
   getServerState:     ()       => ipcRenderer.invoke('get-server-state'),
   getLanAddress:      ()       => ipcRenderer.invoke('get-lan-address'),
   enablePhoneCheckin: ()       => ipcRenderer.invoke('enable-phone-checkin'),
-  installUpdate:      ()       => ipcRenderer.invoke('install-update')
+  installUpdate:      ()       => ipcRenderer.invoke('install-update'),
+  startServer:        ()       => ipcRenderer.invoke('start-server'),
+  checkForUpdates:    ()       => ipcRenderer.invoke('check-for-updates')
 });
