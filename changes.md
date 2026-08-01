@@ -1,22 +1,12 @@
-﻿
-﻿## [5.5.0] - 2026-08-01
-The server now starts on every launch of the app — including the very first one — plus a one-click Start Server button everywhere, an always-visible update status, club logos that print crisp instead of speckled, and a check-in panel that no longer traps you when you tick "Also register in TwoTimTwo".
-
-### The server starts the moment the app does
-Field testing surfaced the gap: install the app, and nothing is listening on port 3456 until the setup wizard is completed — the server literally did not exist before "Save & Start" was clicked. Now the print server starts on every launch, first run included. Before setup it prints to the system default printer; the wizard save restarts it with the chosen one. The tray icon and its status appear immediately too, and first-run also registers the launch-on-boot entry (the wizard checkbox can still turn it off), so an installed machine comes back up printing after a reboot even if setup was interrupted.
-
-Because the server module is require-cached across these restarts, its load-time printer name and config snapshot went stale the moment settings changed — with a pre-setup start it would have been frozen EMPTY. The Electron shell now pushes the saved printer and the merged config.json into the live module (`setPrinterName()` + `applySavedConfig()`) on every restart, the same live-sync rule that fixed the stale-PIN bug.
-
-### Launching the app IS the fix
-Double-clicking the desktop shortcut while the app was already in the tray used to just open the settings window. It now health-probes port 3456 first and starts the server if nothing answers — the operator's natural "it isn't printing" gesture actually repairs the situation. The same one-click start lives in the tray menu ("▶ Start print server" when it's down, "Restart print server" when it's up) and as a green **▶ Start Server** button right in the settings window's failure card.
-
-### Auto-update you can see
-The updater worked but was invisible until a download had already finished. The tray now always shows the installed version and exactly where the updater is: "Checking…", "Downloading update vX…", "⬇ Restart to update to vX", or "✓ Up to date". The settings window gained a permanent version card with a **Check for Updates** button that answers out loud — newest version, downloading (with percent), ready to restart, or can't reach the update server. `runAfterFinish` is now pinned explicitly in the NSIS config so install → app launches → server up stays true by contract, not by default.
-
-### Club logos print crisp instead of speckled
-The photo evidence: Sparks and T&T logos printing as pixelated mush. Root cause was in the extension — it captured every club image onto a fixed 64×64 canvas, and the label renderer then blew that up to a ~317-pixel icon zone (76pt at 300 DPI), a 5× upscale whose blurry edges the 1-bit thermal printer dithered into speckle. The extension now captures at up to 320px (never above the image's own resolution), and the renderer refuses to upscale any logo more than 2× — below that it falls back to the solid-ink monogram badge, which prints crisp, and keeps the club name in the text area since initials alone don't identify the club. Rejecting a too-small logo beats printing an unrecognizable one; update the extension to get real logos back at full quality.
-
+﻿## [5.5.1] - 2026-08-01
 The check-in panel no longer traps you when you tick "Also register in TwoTimTwo".
+
+> Split out of 5.5.0 rather than folded into it: v5.5.0 was already tagged and
+> published — `.exe` and all — before this fix merged, so claiming it there
+> would have described a release that does not contain it. The tag is not
+> reusable either (republishing reuses the old ref, so the build would never
+> pick up the new commit), which is why this is a new version rather than a
+> re-cut.
 
 ### The panel could grow past the bottom of the screen with no way to scroll
 Ticking **Also register in TwoTimTwo** reveals four more controls — guardian name, guardian phone, birthdate, and gender/grade. On a laptop at the check-in table that pushed the panel past the bottom of the window, and because the panel was `overflow: hidden` with no height limit and sat in a widget pinned at `top: 55px` with nothing constraining it either, the overflow was simply **clipped**. No scrollbar, no way to reach the fields — mid-check-in, with a child at the door.
@@ -34,6 +24,26 @@ Three things beyond the raw fix, because "it technically scrolls now" would not 
 Also: the panel is wider (320px), which stops "Night Test" and "Quick Mode" wrapping onto two lines; the scrollbar gutter is reserved so content does not jump when it appears; scrolling to the end no longer scrolls the page behind it; and restoring the panel after minimising keeps the column layout instead of collapsing back to a plain block.
 
 Verified in a real browser at 1280x700 by injecting the actual content script: the panel stays inside the viewport with the form open, the body scrolls to its end, the grade selector and the close button are both reachable, and the fade appears and clears correctly. The same script run against the previous code reproduces the original overflow, so the test genuinely covers the reported bug.
+
+
+## [5.5.0] - 2026-08-01
+The server now starts on every launch of the app — including the very first one — plus a one-click Start Server button everywhere, an always-visible update status, and club logos that print crisp instead of speckled.
+
+### The server starts the moment the app does
+Field testing surfaced the gap: install the app, and nothing is listening on port 3456 until the setup wizard is completed — the server literally did not exist before "Save & Start" was clicked. Now the print server starts on every launch, first run included. Before setup it prints to the system default printer; the wizard save restarts it with the chosen one. The tray icon and its status appear immediately too, and first-run also registers the launch-on-boot entry (the wizard checkbox can still turn it off), so an installed machine comes back up printing after a reboot even if setup was interrupted.
+
+Because the server module is require-cached across these restarts, its load-time printer name and config snapshot went stale the moment settings changed — with a pre-setup start it would have been frozen EMPTY. The Electron shell now pushes the saved printer and the merged config.json into the live module (`setPrinterName()` + `applySavedConfig()`) on every restart, the same live-sync rule that fixed the stale-PIN bug.
+
+### Launching the app IS the fix
+Double-clicking the desktop shortcut while the app was already in the tray used to just open the settings window. It now health-probes port 3456 first and starts the server if nothing answers — the operator's natural "it isn't printing" gesture actually repairs the situation. The same one-click start lives in the tray menu ("▶ Start print server" when it's down, "Restart print server" when it's up) and as a green **▶ Start Server** button right in the settings window's failure card.
+
+### Auto-update you can see
+The updater worked but was invisible until a download had already finished. The tray now always shows the installed version and exactly where the updater is: "Checking…", "Downloading update vX…", "⬇ Restart to update to vX", or "✓ Up to date". The settings window gained a permanent version card with a **Check for Updates** button that answers out loud — newest version, downloading (with percent), ready to restart, or can't reach the update server. `runAfterFinish` is now pinned explicitly in the NSIS config so install → app launches → server up stays true by contract, not by default.
+
+### Club logos print crisp instead of speckled
+The photo evidence: Sparks and T&T logos printing as pixelated mush. Root cause was in the extension — it captured every club image onto a fixed 64×64 canvas, and the label renderer then blew that up to a ~317-pixel icon zone (76pt at 300 DPI), a 5× upscale whose blurry edges the 1-bit thermal printer dithered into speckle. The extension now captures at up to 320px (never above the image's own resolution), and the renderer refuses to upscale any logo more than 2× — below that it falls back to the solid-ink monogram badge, which prints crisp, and keeps the club name in the text area since initials alone don't identify the club. Rejecting a too-small logo beats printing an unrecognizable one; update the extension to get real logos back at full quality.
+
+The check-in panel no longer traps you when you tick "Also register in TwoTimTwo".
 
 ## [5.4.0] - 2026-08-01
 Children's names are encrypted on the realtime channel. Plus volunteer training mode, a child-identity fix, two config-loss bugs, and CI that actually runs the tests.
