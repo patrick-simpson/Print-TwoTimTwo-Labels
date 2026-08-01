@@ -68,10 +68,17 @@ export const InstallGuide: React.FC = () => {
             </p>
           </div>
           <p>
-            The app opens a one-page setup: pick your label printer, confirm your church's check-in
-            URL, and click <strong>Save &amp; Start</strong>. It then lives in the system tray (near the
-            clock), starts automatically when the PC boots, prints a test label on demand, and{' '}
+            The print server starts the moment the app opens — even before setup is finished. The
+            one-page setup asks you to pick your label printer, confirm your church's check-in URL,
+            and click <strong>Save &amp; Start</strong>. The app then lives in the system tray (near
+            the clock), starts automatically when the PC boots, prints a test label on demand, and{' '}
             <strong>updates itself</strong> — no more re-running installers.
+          </p>
+          <p className="text-xs text-slate-500">
+            Server not running for any reason? Just launch <strong>Awana Label Printer</strong> from
+            the desktop or Start menu again — every launch checks the server and starts it if it's
+            down. There's also a <strong>▶ Start print server</strong> button in the tray menu and in
+            Settings.
           </p>
           <p className="text-xs text-slate-500">
             If Windows asks about network access after setup, click <strong>Allow</strong> — that's what

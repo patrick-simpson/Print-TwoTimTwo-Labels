@@ -33,7 +33,15 @@ const os    = require('os');
 // hardcode, so it stays the default. AWANA_PORT exists only so the test suite
 // can bind somewhere else without colliding with a real install on the machine.
 const PORT         = Number(process.env.AWANA_PORT) || 3456;
-const PRINTER_NAME = process.env.PRINTER_NAME || '';
+// `let`, not `const`: the Electron shell requires this module once and the
+// require cache keeps it alive across settings changes, so an env-var-only
+// printer name would be frozen at whatever it was on FIRST load — which is
+// empty when the server now starts before first-time setup. setPrinterName()
+// lets the shell push the newly saved printer into the live module.
+let PRINTER_NAME = process.env.PRINTER_NAME || '';
+function setPrinterName(name) {
+  PRINTER_NAME = (name == null ? '' : String(name)).trim();
+}
 const SERVER_VERSION = require('./package.json').version;
 
 // ── Writable data directory ───────────────────────────────────────────────────
@@ -1127,6 +1135,10 @@ async function generateLabel(input) {
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
 
   // ── Left icon panel ───────────────────────────────────────────────────────
+  // Tracked OUTSIDE the panel block: the text area below prints the club name
+  // only when no real logo made it onto the label, and a supplied-but-rejected
+  // logo (too small, undecodable) must count as "no logo" there too.
+  let logoDrawn = false;
   if (hasIcon) {
     ctx.save();
     roundedRect(ctx, BX, BY, BW, BH, CORNER);
@@ -1147,19 +1159,32 @@ async function generateLabel(input) {
     const iconSize = 76;
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
-    let logoDrawn = false;
     if (hasLogo) {
       try {
         const img = await loadImage(clubImageBuffer);
-        // Preserve aspect ratio
-        const aspect = img.width / img.height;
-        let drawW = iconSize, drawH = iconSize;
-        if (aspect > 1) { drawH = iconSize / aspect; }
-        else { drawW = iconSize * aspect; }
-        const dx = iconX + (iconSize - drawW) / 2;
-        const dy = iconY + (iconSize - drawH) / 2;
-        ctx.drawImage(img, dx, dy, drawW, drawH);
-        logoDrawn = true;
+        // The icon zone is 76pt ≈ 317 device px at 300 DPI. A logo whose
+        // source is much smaller than that (the pre-5.5 extension captured
+        // club images at 64×64) would be upscaled 4–5×, and the thermal
+        // printer then dithers the blurry antialiased edges into speckle —
+        // the printed result is recognisably worse than no logo at all.
+        // Below half the target resolution, the solid-ink monogram badge is
+        // the better label: skip the image and fall through to it.
+        const targetPx = iconSize * SCALE;
+        if (Math.max(img.width, img.height) >= targetPx / 2) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          // Preserve aspect ratio
+          const aspect = img.width / img.height;
+          let drawW = iconSize, drawH = iconSize;
+          if (aspect > 1) { drawH = iconSize / aspect; }
+          else { drawW = iconSize * aspect; }
+          const dx = iconX + (iconSize - drawW) / 2;
+          const dy = iconY + (iconSize - drawH) / 2;
+          ctx.drawImage(img, dx, dy, drawW, drawH);
+          logoDrawn = true;
+        } else {
+          console.log(`[icon] Club image is ${img.width}x${img.height}px — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
+        }
       } catch { /* decode failed — fall through to the monogram badge */ }
     }
     if (!logoDrawn) {
@@ -1192,7 +1217,10 @@ async function generateLabel(input) {
   const hasLast  = lastName.trim().length > 0;
   // A real logo self-identifies the club, so the text line is redundant;
   // a monogram badge is only initials, so keep the club name printed too.
-  const hasClub  = clubName.trim().length > 0 && !hasLogo;
+  // logoDrawn, not hasLogo: a supplied logo that was rejected (too small to
+  // print cleanly, failed to decode) fell back to the monogram badge, and the
+  // label must then carry the club name in text like any other monogram label.
+  const hasClub  = clubName.trim().length > 0 && !logoDrawn;
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
 
@@ -3569,6 +3597,10 @@ function startListening(attempt = 1) {
 
 module.exports = {
   app, startListening, setUpdateHandler, setLatestVersion,
+  // For the Electron shell: this module is require-cached across settings
+  // saves, so the shell pushes the freshly merged config.json and printer
+  // name into the LIVE module instead of relying on load-time state.
+  applySavedConfig, setPrinterName,
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,

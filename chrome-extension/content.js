@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.4.0';
+  const EXTENSION_VERSION = '5.5.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -993,13 +993,20 @@
       if (!img || !img.src || !img.complete || img.naturalWidth === 0) {
         return null;
       }
+      // Capture at up to 320px, never above the image's own resolution.
+      // The print server draws this into a ~317px icon zone on a 300 DPI
+      // label, so the old fixed 64×64 capture forced a 5× upscale at print
+      // time — the logos came out blurry and speckled on thermal output.
+      const _side = Math.min(320, Math.max(img.naturalWidth, img.naturalHeight));
       const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = 64;
+      canvas.width = canvas.height = _side;
       const _ctx = canvas.getContext('2d');
+      _ctx.imageSmoothingEnabled = true;
+      _ctx.imageSmoothingQuality = 'high';
       const _aspect = img.naturalWidth / img.naturalHeight;
       let _dw, _dh, _ox = 0, _oy = 0;
-      if (_aspect > 1) { _dw = 64; _dh = 64 / _aspect; _oy = (64 - _dh) / 2; }
-      else             { _dh = 64; _dw = 64 * _aspect;  _ox = (64 - _dw) / 2; }
+      if (_aspect > 1) { _dw = _side; _dh = _side / _aspect; _oy = (_side - _dh) / 2; }
+      else             { _dh = _side; _dw = _side * _aspect; _ox = (_side - _dw) / 2; }
       _ctx.drawImage(img, _ox, _oy, _dw, _dh);
       return canvas.toDataURL('image/png');
     } catch (e) {
