@@ -103,6 +103,29 @@
         <span id="status-msg" class="status"></span>
       </div>
     </div>
+
+    <div class="card" id="display-key-card">
+      <h3>Realtime privacy &mdash; display key</h3>
+      <p class="description">
+        The Pusher channel above is <strong>public</strong>: anyone who views a welcome screen's page
+        source can subscribe to it from anywhere. A display key encrypts children's first names before
+        they leave the print PC, so only your own screens can read them. Counts, the clock, the
+        countdown and slides never need it &mdash; without a key, only the welcome banners stop.
+      </p>
+      <div id="display-key-state" class="banner visible">Checking&hellip;</div>
+      <div class="actions">
+        <a id="display-key-link" class="btn btn-primary" href="http://localhost:3456/#display-key"
+           target="_blank" rel="noopener" style="text-decoration:none;display:inline-block">
+          Open the print server dashboard
+        </a>
+      </div>
+      <p class="description" style="margin:12px 0 0">
+        The key is generated and stored on the print server, and shown only on that dashboard &mdash;
+        one place to copy it from, and one place it can be changed. Rotating it stops every screen
+        showing names until the new key is pasted into each one, so it is not something to do
+        during club.
+      </p>
+    </div>
   </div>
   <script src="options.js"></script>
 </body>

@@ -16,9 +16,14 @@ Three changes:
 Related: `publishState.configured` was only set by `publish()`, so from startup until the first event of the night the server reported Pusher as *not configured*. The privacy banner would have said "no welcome screen connected" to a church that has one — and only turned red after the first child's name had already gone out plaintext. It is now set when the Pusher client is constructed.
 
 ### The extension now says whether names are encrypted
-A status row in the check-in panel: locked and green with the key fingerprint, or red with a link straight to the dashboard setting.
+Two places, because "the extension" means two different surfaces depending on where you go looking:
 
-**State only, never the key.** The panel is injected into a page served by twotimtwo.com, so anything rendered there is readable by that site's scripts — which is also why the server redacts `displayKey` for every non-loopback caller. The extension has no way to obtain the key, and a test now asserts it stays that way even if `/health` were to send one.
+- **The check-in panel** on the TwoTimTwo page gets a status row: locked and green with the key fingerprint, or red with a link straight to the dashboard setting.
+- **The extension's Settings page** (`chrome://extensions` → Details → Extension options) gets a *Realtime privacy — display key* card, directly below the Pusher card it belongs with. Same three states, plus an **Open the print server dashboard** button that lands on the key.
+
+The Settings page shows status and links out rather than offering its own Generate button — and that is a deliberate choice, not an omission. It *could* show the key: it runs at a `chrome-extension://` origin, which the server trusts on loopback, which is why the Pusher secret already loads there. The reason not to is operational. Rotating the key blanks names on **every** screen at once until the new value is pasted into each one, and the safe ordering — generate, copy into the screens, only then save — is a sequence, not a button. Two surfaces implementing that sequence is two chances to get it subtly different, on the one control that can take every welcome screen down mid-club.
+
+**State only, never the key — on both.** The panel is injected into a page served by twotimtwo.com, so anything rendered there is readable by that site's scripts, which is also why the server redacts `displayKey` for every non-loopback caller. A test asserts the panel cannot render the key even if `/health` were to send one.
 
 ### An app update now updates the extension
 Previously the extension was not shipped in the `.exe` at all. Updating it meant: notice the version banner, find the zip, download, unzip, remove the old entry in `chrome://extensions`, Load unpacked again. In practice it drifts months behind the print server and nobody notices, because the check-in page keeps working — just against an older content script.
@@ -37,7 +42,7 @@ The copy is careful because Chrome may be reading that folder while it happens: 
 The folder path is **loopback-only** in `/health`. The version travels to the check-in site (the extension needs it for the banner); the path does not, because it contains the operator's Windows username and `/health` is CORS-readable from that site.
 
 ### Verification
-47 new assertions for the extension sync, plus new coverage of the privacy badge, the warning shape, and the loopback gate — 774 across eleven suites, all green. Each new guard was negative-controlled by removing it and confirming the tests go red: the stale-file prune, the source-size refusal, the loopback path gate, and the key-leak check. The dashboard was driven in real Chromium end to end — red banner and readable warnings with no key, the jump button scrolling and flashing the right block, the deep link, the Diagnostics path, and the banner turning green with only the fingerprint (never the key) after saving one.
+47 new assertions for the extension sync, plus new coverage of the privacy badge, the warning shape, and the loopback gate — 774 across eleven suites, all green. Each new guard was negative-controlled by removing it and confirming the tests go red: the stale-file prune, the source-size refusal, the loopback path gate, and the key-leak check. The extension's Settings page was driven in real Chromium with the extension actually loaded, at its real `chrome-extension://` origin — the first attempt served the page over http from a spare port, which the server's CORS allowlist correctly refused, so the harness was fixed rather than the allowlist. The dashboard was driven in real Chromium end to end — red banner and readable warnings with no key, the jump button scrolling and flashing the right block, the deep link, the Diagnostics path, and the banner turning green with only the fingerprint (never the key) after saving one.
 
 
 ## [5.5.1] - 2026-08-01
