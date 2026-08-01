@@ -127,6 +127,12 @@ const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret)
     })
   : null;
 
+// Tell the event module the truth at STARTUP rather than letting it infer
+// "configured" from the first publish. /health's privacy banner keys off this,
+// and a church with a screen but no display key has to be warned before the
+// first child checks in — not after their name has already gone out plaintext.
+events.setPublisherConfigured(Boolean(pusher));
+
 if (pusher) {
   console.log(`[pusher] Initialized with App ID: ${config.pusherAppId}`);
 } else {
@@ -3044,6 +3050,21 @@ function setLatestVersion(ver) {
   if (ver && /^\d+\.\d+\.\d+$/.test(String(ver).trim())) latestVersion = String(ver).trim();
 }
 
+// Where the Electron shell keeps the managed copy of the Chrome extension, and
+// which version is sitting there. Pushed in rather than guessed from the
+// filesystem: only the shell knows whether it actually synced, and /health
+// reporting a folder the app never wrote would be worse than reporting none.
+// Stays null under a standalone `node server.js`, which is the truth there.
+let extensionInfo = null;
+function setExtensionInfo(info) {
+  if (!info || !info.targetDir) { extensionInfo = null; return; }
+  extensionInfo = {
+    dir: String(info.targetDir),
+    version: info.version ? String(info.version) : null,
+    action: info.action ? String(info.action) : null,
+  };
+}
+
 function checkForUpdates() {
   const url = 'https://raw.githubusercontent.com/patrick-simpson/Print-TwoTimTwo-Labels/main/VERSION';
   https.get(url, { timeout: 5000 }, (res) => {
@@ -3070,18 +3091,32 @@ app.get('/health', async (req, res) => {
   // Surface security misconfiguration where the operator already looks. A
   // silently loopback-only server looks identical to a broken phone page, and
   // "I turned on phone check-in and nothing happens" must not be a mystery.
+  //
+  // Every entry must be a {type, message} OBJECT. The dashboard renders
+  // `w.message`, so a bare string arrived as `undefined` and painted an EMPTY
+  // yellow box — the loudest warnings in the file were the invisible ones, and
+  // that is exactly why nobody found the display key.
   if (config.lanAccess === true && !security.isAcceptablePin(config.phonePin)) {
-    warnings.push('Phone check-in is enabled but no PIN is set, so the server is only listening on this computer. Set a PIN in Settings and restart.');
+    warnings.push({
+      type: 'phonePinMissing',
+      message: 'Phone check-in is enabled but no PIN is set, so the server is only listening on this computer. Set a PIN in Settings and restart.',
+    });
   }
   // Surface the realtime privacy mode where the operator already looks. An
   // unencrypted channel is not broken, so it cannot be an error — but it must
   // never be INVISIBLE, or "we set that up" becomes a belief rather than a fact.
   const keyState = events.getDisplayKeyState();
   if (pusher && !keyState.configured) {
-    warnings.push("No display key is set, so children's first names are published unencrypted on a channel anyone can subscribe to. Generate one under Realtime, then paste it into each screen.");
+    warnings.push({
+      type: 'displayKeyMissing',
+      message: "No display key is set, so children's first names are published unencrypted on a channel anyone can subscribe to. Open Settings → Realtime privacy and press Generate display key.",
+    });
   }
   if (config.displayKey && !keyState.configured) {
-    warnings.push('The saved display key is invalid, so names are going out in the clear. Generate a new one under Realtime.');
+    warnings.push({
+      type: 'displayKeyInvalid',
+      message: 'The saved display key is invalid, so names are going out in the clear. Open Settings → Realtime privacy and generate a new one.',
+    });
   }
   let csvUpdatedAt = null;
   try {
@@ -3107,6 +3142,14 @@ app.get('/health', async (req, res) => {
     displayKeyConfigured: keyState.configured,
     displayKeyId: keyState.kid,
     encryptingNames: keyState.configured,
+    // Managed Chrome extension folder + the version sitting in it. Null under a
+    // standalone server. The VERSION is safe for anyone (the extension itself
+    // reads it to know a restart is owed); the PATH is not, because it contains
+    // the operator's Windows username and /health is CORS-reachable from the
+    // check-in site. So the folder is loopback-only, like the display key.
+    extension: extensionInfo && (isTrustedConfigOrigin(req)
+      ? extensionInfo
+      : { version: extensionInfo.version, action: extensionInfo.action }),
     selectorSelfTest: lastSelfTest,
     lastCanary,
     printFailures: printFailures.length,
@@ -3596,7 +3639,7 @@ function startListening(attempt = 1) {
 }
 
 module.exports = {
-  app, startListening, setUpdateHandler, setLatestVersion,
+  app, startListening, setUpdateHandler, setLatestVersion, setExtensionInfo,
   // For the Electron shell: this module is require-cached across settings
   // saves, so the shell pushes the freshly merged config.json and printer
   // name into the LIVE module instead of relying on load-time state.

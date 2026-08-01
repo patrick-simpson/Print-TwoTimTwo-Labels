@@ -177,6 +177,76 @@ console.log('same-name collision — must never attribute one child\'s data to a
     h2.resolveIdentityKey('Amy Zephyr', null) === 'id:101');
 }
 
+// ── Privacy badge in the page widget ─────────────────────────────────────────
+// The panel is injected into a page served by twotimtwo.com, so everything it
+// renders is readable by that site's scripts. The badge therefore shows STATE
+// ONLY — encrypted or not, plus the public `kid` fingerprint — and never the
+// display key itself. The server also redacts displayKey for any non-loopback
+// caller, so the extension has no way to obtain it; these assertions are the
+// second lock, guarding a future edit that "helpfully" surfaces it here.
+console.log('');
+console.log('extension privacy badge');
+{
+  const { JSDOM } = require('jsdom');
+
+  function render(health) {
+    const dom = new JSDOM('<!doctype html><body><div id="awana-privacy-status"></div></body>');
+    const { document } = dom.window;
+    const factory = new Function(
+      'document', 'PRINT_SERVER',
+      `${extractFunction('renderPrivacyStatus')}\n; return renderPrivacyStatus;`
+    );
+    factory(document, 'http://localhost:3456')(health);
+    return document.getElementById('awana-privacy-status');
+  }
+
+  check('content.js still defines renderPrivacyStatus()',
+    extractFunction('renderPrivacyStatus').length > 0);
+
+  // No welcome screen means no names on the wire. Silence is correct — a badge
+  // here would be noise on every check-in page at a church that has no TV.
+  const none = render({ pusher: { configured: false } });
+  check('with no Pusher configured the badge is hidden', none.style.display === 'none');
+  check('...and says nothing at all', none.textContent === '');
+
+  const missing = render({ pusher: { configured: true }, displayKeyConfigured: false });
+  check('with a screen but no key the badge is shown', missing.style.display === 'block');
+  check('...and says names are NOT encrypted', /NOT encrypted/.test(missing.textContent),
+    missing.textContent);
+  const link = missing.querySelector('a');
+  check('...and links straight to the display-key setting',
+    !!link && link.href === 'http://localhost:3456/#display-key',
+    link && link.href);
+  check('...opening the dashboard in a new tab safely',
+    !!link && link.target === '_blank' && /noopener/.test(link.rel || ''));
+
+  const ok = render({
+    pusher: { configured: true }, displayKeyConfigured: true, displayKeyId: 'a1b2c3d4',
+  });
+  check('with a key the badge confirms encryption', /encrypted/i.test(ok.textContent),
+    ok.textContent);
+  check('...and shows the kid fingerprint so two screens can be compared',
+    /a1b2c3d4/.test(ok.textContent), ok.textContent);
+  check('...without claiming NOT encrypted', !/NOT/.test(ok.textContent), ok.textContent);
+
+  // The one that matters. If /health ever regressed to shipping the key, or a
+  // future edit read it from somewhere, this catches it rendering in a page
+  // twotimtwo.com can read.
+  const SECRET = 'kAyO1YHu9r7vQ2mWxZs4tE6bN8pL0cJd5fG3hR7uT1o=';
+  const leaky = render({
+    pusher: { configured: true }, displayKeyConfigured: true,
+    displayKeyId: 'a1b2c3d4', displayKey: SECRET, key: SECRET,
+  });
+  check('the key is NEVER rendered into the page, even if /health sent one',
+    !leaky.innerHTML.includes(SECRET), leaky.innerHTML.slice(0, 200));
+
+  // Same rule at the source: nothing in the extension may read a key field off
+  // /health, and nothing may write one into the DOM.
+  check('content.js never reads a displayKey value from the server',
+    !/\.displayKey\b(?!Configured|Id)/.test(SRC),
+    (SRC.match(/\.displayKey\b(?!Configured|Id)/g) || []).join(','));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

@@ -63,6 +63,25 @@ survive any change:
 - **Printing is never gated on the pipe.** A child at the door gets a label even
   if the key, Pusher and the network are all broken.
 
+**Extension distribution:** the extension is loaded UNPACKED, so Chrome never
+auto-updates it and a self-hosted `update_url` is not honoured — silent update
+is not available and must not be claimed. Instead `chrome-extension/` ships in
+`extraResources` and the app syncs it into
+`%APPDATA%\Awana Label Printer\chrome-extension` on every launch
+(`electron-app/src/extension-sync.js`), so an update costs a Chrome restart.
+Rules: the target lives under **userData**, never `resources/` (an update
+replaces that wholesale and Chrome would be left pointing at nothing); files are
+written tmp+rename because Chrome may be reading them; files a new version drops
+are pruned, or manifest.json loads old code beside new. The folder path is
+loopback-only in `/health` — it contains the operator's Windows username and
+`/health` is CORS-readable from the check-in site. The version is not gated;
+the extension needs it for the update banner.
+
+**`/health` warnings must be `{type, message}` objects.** The dashboard renders
+`w.message`, so a bare string painted an EMPTY yellow box — the privacy and
+phone-PIN warnings were invisible for exactly this reason. `warningTexts()` in
+`test-server-realtime.cjs` fails by name if strings come back.
+
 **Config writes:** `config.json` has several writers with different views of it.
 Use `applySavedConfig()` for the live sync — plain `Object.assign` cannot DELETE,
 which is why clearing the phone PIN used to leave the old one accepted until a

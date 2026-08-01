@@ -455,6 +455,16 @@ function getPublishState() {
   return { ...publishState };
 }
 
+// `configured` used to be set only by publish(), so it stayed FALSE from
+// startup until the first event of the night. That reads as "no welcome screen
+// connected" — and the whole point of the privacy banner is to warn a church
+// with a screen but no key BEFORE the first child arrives, not after their
+// first name has already gone out in the clear. The server calls this once at
+// startup with the real client, so "configured" means configured.
+function setPublisherConfigured(isConfigured) {
+  publishState.configured = !!isConfigured;
+}
+
 function publish(pusher, channel, event, payload) {
   publishState.configured = !!pusher;
   if (!pusher || !payload) return Promise.resolve(false);
@@ -535,6 +545,7 @@ module.exports = {
   parseHM,
   publish,
   getPublishState,
+  setPublisherConfigured,
   // Sealed envelopes — see the block above publish().
   ENVELOPE_VERSION,
   ENCRYPTED_EVENTS,

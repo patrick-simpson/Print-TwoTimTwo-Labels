@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.5.1';
+  const EXTENSION_VERSION = '5.6.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1308,6 +1308,25 @@
     });
     csvStatus.textContent = 'Syncing roster...';
 
+    // ── Privacy status ────────────────────────────────────────────────────────
+    // Whether children's first names leave the print PC encrypted. Fed by the
+    // /health poll below.
+    //
+    // This row shows STATE ONLY, never the key itself. This panel is injected
+    // into a page served by twotimtwo.com, so anything rendered here is
+    // readable by that site's scripts — which is also why the server redacts
+    // displayKey for every non-loopback caller. The key is typed on the
+    // dashboard, at loopback, and nowhere else.
+    var privacyStatus = document.createElement('div');
+    privacyStatus.id = 'awana-privacy-status';
+    Object.assign(privacyStatus.style, {
+      display: 'none',
+      fontSize: '11px',
+      padding: '5px 8px',
+      borderRadius: '6px',
+      lineHeight: '1.4'
+    });
+
     var updateRow = document.createElement('div');
     updateRow.id = 'awana-update-notice';
     Object.assign(updateRow.style, {
@@ -2099,7 +2118,7 @@
       divider(), sectionLabel('Printing'), controls, printerRow,
       divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields,
       divider(), tonightHeader, tonightList,
-      queueBadge, reconcileRow, csvStatus, csvWarningBanner, updateRow,
+      queueBadge, reconcileRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
     );
     // A scrollbar the operator can actually SEE. A body that scrolls but shows
@@ -2177,17 +2196,58 @@
     console.log('[Awana] Widget injected');
   }
 
+  // Whether names leave the print PC encrypted. State only — see the long note
+  // where the element is created for why the key itself is never rendered here.
+  function renderPrivacyStatus(data) {
+    var el = document.getElementById('awana-privacy-status');
+    if (!el) return;
+    // No welcome screen configured means no names on the wire and nothing to
+    // warn about. Silence is the correct output, not a green badge.
+    if (!data.pusher || !data.pusher.configured) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.textContent = '';
+    if (data.displayKeyConfigured) {
+      el.style.background = '#f0fdf4';
+      el.style.border = '1px solid #bbf7d0';
+      el.style.color = '#166534';
+      el.textContent = '🔒 Names encrypted on the welcome screen'
+        + (data.displayKeyId ? ' (key ' + data.displayKeyId + ')' : '');
+    } else {
+      el.style.background = '#fef2f2';
+      el.style.border = '1px solid #fecaca';
+      el.style.color = '#991b1b';
+      var msg = document.createElement('span');
+      msg.textContent = "⚠ Names are NOT encrypted — anyone can subscribe to the welcome screen's channel. ";
+      var link = document.createElement('a');
+      link.href = PRINT_SERVER + '/#display-key';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Set a display key';
+      link.style.color = '#991b1b';
+      link.style.fontWeight = '700';
+      el.append(msg, link);
+    }
+  }
+
   // Check server health: extension version mismatch, server updates, CSV warnings
   function checkForExtensionUpdate() {
     fetch(PRINT_SERVER + '/health', { signal: AbortSignal.timeout(3000) })
       .then(function(r) { return r.json(); })
       .then(function(data) {
+        renderPrivacyStatus(data);
         var notice = document.getElementById('awana-update-notice');
         // Extension version mismatch (highest priority)
         if (data.version && data.version !== EXTENSION_VERSION) {
           if (notice) {
             notice.style.display = 'block';
-            notice.textContent = 'Update available: v' + data.version + ' (reload extension)';
+            // When the app manages the extension folder, the new files are
+            // ALREADY on disk — the app rewrote them at launch. Chrome just
+            // hasn't re-read them. Say the action that actually works instead
+            // of "reload extension", which reads as "go download it again".
+            var managed = data.extension && data.extension.version === data.version;
+            notice.textContent = managed
+              ? 'Extension v' + data.version + ' is installed — restart Chrome to load it'
+              : 'Update available: v' + data.version + ' (reload extension at chrome://extensions)';
           }
         } else if (data.latestVersion && data.latestVersion !== data.version) {
           // Server itself is outdated — offer one-click update. The server
