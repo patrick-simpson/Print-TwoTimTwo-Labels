@@ -87,6 +87,41 @@ function buildRecap(checkins) {
   return { entries, at: nowIso() };
 }
 
+// ── checkout (contract v4) ────────────────────────────────────────────────────
+// Who is still in the building. TwoTimTwo's /clubber/checkout page IS the live
+// list of children currently checked in, so this carries that SET rather than a
+// departure signal — there is no "child left" event to miss.
+//
+// Same data class as `checkin`: first name + club, nothing else. It is sealed by
+// the same transport for the same reason, and it needs it MORE than the others:
+// a list of who is still unattended is the single most sensitive thing this
+// system could put on a wire.
+//
+// `printed` (how many labels were printed tonight) travels alongside so a
+// consumer can show the board honestly — "12 of 43 still here" — rather than
+// implying the list is a verified headcount. It is NOT a headcount: it reflects
+// whether volunteers performed checkout, which during a pickup rush they often
+// do not. Consumers must treat it as "recorded checkouts", gate it behind an
+// operator setting, and stop naming individuals once the count gets small.
+const CHECKOUT_MAX = 60;
+
+function buildCheckout(rawEntries, printed) {
+  const entries = [];
+  for (const item of Array.isArray(rawEntries) ? rawEntries : []) {
+    if (entries.length >= CHECKOUT_MAX) break;
+    if (!item || typeof item !== 'object') continue;
+    const firstName = cleanName(item.firstName);
+    if (!firstName) continue;
+    // Structurally only these two fields — a lastName or clubberId on the input
+    // object cannot reach the payload even if a caller passes one.
+    entries.push({ firstName, club: cleanName(item.club) });
+  }
+  const payload = { entries, at: nowIso() };
+  const p = Number(printed);
+  if (Number.isFinite(p) && p >= 0) payload.printed = Math.floor(p);
+  return payload;
+}
+
 // ── tally ─────────────────────────────────────────────────────────────────────
 // Per-club checked-in counts — pure numbers, zero PII. Keys are club display
 // names exactly as the check-in system reports them; each consumer normalizes
@@ -272,7 +307,7 @@ function isClubNightNow(clubNights, date) {
 //   plaintext = u32be(jsonByteLength) || json || zero filler
 //   ct        = aesgcm_ciphertext || 16-byte tag   (WebCrypto's layout)
 const ENVELOPE_VERSION = 1;
-const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays']);
+const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays', 'checkout']);
 // checkin gets a FIXED pad: it is the frame that matters, one child per event,
 // so its length must reveal nothing at all. 512 covers the true worst case —
 // note the builders cap names at 40 CHARACTERS, and a character can be 4 bytes
@@ -483,9 +518,11 @@ module.exports = {
   OPS_TYPES,
   NOTICE_LEVELS,
   RECAP_MAX,
+  CHECKOUT_MAX,
   POINTS_GROUPS_MAX,
   buildCheckin,
   buildRecap,
+  buildCheckout,
   buildTally,
   buildBirthdays,
   buildOps,

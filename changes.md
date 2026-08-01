@@ -37,6 +37,19 @@ Two new suites, 104 assertions. `test-envelope.cjs` treats the negative cases as
 
 Both repos are pinned to one committed interop fixture (`envelope-vectors.json`, mirrored byte-identically like `contract-vectors.json`). Two implementations of one wire format — Node's `crypto` here, WebCrypto there — is exactly the situation where both sides pass their own tests and no name ever reaches a screen. Verified beyond the unit tests: real Chromium opens all seven Node-sealed envelopes exactly and rejects both a flipped byte and a cross-event replay.
 
+### Who's still here — contract v4
+TwoTimTwo's `/clubber/checkout` page turns out not to be a checkout *form*: it is the live list of children **currently checked in**, each with a button to check them out, and a row vanishes once they are. So "who is still here" needs no departure event to miss — it is simply the set of rows.
+
+The extension scrapes that page (the print server cannot: only the volunteer's browser holds the TwoTimTwo session) and POSTs first names and clubs to `POST /feed/checkout`, which publishes a new `checkout` event. It is **sealed with the same AES-256-GCM transport** as the other name-bearing events, and it needs that more than they do: a list of children not yet with a parent is the most sensitive payload this system produces.
+
+Four scraper guards, each stopping one specific way this could tell a lobby the building is clear while children are still in it: the page must positively identify itself (a redirect or session timeout reads as *unknown*, not *empty*); the data table is the **second** table, so a naive `querySelector('table')` would parse an unrelated notices table and find nobody; a **club filter left touched** by a volunteer makes whole clubs look picked up, so a filtered page is refused outright; and rows found but none parsed means selector drift, which is again *unknown* rather than *empty*. Only the page's own "nobody is checked in" placeholder may publish an empty board. All four were verified by removing each guard and watching the suite go red.
+
+The `printed` count is filled in by the **server**, not trusted from the extension, and is computed on the **local** calendar day. That distinction matters: history timestamps are UTC, and a 17:30–20:00 club night straddles UTC midnight for most of the US winter, so a UTC-day filter would silently drop the second half of the night and publish a fresh, plausible, badly-wrong number in the middle of pickup.
+
+**This feature is not a headcount and the display is required to say so.** It reflects whether volunteers *recorded* checkout, which during a pickup rush often lags. The board is off by default, stops naming individuals once the list gets short (a list of two names points at two specific unattended children), and words everything as "not checked out yet".
+
+A new suite (`test-checkout-parser.cjs`, 42 assertions) covers the parser, all four guards, the feed validator and the transport.
+
 ### Clearing a PIN or a key now actually clears it
 Found while testing the above, and the more serious half of it is **pre-existing**. Both `POST /config` paths can delete a key — `delete next.phonePin` when the operator clears the PIN, `delete next.displayKey` for the display key — but the live-process sync was `Object.assign(config, next)`, and `Object.assign` copies properties without ever removing them.
 
@@ -58,7 +71,7 @@ All four suites — event contracts, server helpers, the v5.3.0 trust model, ext
 
 `webpack.yml` gains a test job and its push trigger widens from `main` to every branch; `build-electron.yml` gains the same job and `build` now needs it, so a tag cut from a green `main` still can't publish an `.exe` without re-verifying the contract and the trust model. Verified by breaking `security.js`'s loopback check and watching CI go red.
 
-A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 628 assertions now pass across nine suites.
+A fifth suite (`test-server-demo.cjs`, 23 assertions) covers demo mode. Its tests are deliberately paired: every "demo writes nothing" assertion has a control running the same request WITHOUT the flag and asserting it DOES record — otherwise the suite would pass just as happily if `/print` were inert. 676 assertions now pass across ten suites.
 
 ## [5.3.0] - 2026-07-27
 Security and privacy release. An audit of both repos found that the print server exposed children's names and allergy data to anyone on the church network, and to any website open in the volunteer's browser. Nothing here changes how a label prints; all of it changes who can read the roster.

@@ -2654,6 +2654,36 @@ function csvField(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// How many distinct children this server printed a label for TODAY, in LOCAL
+// time. Feeds the checkout board's honest denominator.
+//
+// Local, not UTC, and that distinction is load-bearing. History timestamps are
+// ISO/UTC, and a 17:30-20:00 local club night straddles UTC midnight for most of
+// the US winter — at 19:00 EST it is already Thursday in UTC. A UTC-day filter
+// would therefore drop the second half of the night, and the board would publish
+// a FRESH, plausible, badly-wrong denominator right in the middle of pickup,
+// which no staleness check can catch.
+//
+// It counts LABELS PRINTED BY THIS SERVER, which is not the same population as
+// "children in the building": another station, a manual check-in or a printer jam
+// all break the equivalence. Consumers must word it as the former.
+function distinctChildrenPrintedToday(now = new Date()) {
+  const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = localDay(now);
+  const seen = new Set();
+  for (const e of loadHistory()) {
+    if (!e || !e.timestamp) continue;
+    const when = new Date(e.timestamp);
+    if (Number.isNaN(when.getTime()) || localDay(when) !== today) continue;
+    if (e.success === false) continue;   // a failed print never checked anyone in
+    if (e.isAward) continue;             // award slips are not check-ins
+    const key = historyIdentityKey(e);
+    if (!key) continue;
+    seen.add(key);                       // reprints must not inflate the count
+  }
+  return seen.size;
+}
+
 app.get('/checkin-csv-export', (req, res) => {
   const dateParam = String(req.query.date || '').trim();
   const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : new Date().toISOString().slice(0, 10);
@@ -2709,6 +2739,26 @@ app.post('/feed/tonight',  makeFeedRoute('tonight'));
 app.post('/feed/points',   makeFeedRoute('points'));
 app.post('/feed/schedule', makeFeedRoute('schedule'));
 app.post('/feed/notice',   makeFeedRoute('notice'));
+// Who is still in the building (contract v4). The extension scrapes
+// TwoTimTwo's /clubber/checkout page — which IS the live list of children
+// currently checked in — and posts the rows here. The print server cannot fetch
+// that page itself: only the volunteer's browser holds the TwoTimTwo session.
+//
+// Consequence to accept honestly: this only works while someone has that tab
+// open, so the board must degrade by showing its age rather than by silently
+// claiming everyone is still present.
+//
+// `printed` is filled in HERE rather than trusted from the extension, because the
+// server is the only thing that knows how many labels it printed. It means
+// exactly "labels this server printed tonight" — NOT "children in the building".
+// Those are different populations (another station, a manual check-in, a printer
+// jam) and the display is required to word it as the former.
+app.post('/feed/checkout', (req, res, next) => {
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) {
+    req.body.printed = distinctChildrenPrintedToday();
+  }
+  return makeFeedRoute('checkout')(req, res, next);
+});
 
 // ── Event-bus publishers ──────────────────────────────────────────────────────
 // Interval publishers are gated by the church-config club-night window so the
@@ -3490,7 +3540,7 @@ module.exports = {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
-  historyRowMatches, historyIdentityKey,
+  historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

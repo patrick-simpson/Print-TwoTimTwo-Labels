@@ -42,7 +42,9 @@ const vectors = JSON.parse(
 // contract. That means the interop fixture cannot cover a payload shape the
 // contract doesn't describe, and it grows automatically when a vector is added.
 const cases = [];
-for (const event of ['checkin', 'recap', 'birthdays']) {
+// Derived from the module rather than hardcoded, so adding an encrypted event
+// cannot leave its interop coverage silently behind.
+for (const event of [...events.ENCRYPTED_EVENTS]) {
   const valid = (vectors.events[event] && vectors.events[event].valid) || [];
   valid.forEach((payload, i) => {
     const envelope = events.seal(event, payload);

@@ -1,5 +1,5 @@
 {
-  "contractVersion": 3,
+  "contractVersion": 4,
   "channel": "awana-channel",
   "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel \u2014 no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement \u2014 the only free-text field on the channel, bounded and plain-text-forced).",
   "transport": {
@@ -7,7 +7,8 @@
     "encryptedEvents": [
       "checkin",
       "recap",
-      "birthdays"
+      "birthdays",
+      "checkout"
     ],
     "plaintextEvents": [
       "tally",
@@ -189,6 +190,120 @@
         {
           "reason": "null",
           "payload": null
+        }
+      ]
+    },
+    "checkout": {
+      "note": "Who is still in the building. TwoTimTwo's /clubber/checkout page IS the live list of children currently checked in, so this event carries that set rather than a departure signal. Same data class as `checkin` (first name + club, never a last name or an allergy), and sealed by the same transport. IMPORTANT for consumers: this is derived from whether volunteers PERFORMED checkout, not from whether children actually left, so it can be confidently wrong during a pickup rush. It also identifies unattended children once a count gets small, so a consumer MUST gate it behind an operator setting and must stop naming individuals below a threshold. See SECURITY.md in the display repo.",
+      "fields": [
+        "entries",
+        "printed",
+        "at"
+      ],
+      "optionalForConsumers": [
+        "printed"
+      ],
+      "entryFields": [
+        "firstName",
+        "club"
+      ],
+      "valid": [
+        {
+          "entries": [
+            {
+              "firstName": "Amy",
+              "club": "Sparks"
+            },
+            {
+              "firstName": "Marcos",
+              "club": "Truth & Training"
+            }
+          ],
+          "printed": 43,
+          "at": "2026-09-16T23:55:00.000Z"
+        },
+        {
+          "entries": [],
+          "printed": 43,
+          "at": "2026-09-16T23:59:00.000Z"
+        }
+      ],
+      "dirty": [
+        {
+          "reason": "a last name, allergy or clubber id smuggled into an entry must be dropped",
+          "payload": {
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks",
+                "lastName": "Hendricks",
+                "allergies": "peanuts",
+                "clubberId": "8821",
+                "guardian": "R. Hendricks"
+              }
+            ],
+            "printed": 43,
+            "at": "2026-09-16T23:55:00.000Z"
+          },
+          "expect": {
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ],
+            "printed": 43
+          }
+        },
+        {
+          "reason": "an entry with no usable firstName is dropped, not rendered blank",
+          "payload": {
+            "entries": [
+              {
+                "firstName": "   ",
+                "club": "Sparks"
+              },
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ],
+            "at": "2026-09-16T23:55:00.000Z"
+          },
+          "expect": {
+            "entries": [
+              {
+                "firstName": "Amy",
+                "club": "Sparks"
+              }
+            ]
+          }
+        }
+      ],
+      "reject": [
+        {
+          "reason": "entries must be an array",
+          "payload": {
+            "entries": "Amy",
+            "at": "2026-09-16T23:55:00.000Z"
+          }
+        },
+        {
+          "reason": "a missing entries array is not an empty board",
+          "payload": {
+            "printed": 43,
+            "at": "2026-09-16T23:55:00.000Z"
+          }
+        },
+        {
+          "reason": "at is required so a consumer can age out a stale board",
+          "payload": {
+            "entries": []
+          }
+        },
+        {
+          "reason": "not an object",
+          "payload": "Amy"
         }
       ]
     },

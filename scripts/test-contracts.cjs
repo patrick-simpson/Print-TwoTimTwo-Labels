@@ -52,7 +52,8 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
 console.log('contract-vectors.json — self-consistency');
 {
-  check('contractVersion is 3', vectors.contractVersion === 3);
+  // v4 added the `checkout` event (who is still in the building).
+  check('contractVersion is 4', vectors.contractVersion === 4);
   check('channel is awana-channel', vectors.channel === 'awana-channel');
   for (const [name, spec] of Object.entries(vectors.events)) {
     for (const [i, v] of (spec.valid || []).entries()) {

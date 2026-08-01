@@ -645,6 +645,105 @@
     });
   }
 
+  // ── Who is still here (contract v4) ─────────────────────────────────────────
+  // /clubber/checkout is not a checkout FORM, it is the live list of children
+  // currently checked in — each row has a button to check that child out, and
+  // the row disappears once they are. So "who is still here" is simply the set
+  // of rows, and needs no departure event to miss.
+  //
+  // THIS IS THE ONE FEED THAT CARRIES NAMES. Everything else in this file is
+  // aggregate counters and church copy. First name + club only, and the print
+  // server's buildCheckout() enforces that structurally — a guardian name or a
+  // security code cannot get through even if this parser started reading them.
+  // The payload is then sealed with AES-256-GCM before it reaches the channel.
+  //
+  // Structure is documented in docs/TWOTIMTWO.md §2.1. The guards below are not
+  // defensive padding; each one prevents a specific way this feed could tell the
+  // lobby that the building is clear while children are still in it.
+
+  function parseCheckoutHtml(html) {
+    if (!html || isLoginPage(html)) return null;
+    var doc;
+    try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return null; }
+
+    // GUARD 1 — positively identify the page. A redirect, an error page or a
+    // session timeout must read as "unknown", never as an empty room.
+    var title = (doc.title || '');
+    if (!/checkout\s*clubber/i.test(title)) return null;
+
+    // GUARD 2 — the data table is the SECOND table. The first
+    // (table.items.table) is an unrelated notices table; querySelector('table')
+    // would silently parse that one and find zero children.
+    var tables = doc.querySelectorAll('table');
+    var table = null;
+    for (var t = 0; t < tables.length; t++) {
+      if (tables[t].classList && tables[t].classList.contains('items')) continue;
+      table = tables[t];
+      break;
+    }
+    if (!table) return null;
+
+    // GUARD 3 — refuse a FILTERED view. The club filter checkboxes are all
+    // checked by default, but if a volunteer has unticked one, the page shows a
+    // subset and every child in the hidden clubs would look picked up. That is
+    // the failure mode with the worst consequence and the least visible cause,
+    // so a partial view is treated as no reading at all.
+    var filters = doc.querySelectorAll('input.filter[name^="clubs"]');
+    for (var f = 0; f < filters.length; f++) {
+      if (!filters[f].checked) {
+        console.log(LOG_PREFIX, 'checkout page is club-filtered — refusing to publish a partial board');
+        return null;
+      }
+    }
+
+    var rows = table.querySelectorAll('tr');
+    var entries = [];
+    var sawEmptyPlaceholder = false;
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      if (row.querySelector('th') && !row.querySelector('td')) continue;   // header
+      if (row.querySelector('td.empty, .empty')) { sawEmptyPlaceholder = true; continue; }
+
+      var nameCell = row.querySelector('td.clubber.name') || row.querySelector('td.clubber');
+      if (!nameCell) continue;
+      var firstName = (nameCell.textContent || '').trim().split(/\s+/)[0] || '';
+      if (!firstName) continue;
+
+      // Club comes from the icon's alt text, the same way the check-in page
+      // reads it. Trailing space in the alt is normal ("Sparks ").
+      var icon = row.querySelector('img.club-icon-20[alt]');
+      var club = icon ? (icon.getAttribute('alt') || '').trim() : '';
+
+      // FIRST NAME ONLY. The row also holds the child's full name, guardian
+      // names, authorized-pickup names and a security code; none of that is
+      // read, and none of it would survive the server's builder if it were.
+      entries.push({ firstName: firstName, club: club });
+    }
+
+    // GUARD 4 — zero rows is only "everyone has gone home" when the page said so
+    // itself. A parse that found the table but matched no rows, with no empty
+    // placeholder, means the row selectors have drifted — and publishing that as
+    // an empty board would tell a volunteer the building is clear when it is not.
+    if (!entries.length && !sawEmptyPlaceholder) {
+      console.log(LOG_PREFIX, 'checkout page parsed no rows and showed no empty placeholder — treating as unknown');
+      return null;
+    }
+    return entries;
+  }
+
+  function runCheckout() {
+    fetchText('/clubber/checkout').then(function(html) {
+      var entries = parseCheckoutHtml(html);
+      // null means "could not read it". Post nothing: a silent gap ages the
+      // board on screen, which is honest, whereas an empty array would claim
+      // the room is clear.
+      if (!entries) return;
+      // `printed` is filled in by the print server from its own history — this
+      // script has no idea how many labels were printed.
+      postFeed('/feed/checkout', { entries: entries });
+    });
+  }
+
   // ── Scheduler: one self-rescheduling loop (never setInterval), each task
   // keeping its own last-run time and cadence so a slow fetch can't stack. ──
 
@@ -657,6 +756,7 @@
     points: 0,
     schedule: 0,
     notice: 0,
+    checkout: 0,
     households: 0,
     worksheets: 0
   };
@@ -666,6 +766,7 @@
     points: runPoints,
     schedule: runSchedule,
     notice: runNotice,
+    checkout: runCheckout,
     households: runHouseholds,
     worksheets: runWorksheets
   };
@@ -675,6 +776,11 @@
       case 'tonight':
       case 'points':
         return isInClubWindow() ? 90 * 1000 : 15 * 60 * 1000;
+      case 'checkout':
+        // Only worth scraping while club is actually running; pickup is the
+        // whole point. Outside the window it is off, not merely slow — there is
+        // no reason for a list of children to be on the wire at 2pm Tuesday.
+        return isInClubWindow() ? 60 * 1000 : Infinity;
       case 'schedule':
         return 60 * 60 * 1000;
       case 'notice':
