@@ -22,6 +22,14 @@
 // reimplemented, so a rename or deletion fails loudly instead of testing a copy
 // that has quietly diverged from what ships.
 //
+// jsdom is PINNED TO ^25 ON PURPOSE — do not bump it casually. jsdom 26+ pulls
+// in a version of undici that calls `webidl.util.markAsUncloneable`, which does
+// not exist before Node 21, so it breaks `npm test` on the Node 20 that CI and
+// the shipped Electron app both run. jsdom 25 declares `engines: >=18` and has
+// no undici dependency at all. It is the only non-stdlib dependency any suite in
+// this repo uses, and it is here because testing a DOM parser without a DOM
+// would only test the shim.
+//
 // Run: npm run test:checkout
 
 'use strict';

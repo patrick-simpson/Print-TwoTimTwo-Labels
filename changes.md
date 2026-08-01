@@ -59,7 +59,7 @@ The `printed` count is filled in by the **server**, not trusted from the extensi
 
 **This feature is not a headcount and the display is required to say so.** It reflects whether volunteers *recorded* checkout, which during a pickup rush often lags. The board is off by default, stops naming individuals once the list gets short (a list of two names points at two specific unattended children), and words everything as "not checked out yet".
 
-A new suite (`test-checkout-parser.cjs`, 42 assertions) covers the parser, all four guards, the feed validator and the transport.
+A new suite (`test-checkout-parser.cjs`, 42 assertions) covers the parser, all four guards, the feed validator and the transport. It needs a DOM, so `jsdom` joins devDependencies — pinned to `^25` deliberately, because jsdom 26+ pulls an undici that calls a Node 21+ API and would break `npm test` on the Node 20 that CI and the shipped Electron app both run.
 
 ### Clearing a PIN or a key now actually clears it
 Found while testing the above, and the more serious half of it is **pre-existing**. Both `POST /config` paths can delete a key — `delete next.phonePin` when the operator clears the PIN, `delete next.displayKey` for the display key — but the live-process sync was `Object.assign(config, next)`, and `Object.assign` copies properties without ever removing them.
