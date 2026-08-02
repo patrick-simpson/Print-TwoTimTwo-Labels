@@ -275,9 +275,13 @@ jobs:
       #
       # Runs only after the step above, so the ping can never go out before
       # the installer + latest.yml are actually live for electron-updater to
-      # find. Guarded by `if:` on the secrets existing at all — an operator
-      # who never sets up push is never blocked from cutting a release; the
-      # 24h poll covers them completely, silently, forever.
+      # find. There is deliberately NO `if:` guard on the secrets: GitHub's
+      # workflow parser rejects `secrets.*` in step-level `if:` expressions
+      # (it invalidated the whole file — v5.8.0's first tag build died on
+      # exactly that), so the script below is the guard instead — it exits 0
+      # with a log line when the secrets are absent. An operator who never
+      # sets up push is never blocked from cutting a release; the 24h poll
+      # covers them completely, silently, forever.
       #
       # Deliberately a small inline Node script rather than a third-party
       # action: the Pusher REST API's HMAC-SHA256 request signing
@@ -285,7 +289,6 @@ jobs:
       # is a dozen lines and pulling in an action for it is a bigger trust
       # surface than writing it here in the open.
       - name: Notify laptops of the new release (Pusher push)
-        if: secrets.PUSHER_APP_ID != '' && secrets.PUSHER_KEY != '' && secrets.PUSHER_SECRET != '' && secrets.PUSHER_CLUSTER != ''
         env:
           PUSHER_APP_ID: ${{ secrets.PUSHER_APP_ID }}
           PUSHER_KEY: ${{ secrets.PUSHER_KEY }}
