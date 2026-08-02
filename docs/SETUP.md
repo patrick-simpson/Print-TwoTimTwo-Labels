@@ -11,6 +11,21 @@ test label from Settings. When Windows asks about network access,
 click **Allow** (needed for phone check-in); or use Settings →
 *Enable Phone Check-in (firewall)*.
 
+**Updates install themselves within a minute or two of a release going
+out — deliberately even mid-club-night**, since a release that ships
+while a club is running is almost always an urgent fix. The app waits a
+few seconds for any in-flight label print to finish, then restarts on
+its own; the print server comes back up unattended. This needs no setup
+to work at all (every launch, and every 24 hours after that, checks for
+updates on its own) — but for it to happen within *a minute or two*
+rather than up to a day, the repo needs `PUSHER_APP_ID`, `PUSHER_KEY`,
+`PUSHER_SECRET` and `PUSHER_CLUSTER` set as GitHub Actions secrets (the
+same Pusher app already used for the lobby display; never reuse another
+church's), plus optionally `PUSHER_CHANNEL` if you changed
+`pusherChannel` away from the default in `church-config.json`. Missing
+any of those simply falls back to the 24-hour poll — the release step
+that pings them is skipped silently, never fails the build.
+
 Upgrading from the legacy `install-and-run.ps1` install: the app
 imports your config and roster from `C:\output` on first run and
 offers to remove the old shortcuts. The script path still works but

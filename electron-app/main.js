@@ -8,6 +8,7 @@ const { execFileSync } = require('child_process');
 const { runMigration, removeShortcuts } = require('./src/migrate');
 const configStore = require('./src/config-store');
 const extensionSync = require('./src/extension-sync');
+const updatePush = require('./src/update-push');
 
 // ── Safe external opens ───────────────────────────────────────────────────────
 // shell.openExternal() hands its argument to the OS handler, so on Windows a
@@ -147,10 +148,62 @@ function refreshTray() {
   if (tray && currentConfig) buildTray(currentConfig);
 }
 
+// The operator's reversed policy: a mid-club release only ever happens
+// because they shipped an urgent fix, so the app quits and re-installs the
+// MOMENT a download finishes — no more "Restart to update" waiting for a
+// human. A label mid-print should still get to finish, though:
+// print-server/server.js exposes no "printing/queue busy" signal today (see
+// its module.exports — no isBusy()/queue getter of any kind), and this
+// deliberately does not add one (see the goal doc — no new plumbing for
+// this). If that ever changes, prefer polling it below, capped at
+// AUTO_INSTALL_BUSY_CAP_MS. Until then, a short fixed grace gives an
+// in-flight /print HTTP response time to flush before the process exits.
+const AUTO_INSTALL_GRACE_MS = 5000;
+const AUTO_INSTALL_BUSY_CAP_MS = 60000;
+const AUTO_INSTALL_POLL_MS = 1000;
+
+function performQuitAndInstall(reason) {
+  if (!autoUpdater) return;
+  console.log(`[update] ${reason}`);
+  app.isQuitting = true;
+  // isSilent=true: this is an unattended kiosk box, nobody is at the
+  // keyboard mid-club-night to click through an installer window.
+  // isForceRunAfter=true: electron-updater only relaunches the app
+  // automatically after a NON-silent install unless this is set — and the
+  // entire point of this change is that the print server comes back up on
+  // its own with no one there to double-click the shortcut.
+  autoUpdater.quitAndInstall(true, true);
+}
+
+function scheduleAutoInstall(info) {
+  if (serverModule && typeof serverModule.isBusy === 'function') {
+    const startedAt = Date.now();
+    const poll = () => {
+      let stillBusy = false;
+      try { stillBusy = !!serverModule.isBusy(); } catch { stillBusy = false; }
+      if (!stillBusy || Date.now() - startedAt >= AUTO_INSTALL_BUSY_CAP_MS) {
+        performQuitAndInstall(`Installing v${info.version} now (${stillBusy ? 'busy-cap reached' : 'server idle'})`);
+      } else {
+        setTimeout(poll, AUTO_INSTALL_POLL_MS);
+      }
+    };
+    poll();
+  } else {
+    setTimeout(
+      () => performQuitAndInstall(`Installing v${info.version} after ${AUTO_INSTALL_GRACE_MS}ms grace period`),
+      AUTO_INSTALL_GRACE_MS
+    );
+  }
+}
+
 function setupAutoUpdater() {
   if (!autoUpdater || !app.isPackaged) return;
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;  // never force a restart mid-club-night
+  // Safety net only: performQuitAndInstall() above is what actually drives
+  // the restart now. This just means "if the app quits before that timer
+  // fires for any reason, install on the way out" rather than silently
+  // discarding an already-downloaded update.
+  autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('checking-for-update', () => {
     updateState.checking = true;
@@ -176,7 +229,8 @@ function setupAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     updateState.checking = false;
     updateState.downloaded = info.version;
-    refreshTray();  // adds "Restart to update"
+    refreshTray();  // shows "Updating to vX… restarting"
+    scheduleAutoInstall(info);
   });
   autoUpdater.on('error', (e) => {
     updateState.checking = false;
@@ -186,21 +240,123 @@ function setupAutoUpdater() {
 
   const check = () => autoUpdater.checkForUpdates().catch(() => { /* offline is fine */ });
   check();
-  setInterval(check, 6 * 3600000);
+  // Push (see setupUpdatePush()) is now primary — this poll is the safety
+  // net for a laptop that was offline when the release ping fired and never
+  // relaunched, so it can afford to be far less frequent than it used to be.
+  setInterval(check, 24 * 3600000);
 }
 
 function installUpdateNow() {
   if (!autoUpdater) return;
   if (updateState.downloaded) {
-    app.isQuitting = true;
-    autoUpdater.quitAndInstall();
+    // An explicit human/operator ask — install immediately, no grace.
+    performQuitAndInstall(`Manual install requested for v${updateState.downloaded}`);
   } else {
-    // Not downloaded yet — kick a check; quitAndInstall once it lands.
+    // Not downloaded yet — kick a check; install the moment it lands.
     autoUpdater.once('update-downloaded', () => {
-      app.isQuitting = true;
-      autoUpdater.quitAndInstall();
+      performQuitAndInstall('Manual install requested — download just finished');
     });
     autoUpdater.checkForUpdates().catch(() => { /* offline */ });
+  }
+}
+
+// ─── Push notification of new releases (Pusher) ─────────────────────────────
+// The release workflow (.github/workflows/build-electron.yml) pings the
+// SAME public Pusher channel the print server already publishes
+// checkin/tally/etc. on, with an `update` event carrying nothing but
+// `{ version, at }` — see CONTRACT.md's "`update` event (laptop-internal)"
+// section. This is the primary path to a fast auto-update; the 24h poll in
+// setupAutoUpdater() above is only the safety net for a laptop that was
+// offline (or never relaunched) when the ping fired.
+//
+// This subscribes with the SAME app key + cluster + channel the server-side
+// `pusher` package already publishes with (config.json's
+// pusherKey/pusherCluster, church-config.json's pusherChannel) — no new
+// config is invented for this. The server holds the Pusher SECRET and is the
+// only thing that can ever publish; this is a subscribe-only client using the
+// public key, exactly like the display app.
+let pusherClient = null;
+let lastUpdatePushVersion = null;
+let lastUpdatePushAt = 0;
+const UPDATE_PUSH_DEBOUNCE_MS = 30000;
+
+// Mirrors print-server/server.js's own CHURCH_CONFIG_FILE resolution (prefer
+// a church-config.json in the data dir so it survives app updates; fall back
+// to the copy shipped next to the print server) so a fork that has
+// customised its channel via that file is honoured here too, without this
+// module needing to require the full server (which starts side effects of
+// its own — see startServer()).
+function resolveUpdateChannel() {
+  const DEFAULT_CHANNEL = 'awana-channel'; // print-server/church-config.json's baked default
+  const dataDirFile = path.join(app.getPath('userData'), 'church-config.json');
+  const bundledFile = app.isPackaged
+    ? path.join(process.resourcesPath, 'print-server', 'church-config.json')
+    : path.join(__dirname, '..', 'print-server', 'church-config.json');
+  const file = fs.existsSync(dataDirFile) ? dataDirFile : bundledFile;
+  try {
+    if (fs.existsSync(file)) {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed.pusherChannel === 'string' && parsed.pusherChannel) {
+        return parsed.pusherChannel;
+      }
+    }
+  } catch { /* malformed church-config.json — fall through to the baked default */ }
+  return DEFAULT_CHANNEL;
+}
+
+function handleUpdatePushEvent(payload) {
+  const decision = updatePush.decideOnUpdateEvent(payload, {
+    now: Date.now(),
+    lastVersion: lastUpdatePushVersion,
+    lastAt: lastUpdatePushAt,
+    debounceMs: UPDATE_PUSH_DEBOUNCE_MS,
+  });
+  if (!decision.act) {
+    console.log(`[update-push] Ignoring event: ${decision.reason}`);
+    return;
+  }
+  lastUpdatePushVersion = decision.version;
+  lastUpdatePushAt = Date.now();
+  console.log(`[update-push] Release ping received for v${decision.version} — checking for updates.`);
+  if (autoUpdater && app.isPackaged) {
+    // This is the ONLY thing a ping ever does. A spoofed event (the channel
+    // is public) cannot forge a release: it can only make the app ask
+    // electron-updater to look at the real GitHub release feed, which it
+    // verifies independently — worst case is a harmless extra check.
+    autoUpdater.checkForUpdates().catch(() => { /* offline is fine — the poll covers it */ });
+  }
+}
+
+// Must never throw or crash the app: a dev install with no Pusher configured
+// (or one that fails to reach Pusher entirely) is expected to fall back to
+// the periodic poll silently, exactly like the display app's own connection
+// handling.
+function setupUpdatePush() {
+  if (!app.isPackaged) return;  // dev install — the periodic poll is enough
+  let PusherClient;
+  try {
+    PusherClient = require('pusher-js');
+  } catch (e) {
+    console.warn('[update-push] pusher-js unavailable — falling back to periodic checks:', e.message);
+    return;
+  }
+  const config = currentConfig || loadConfig() || {};
+  if (!config.pusherKey) {
+    console.log('[update-push] No Pusher key configured — relying on periodic update checks only.');
+    return;
+  }
+  try {
+    pusherClient = new PusherClient(config.pusherKey, {
+      cluster: config.pusherCluster || 'us2',
+    });
+    pusherClient.connection.bind('error', (err) => {
+      console.warn('[update-push] Pusher connection error (periodic checks still cover this):', err && err.message);
+    });
+    const channel = pusherClient.subscribe(resolveUpdateChannel());
+    channel.bind('update', handleUpdatePushEvent);
+  } catch (e) {
+    console.warn('[update-push] Failed to subscribe — falling back to periodic checks:', e && e.message);
+    pusherClient = null;
   }
 }
 
@@ -303,9 +459,11 @@ function buildTray(config) {
   if (autoUpdater && app.isPackaged) {
     template.push({ type: 'separator' });
     if (updateState.downloaded) {
+      // Automatic now (see scheduleAutoInstall) — this is no longer a click
+      // target, just a status line for "yes, it's about to restart itself".
       template.push({
-        label: `⬇ Restart to update to v${updateState.downloaded}`,
-        click: () => installUpdateNow()
+        label: `⬇ Updating to v${updateState.downloaded}… restarting`,
+        enabled: false
       });
     } else if (updateState.available) {
       template.push({ label: `Downloading update v${updateState.available}…`, enabled: false });
@@ -606,6 +764,12 @@ app.whenReady().then(async () => {
   startServer(config);
   buildTray(config);
 
+  // After currentConfig is populated (needs pusherKey/pusherCluster) and the
+  // server has started (which is what would normally hold the Pusher config
+  // fresh from a just-completed setup save, though this reads config.json
+  // directly and does not depend on the server module at all).
+  setupUpdatePush();
+
   if (!config.printerName) {
     // First run — show setup wizard (prefilled from legacy config if migrated)
     createSetupWindow();
@@ -650,4 +814,5 @@ app.on('before-quit', () => {
   app.isQuitting = true;
   if (serverInstance) serverInstance.close();
   if (pdfWindow && !pdfWindow.isDestroyed()) pdfWindow.destroy();
+  if (pusherClient) { try { pusherClient.disconnect(); } catch { /* quitting anyway */ } }
 });

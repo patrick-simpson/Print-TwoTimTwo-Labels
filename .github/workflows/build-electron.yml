@@ -265,3 +265,110 @@ jobs:
             installer/*.exe
             installer/*.blockmap
             installer/latest.yml
+
+      # Push notification of the release, over the SAME public Pusher channel
+      # the print server already publishes checkin/tally/etc. on — see
+      # CONTRACT.md's "`update` event (laptop-internal)" section. This is
+      # what lets installed laptops auto-update within a minute or two
+      # instead of waiting on their periodic poll (still 24h, kept as the
+      # safety net for a laptop that was offline when this fires).
+      #
+      # Runs only after the step above, so the ping can never go out before
+      # the installer + latest.yml are actually live for electron-updater to
+      # find. Guarded by `if:` on the secrets existing at all — an operator
+      # who never sets up push is never blocked from cutting a release; the
+      # 24h poll covers them completely, silently, forever.
+      #
+      # Deliberately a small inline Node script rather than a third-party
+      # action: the Pusher REST API's HMAC-SHA256 request signing
+      # (https://pusher.com/docs/channels/library_auth_reference/rest-api/)
+      # is a dozen lines and pulling in an action for it is a bigger trust
+      # surface than writing it here in the open.
+      - name: Notify laptops of the new release (Pusher push)
+        if: secrets.PUSHER_APP_ID != '' && secrets.PUSHER_KEY != '' && secrets.PUSHER_SECRET != '' && secrets.PUSHER_CLUSTER != ''
+        env:
+          PUSHER_APP_ID: ${{ secrets.PUSHER_APP_ID }}
+          PUSHER_KEY: ${{ secrets.PUSHER_KEY }}
+          PUSHER_SECRET: ${{ secrets.PUSHER_SECRET }}
+          PUSHER_CLUSTER: ${{ secrets.PUSHER_CLUSTER }}
+          # print-server/church-config.json's baked default ('awana-channel')
+          # is the fallback — the same constant server.js itself falls back
+          # to when church-config.json has no pusherChannel of its own.
+          PUSHER_CHANNEL: ${{ secrets.PUSHER_CHANNEL || vars.PUSHER_CHANNEL || 'awana-channel' }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat > /tmp/pusher-notify.cjs <<'EOF'
+          'use strict';
+          const https = require('https');
+          const crypto = require('crypto');
+
+          const appId   = process.env.PUSHER_APP_ID;
+          const key     = process.env.PUSHER_KEY;
+          const secret  = process.env.PUSHER_SECRET;
+          const cluster = process.env.PUSHER_CLUSTER;
+          const channel = process.env.PUSHER_CHANNEL || 'awana-channel';
+          // github.ref_name on a tag push is "v5.8.0" — strip the leading
+          // "v" so this matches package.json/app.getVersion()'s bare semver,
+          // same comparison the smoke-test job already does above.
+          const version = String(process.env.RELEASE_TAG || '').replace(/^v/, '');
+
+          if (!appId || !key || !secret || !cluster || !version) {
+            console.log('[pusher-notify] Missing config or version — skipping (release is unaffected).');
+            process.exit(0);
+          }
+
+          const payload = JSON.stringify({ version, at: new Date().toISOString() });
+          const body = JSON.stringify({ name: 'update', channel, data: payload });
+
+          const requestPath = `/apps/${appId}/events`;
+          const authTimestamp = Math.floor(Date.now() / 1000);
+          const bodyMd5 = crypto.createHash('md5').update(body).digest('hex');
+
+          // Pusher's documented REST API auth scheme: sign
+          // "METHOD\npath\nsorted&query&params" with the app secret.
+          const params = {
+            auth_key: key,
+            auth_timestamp: String(authTimestamp),
+            auth_version: '1.0',
+            body_md5: bodyMd5,
+          };
+          const sortedQs = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join('&');
+          const stringToSign = `POST\n${requestPath}\n${sortedQs}`;
+          const signature = crypto.createHmac('sha256', secret).update(stringToSign).digest('hex');
+          // The signature/secret must never be logged — only status + non-sensitive metadata below.
+
+          const req = https.request({
+            hostname: `api-${cluster}.pusher.com`,
+            path: `${requestPath}?${sortedQs}&auth_signature=${signature}`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+            },
+          }, (res) => {
+            // Log the status as soon as headers arrive rather than waiting on
+            // 'end' — some proxies close the socket after the body without a
+            // clean end-of-stream frame, which would otherwise swallow this
+            // log entirely on an already-successful request.
+            console.log(`[pusher-notify] status=${res.statusCode} channel=${channel} version=${version}`);
+            let data = '';
+            res.on('data', (d) => { data += d; });
+            const logErrorBody = () => {
+              if (res.statusCode >= 300 && data) console.log(`[pusher-notify] response: ${data.slice(0, 500)}`);
+            };
+            res.on('end', logErrorBody);
+            res.on('close', logErrorBody);
+            res.resume();
+          });
+          req.setTimeout(15000, () => {
+            console.log('[pusher-notify] request timed out (non-fatal)');
+            req.destroy();
+          });
+          req.on('error', (e) => {
+            // Never fail the release over this — the 24h poll is the safety net.
+            console.log(`[pusher-notify] request error (non-fatal): ${e.message}`);
+          });
+          req.write(body);
+          req.end();
+          EOF
+          node /tmp/pusher-notify.cjs

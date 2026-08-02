@@ -85,6 +85,39 @@ First names only, ever. `month`/`day` are the birthday's calendar month/day
 | `at` | string (ISO 8601) |
 | `nonce` | string (optional, ≤64) |
 
+### `update` — laptop-internal release ping (NOT part of the display contract)
+
+Published once by the release workflow (`.github/workflows/build-electron.yml`)
+after a new Windows build's installer + `latest.yml` are already live on the
+GitHub Release, so the Electron shell can auto-update within a minute or two
+of a release instead of waiting on its periodic poll.
+
+| Field | Type | Notes |
+|---|---|---|
+| `version` | string | The released semver, e.g. `"5.8.0"` — no `v` prefix. |
+| `at` | string (ISO 8601) | Publish time. Logged only, never used for any decision. |
+
+**This event is consumed only by the Electron print-server app itself**
+(`electron-app/main.js` subscribes to it and calls `checkForUpdates()`), not
+by any display. It rides the same public channel as every other event above
+purely because that channel and its key already exist — a fork's displays
+bind only the event names they know about, so an extra event name on the
+channel is invisible to them by construction, but the rule is stated here
+explicitly rather than left implicit:
+
+- **Never anything but a version string and a timestamp.** No child or
+  household data is even reachable from the release workflow that publishes
+  this, but the same discipline applies as every other event: if a future
+  change ever wants to put more on this event, it still may not carry PII.
+- **Displays MUST ignore it.** No display-side sanitizer or contract vector
+  covers `update`, and none should ever be added — a display binding this
+  event would be relying on undocumented behaviour outside this contract.
+- **It cannot forge a release.** The channel is public, so anyone can see or
+  even publish a fake `update` event with a bogus version — but all that
+  triggers is a normal `checkForUpdates()`, which electron-updater then
+  verifies independently against the real GitHub Releases feed. Worst case is
+  one harmless extra check, not a forced install of anything.
+
 ## Validation
 
 ```bash

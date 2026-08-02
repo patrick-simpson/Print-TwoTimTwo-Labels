@@ -1,4 +1,19 @@
-﻿## [5.7.0] - 2026-08-02
+﻿## [5.8.0] - 2026-08-02
+Updates now reach the laptop in seconds, not hours — and an update that arrives mid-club installs itself immediately, because a mid-club release only ever means an urgent fix is on the way.
+
+### Releases are pushed, not polled
+When a release publishes, the build workflow now pings the same Pusher channel the lobby display already listens to, with a tiny `update` event carrying nothing but the version number and a timestamp. The app subscribes to that channel (read-only, with the same key/cluster/channel it already uses to publish) and reacts to the ping by asking electron-updater to check the real GitHub release feed — the ping is a doorbell, never the package, so a spoofed event could at most trigger a harmless verified check. Displays are untouched: they bind only their known event names, and CONTRACT.md now documents `update` as laptop-internal, version-only, forever.
+
+The push leg activates when the repo has `PUSHER_APP_ID` / `PUSHER_KEY` / `PUSHER_SECRET` / `PUSHER_CLUSTER` secrets (plus optional `PUSHER_CHANNEL`); without them the workflow step skips silently and nothing breaks. The old every-6-hours poll relaxes to every 24 hours — with push doing the real work it's just the safety net for a laptop that was off when the doorbell rang, alongside the unchanged check on every launch.
+
+### Updates install themselves, mid-club included
+The previous policy — download silently, install on quit, never restart mid-club-night — optimized for not surprising anyone. The operator has reversed it deliberately: the only reason a release ships at 7:15pm on a Wednesday is that something is wrong right now. When a download completes, the app now gives any in-flight work a few seconds of grace (it will consult a server busy-signal if one is ever exported; today it is a fixed 5-second grace), shows "Updating to vX… restarting" in the tray, then quits, installs silently, and relaunches itself — kiosk-style, nobody at the keyboard, print server back up in seconds. Install-on-quit remains as a fallback for the rare download that lands exactly as someone closes the app.
+
+### Verification
+New unit suite for the push-event logic (payload shape, identical-version debounce, different-version always acts, stale versions deferred to the updater's own feed check). The workflow's Pusher signing was exercised for real from CI-like conditions — a correctly signed request reaching Pusher and rejected only on credentials proves the wire format without spending a real secret. All 12 suites green; root build green; secrets and signatures never appear in workflow logs.
+
+
+## [5.7.0] - 2026-08-02
 Undos on TwoTimTwo now actually undo: the count comes back down and the kid can be checked in again. Phones refresh themselves instead of showing 7:00pm data all night. And the PIN lockout stops punishing honest thumbs.
 
 ### An undone check-in is finally noticed

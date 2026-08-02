@@ -8,7 +8,22 @@ Having issues with Awana Label Printer? This guide covers common problems and so
 
 This is Windows being cautious about a new community-built app — the installer is not signed with a
 paid certificate. Click **More info**, then **Run anyway**. It only appears on first install;
-after that the app updates itself silently.
+after that the app updates itself silently — usually within a minute or two of a release going out,
+**including mid-club-night**. That is deliberate: a release that ships while a club is running is
+almost always an urgent fix, so the app downloads it, gives any in-flight label print a few seconds
+to finish, and restarts itself. The print server comes back up on its own within seconds; nobody
+needs to touch the laptop. If you'd rather it not surprise you, watch the tray icon — it shows
+"Updating to vX… restarting" for the few seconds before it happens.
+
+Two ways an update reaches the app, in order of speed:
+
+1. **Push** — the release workflow pings the same Pusher channel the lobby display already uses,
+   so most laptops start downloading within a minute or two of a release. This needs the
+   `PUSHER_APP_ID`/`PUSHER_KEY`/`PUSHER_SECRET`/`PUSHER_CLUSTER` repo secrets (and optionally
+   `PUSHER_CHANNEL`) set on the repo — see `docs/SETUP.md`.
+2. **Poll** — every launch, and every 24 hours after that, regardless of push. This is what covers
+   a laptop that was off or offline when the push fired, so **nothing above is required** for
+   updates to work at all; push just makes them faster.
 
 ### Phones can't reach phone check-in (`http://<laptop-ip>:3456/phone`)
 
