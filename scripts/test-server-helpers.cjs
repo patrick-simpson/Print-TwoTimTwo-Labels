@@ -14,7 +14,7 @@ const path = require('path');
 const {
   parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor, isSafePrinterName,
-  effectiveHandbookGroup,
+  effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -352,6 +352,169 @@ console.log('feeds.submitFeed — validation, 5s throttle, and /health freshness
   feeds._resetForTests();
 }
 
+console.log('feeds.submitCheckinReport — undo-detection intake: validation + throttle');
+{
+  feeds._resetForTests();
+  let t = 1_700_000_000_000;
+
+  const noOk = feeds.submitCheckinReport({ entries: [] }, t);
+  check('a report missing "ok: true" is rejected — never inferred from an empty list',
+    noOk.valid === false && noOk.status === 400, JSON.stringify(noOk));
+
+  const noEntries = feeds.submitCheckinReport({ ok: true }, t);
+  check('a report missing the entries array is rejected — that is not the same as an empty report',
+    noEntries.valid === false && noEntries.status === 400, JSON.stringify(noEntries));
+
+  const tooBig = feeds.submitCheckinReport({ ok: true, entries: new Array(feeds.CHECKIN_REPORT_MAX + 1).fill({ name: 'X' }) }, t);
+  check('an oversized entries array is rejected', tooBig.valid === false && tooBig.status === 400);
+
+  const r1 = feeds.submitCheckinReport({
+    ok: true,
+    entries: [
+      { clubberId: 201, name: '  Amy   Zephyr ', club: 'Sparks' },
+      { name: 'No Id Kid', club: 'T&T' },
+      { name: '   ' }, // unreadable — dropped, not a parse failure
+    ],
+  }, t);
+  check('a well-formed report publishes on first submit (not throttled)', r1.valid && r1.throttled === false, JSON.stringify(r1));
+  check('entries are sanitized (trimmed, clubberId stringified) and unreadable rows dropped',
+    r1.payload.entries.length === 2 &&
+    r1.payload.entries[0].clubberId === '201' &&
+    r1.payload.entries[0].name === 'Amy   Zephyr',
+    JSON.stringify(r1.payload.entries));
+
+  const r2 = feeds.submitCheckinReport({ ok: true, entries: [] }, t + 100);
+  check('a second submit inside the throttle window is throttled', r2.valid && r2.throttled === true, JSON.stringify(r2));
+
+  const r3 = feeds.submitCheckinReport({ ok: true, entries: [] }, t + feeds.CHECKIN_REPORT_THROTTLE_MS + 1);
+  check('a submit after the throttle window is accepted again', r3.valid && r3.throttled === false, JSON.stringify(r3));
+
+  feeds._resetForTests();
+}
+
+console.log('reportEntryIdentityKey — matches historyIdentityKey\'s own key format');
+{
+  check('an id-bearing entry keys on the id',
+    reportEntryIdentityKey({ clubberId: '55', name: 'Whoever' }) === 'id:55');
+  check('a report id and a numeric history id agree',
+    reportEntryIdentityKey({ clubberId: 55, name: 'X' }) === 'id:55');
+  check('a name-only entry keys on the lowercased, whitespace-collapsed name',
+    reportEntryIdentityKey({ name: '  Amy   Zephyr ' }) === 'name:amy zephyr');
+}
+
+console.log('reconcileHistoryWithReport — R-1 undo detection: mark, decrement, clear, guard');
+{
+  const today = '2026-08-02';
+  const iso = (h) => `${today}T${h}:00:00.000Z`;
+  const row = (over) => Object.assign({
+    firstName: 'Amy', lastName: 'Zephyr', clubName: 'Sparks',
+    success: true, timestamp: iso('18'),
+  }, over);
+  // Three unrelated kids who stay checked in and stay in the report in every
+  // scenario below — padding so a single undo/mark under test never itself
+  // crosses the mass-undo guard's >50% threshold and gets confused for one.
+  // The guard's own boundary is exercised on purpose, separately, further down.
+  const others = () => [
+    row({ clubberId: '90', firstName: 'Otis' }),
+    row({ clubberId: '91', firstName: 'Ori' }),
+    row({ clubberId: '92', firstName: 'Owen' }),
+  ];
+  const othersInReport = () => [
+    { clubberId: '90', name: 'Otis', club: 'Sparks' },
+    { clubberId: '91', name: 'Ori', club: 'Sparks' },
+    { clubberId: '92', name: 'Owen', club: 'Sparks' },
+  ];
+
+  // ── Basic undo: checked in, then missing from the authoritative report ────
+  {
+    const history = [row({ clubberId: '1' }), ...others()];
+    const out = reconcileHistoryWithReport(history, othersInReport(), Date.parse(iso('19')));
+    check('a kid missing from the report is marked undone', out.changed === 1 && out.history[0].undone === true);
+    check('undoneAt is stamped with an ISO timestamp', typeof out.history[0].undoneAt === 'string' && !Number.isNaN(Date.parse(out.history[0].undoneAt)));
+    check('the ORIGINAL array is untouched (copy-on-write)', history[0].undone === undefined);
+    check('kids who stayed in the report are untouched', out.history.slice(1).every(r => r.undone === undefined));
+  }
+
+  // ── Still in the report: no change ─────────────────────────────────────────
+  {
+    const history = [row({ clubberId: '1' })];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy Zephyr', club: 'Sparks' }], Date.parse(iso('19')));
+    check('a kid still in the report is left alone', out.changed === 0 && out.history[0].undone === undefined);
+  }
+
+  // ── Reappearance clears an existing undone marker (undo-of-the-undo) ───────
+  {
+    const history = [row({ clubberId: '1', undone: true, undoneAt: iso('19') })];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy Zephyr', club: 'Sparks' }], Date.parse(iso('19')));
+    check('reappearing in the report clears undone', out.changed === 1 && out.history[0].undone === undefined && out.history[0].undoneAt === undefined);
+  }
+
+  // ── Re-check-in: a fresh successful print supersedes an older undone row ───
+  {
+    const history = [
+      row({ clubberId: '1', timestamp: iso('19') }),                                    // newest: fresh re-checkin
+      row({ clubberId: '1', timestamp: iso('18'), undone: true, undoneAt: iso('18') }), // oldest: the undone original
+    ];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy Zephyr', club: 'Sparks' }], Date.parse(iso('20')));
+    check('the newest (already not-undone) row needs no change; the older undone row is left as history',
+      out.changed === 0 && out.history[0].undone === undefined && out.history[1].undone === true);
+  }
+
+  // ── Deterministic "latest wins": newest row undone, older row still clean ──
+  {
+    const history = [
+      row({ clubberId: '1', timestamp: iso('19') }),  // newest — about to be marked undone
+      row({ clubberId: '1', timestamp: iso('18') }),  // an earlier reprint of the same checkin
+      ...others(),
+    ];
+    const out = reconcileHistoryWithReport(history, othersInReport(), Date.parse(iso('20')));
+    check('only the newest row is marked undone, never an older duplicate',
+      out.changed === 1 && out.history[0].undone === true && out.history[1].undone === undefined);
+  }
+
+  // ── Visitors are exempt from being marked undone (report visitor coverage is unknown) ──
+  {
+    const history = [row({ clubberId: '9', visitor: true })];
+    const out = reconcileHistoryWithReport(history, [], Date.parse(iso('19')));
+    check('a visitor missing from the report is NOT marked undone', out.changed === 0 && out.history[0].undone === undefined);
+  }
+  {
+    // Reappearance still clears a visitor's undone flag — that direction can only fix a false undo.
+    const history = [row({ clubberId: '9', visitor: true, undone: true, undoneAt: iso('18') })];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '9', name: 'Amy Zephyr', club: 'Sparks' }], Date.parse(iso('19')));
+    check('a visitor reappearing in the report still clears an existing undone flag', out.changed === 1 && out.history[0].undone === undefined);
+  }
+
+  // ── Mass-undo guard: a bad/partial scrape must never wipe most of the night ─
+  {
+    const history = [
+      row({ clubberId: '1', firstName: 'Amy' }),
+      row({ clubberId: '2', firstName: 'Ben' }),
+      row({ clubberId: '3', firstName: 'Cal' }),
+    ];
+    // Report claims only Amy is still checked in — 2 of 3 (>half) would flip.
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy', club: 'Sparks' }], Date.parse(iso('19')));
+    check('more than half undone in one pass is refused (suspect scrape)', out.skipped === true && out.changed === 0);
+    check('history comes back byte-for-byte unchanged when skipped', out.history === history);
+    check('the skip reason is a human-readable string', typeof out.reason === 'string' && out.reason.length > 0);
+  }
+  {
+    // Exactly half (not MORE than half) is allowed through.
+    const history = [
+      row({ clubberId: '1', firstName: 'Amy' }),
+      row({ clubberId: '2', firstName: 'Ben' }),
+    ];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy', club: 'Sparks' }], Date.parse(iso('19')));
+    check('exactly half undone in one pass is allowed (guard is a ">" threshold)', out.skipped === false && out.changed === 1);
+  }
+
+  // ── An empty/missing report on an otherwise-empty night is a no-op, not a crash ──
+  {
+    const out = reconcileHistoryWithReport([], [], Date.parse(iso('19')));
+    check('empty history + empty report changes nothing', out.changed === 0 && out.skipped === false);
+  }
+}
+
 console.log('isSafePrinterName — a printer name reaches PowerShell, so it is validated not escaped');
 {
   // REGRESSION GUARD: printPdf() once escaped only single quotes and then
@@ -482,6 +645,42 @@ console.log('packaging — every print-server module must ship inside the Window
     lim.recordFailure('9.9.9.9', t0);
     lim.recordSuccess('9.9.9.9');
     check('a success clears the failure count', lim.retryAfterMs('9.9.9.9', t0) === 0);
+  }
+
+  // Rate limiter — identical-guess dedupe (a stale saved PIN retried by a
+  // phone, or Enter-mashing, must not out-count real distinct mistakes).
+  {
+    const lim = sec.createPinLimiter({ maxFailures: 8, lockoutMs: 1000 });
+    const t0 = 2_000_000;
+    for (let i = 0; i < 10; i++) lim.recordFailure('10.0.0.1', t0 + i, 'wrong-same');
+    check('identical wrong guess repeated N times counts once',
+      lim.retryAfterMs('10.0.0.1', t0 + 10) === 0);
+
+    const lim2 = sec.createPinLimiter({ maxFailures: 8, lockoutMs: 1000 });
+    for (let i = 0; i < 8; i++) lim2.recordFailure('10.0.0.2', t0 + i, 'guess-' + i);
+    check('distinct guesses still lock at the threshold', lim2.retryAfterMs('10.0.0.2', t0 + 8) > 0);
+
+    const lim3 = sec.createPinLimiter({ maxFailures: 3, lockoutMs: 1000 });
+    lim3.recordFailure('10.0.0.3', t0, 'aaaa');
+    lim3.recordFailure('10.0.0.3', t0, 'aaaa'); // repeat — should not increment
+    lim3.recordFailure('10.0.0.3', t0, 'bbbb'); // distinct — increments
+    check('a repeat guess does not advance toward lockout',
+      lim3.retryAfterMs('10.0.0.3', t0) === 0);
+    lim3.recordFailure('10.0.0.3', t0, 'cccc'); // 3rd distinct guess -> locks
+    check('distinct guesses after repeats still reach the threshold',
+      lim3.retryAfterMs('10.0.0.3', t0) > 0);
+
+    const lim4 = sec.createPinLimiter({ maxFailures: 3, lockoutMs: 1000 });
+    lim4.recordFailure('10.0.0.4', t0, 'zzzz');
+    lim4.recordFailure('10.0.0.4', t0, 'zzzz');
+    lim4.recordFailure('10.0.0.4', t0, 'zzzz');
+    lim4.recordSuccess('10.0.0.4');
+    check('success still clears a deduped record', lim4.retryAfterMs('10.0.0.4', t0) === 0);
+
+    const lim5 = sec.createPinLimiter({ maxFailures: 3, lockoutMs: 1000 });
+    for (let i = 0; i < 5; i++) lim5.recordFailure('10.0.0.5', t0 + i, 'same-guess');
+    check('per-address scoping intact alongside dedupe',
+      lim5.retryAfterMs('10.0.0.6', t0 + 5) === 0);
   }
 
   // Bind host — the property that keeps a default install off the network.

@@ -1,4 +1,28 @@
-﻿## [5.6.1] - 2026-08-01
+﻿## [5.7.0] - 2026-08-02
+Undos on TwoTimTwo now actually undo: the count comes back down and the kid can be checked in again. Phones refresh themselves instead of showing 7:00pm data all night. And the PIN lockout stops punishing honest thumbs.
+
+### An undone check-in is finally noticed
+The printer's tally (and everything downstream: the lobby ticker, the gym display's corner counter) recounts its own label history — and nothing ever told that history about an undo made on TwoTimTwo's check-in report. The stale count survived all night, and the phone page kept the kid greyed out as "checked in", so a volunteer couldn't fix the mistake by just checking them in again.
+
+The extension already polls `/clubber/checkin_report` (the authoritative "who's in tonight" table) every minute for label reconciliation (R-1, since 5.2). That same pass now posts the report's identity list to the print server, which diffs it against tonight's history:
+
+- A kid present in history but gone from the report is marked **undone** (the record is kept — history doubles as the print log — just no longer counted). The tally rebroadcasts immediately, so displays drop within seconds, not at the next minute tick.
+- `/phone/roster` stops reporting an undone kid as checked in, so **phones can re-check them in**; the fresh check-in prints a label, broadcasts, and counts once — latest record wins, deterministically, even across reprints.
+- If the kid reappears in the report with no new print (the undo itself was the mistake), the undone flag clears in place.
+
+Guards, because a bad scrape must never mass-undo a club night: the extension only posts a report that parsed successfully (an empty or bounced page never masquerades as "nobody's here"); a pass that would undo more than half of tonight's kids is skipped and logged as a suspect scrape; and visitor entries are never undo-marked (the report's coverage of first-timers is unverified) though reappearance can still clear a false undo on one. No event shapes changed — the display contract is untouched; the numbers just stopped lying.
+
+### Phone screens refresh themselves
+The phone page fetched the roster exactly once, at PIN entry. Every later change — another phone's check-ins, the desk's, an undo — was invisible until someone thought to pull-to-refresh a page that had no refresh. Now it re-fetches every ~12 seconds (same family as the dashboard's 15s polls), plus immediately when the screen comes back to focus and right after its own check-in resolves. Server truth merges into the list without touching a row whose check-in this phone still has in flight — the old renderer rebuilt every button on each paint, so a naive poll would have wiped a "Working…" button mid-check-in; transient state now lives outside the DOM precisely so a refresh can never eat a check-in in progress. Offline, the poll backs off to 60s and catches up on the first success; a wrong PIN (the desk changed it) stops polling cold and returns to the PIN screen rather than grinding the limiter in the background.
+
+### The PIN lockout counts mistakes, not anxiety
+Two compounding bugs made the lockout fire far earlier than its advertised 8 attempts. The unlock button had no in-flight guard, so a double-tap (or Enter-mashing on a slow network) sent the same wrong PIN two or three times — each counted. And every wrong request counted separately even when it was literally the same guess, so four honest typos worth of mashing could lock a phone. Now: the button disables while a request is out; and server-side, repeated identical wrong guesses from the same phone count as one failure (a salted hash of the last failed guess is compared — the guess itself is never stored). Distinct guesses still count, so the brute-force math is intact — a guesser has to vary PINs, and 8 distinct failures still locks for 60 seconds. The lockout message finally shows a live countdown from the server's own Retry-After instead of "wait a minute".
+
+### Verification
+New pure-function tests for the reconcile diff (mark, clear, reappear, latest-wins across reprints, visitor exemption both directions, the exact mass-undo boundary) and limiter dedupe (identical guess ×10 counts once; distinct guesses still lock; success still clears; per-address scoping intact), plus end-to-end HTTP tests: tally decrements and republishes on undo, the roster frees the kid, and a real re-check-in through `/print` after the real 25-second duplicate window counts exactly once. Full suite green, root build clean.
+
+
+## [5.6.1] - 2026-08-01
 Puggles labels are fixed: the club logo now prints as solid black instead of a ghost, and the meaningless "Puggles group" line is gone.
 
 ### The Puggles logo printed as a tiny speck

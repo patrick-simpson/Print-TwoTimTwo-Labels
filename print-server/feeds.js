@@ -164,6 +164,73 @@ const VALIDATORS = {
   checkout: validateCheckoutBody,
 };
 
+// ── POST /feed/checkin-report — undo detection ──────────────────────────────
+// NOT one of the five contract-v3/v4 feeds above: it never publishes a Pusher
+// event of its own (no new event type — the display contract is pinned), so
+// it deliberately sits outside VALIDATORS/submitFeed. It carries the SAME
+// /clubber/checkin_report scrape content.js's R-1 reconcile pass already fetches
+// every ~60s ("who's checked in tonight, authoritatively") so the server can
+// diff it against print-history.json and notice an UNDO — a check-in removed
+// on TwoTimTwo itself, which is otherwise invisible to both the roster-diff
+// detector and to history. server.js's reconcileHistoryWithReport() owns the
+// actual diff/mutation; this module's job is the same as for every other feed:
+// decide whether the body is well-formed enough to act on, and throttle a
+// runaway/buggy content script.
+//
+// `name` here is a whole "First Last" string (or just "First"), unlike the
+// other feeds which never carry a name at all — this is the one input to this
+// server that is allowed to, because it never leaves this process: it is
+// compared against print-history.json in memory and never published anywhere.
+const CHECKIN_REPORT_MAX = 500;
+const CHECKIN_REPORT_THROTTLE_MS = 5000;
+
+function validateCheckinReportBody(body) {
+  if (!isPlainObject(body)) return { ok: false, reason: 'body must be an object' };
+  // Explicit ok/complete signal from the extension side, required rather than
+  // inferred from an empty entries array — an empty array can honestly mean
+  // "nobody has checked in yet" OR "the scrape failed/needed login", and only
+  // the extension (which just fetched the page) can tell those apart. Treating
+  // silence as "empty" would hand a plausible-looking mass-undo straight to
+  // the guard below with nothing left to catch it on the way in.
+  if (body.ok !== true) {
+    return { ok: false, reason: 'ok must be true — only post a report that parsed successfully and completely' };
+  }
+  if (!Array.isArray(body.entries)) {
+    return { ok: false, reason: 'entries must be an array (a missing array is not an empty report)' };
+  }
+  if (body.entries.length > CHECKIN_REPORT_MAX) {
+    return { ok: false, reason: `entries must not exceed ${CHECKIN_REPORT_MAX}` };
+  }
+  const entries = [];
+  for (const raw of body.entries) {
+    if (!isPlainObject(raw)) continue;
+    const name = String(raw.name || '').trim().slice(0, 80);
+    if (!name) continue; // an entry with no readable name can't be matched to anyone
+    const clubberIdRaw = raw.clubberId != null ? String(raw.clubberId).trim() : '';
+    entries.push({
+      name,
+      clubberId: clubberIdRaw ? clubberIdRaw.slice(0, 40) : null,
+      club: String(raw.club || '').trim().slice(0, 60),
+    });
+  }
+  return { ok: true, payload: { entries } };
+}
+
+let lastCheckinReportAt = 0;
+
+// Same shape as submitFeed()'s return ({valid, status, reason} | {valid:true,
+// throttled, payload}) so server.js's route reads identically to the other
+// feed routes, minus the Pusher publish step that route does itself.
+function submitCheckinReport(body, now = Date.now()) {
+  const result = validateCheckinReportBody(body);
+  if (!result.ok) return { valid: false, status: 400, reason: result.reason };
+  if (now - lastCheckinReportAt < CHECKIN_REPORT_THROTTLE_MS) {
+    return { valid: true, throttled: true, payload: result.payload };
+  }
+  lastCheckinReportAt = now;
+  return { valid: true, throttled: false, payload: result.payload };
+}
+
 // ── Per-feed state ────────────────────────────────────────────────────────
 // lastPublishAt gates the throttle window; feedState backs GET /health so
 // the dashboard can show freshness ("last received", "last published",
@@ -230,6 +297,7 @@ function getFeedsHealth() {
 // test's throttle window can't bleed into the next.
 function _resetForTests() {
   FEED_NAMES.forEach(f => { lastPublishAt[f] = 0; feedState[f] = freshState(); });
+  lastCheckinReportAt = 0;
 }
 
 module.exports = {
@@ -246,4 +314,10 @@ module.exports = {
   validatePointsBody,
   validateScheduleBody,
   validateNoticeBody,
+  // POST /feed/checkin-report (undo detection) — deliberately not part of
+  // FEED_NAMES/VALIDATORS/submitFeed; see the comment above its definition.
+  CHECKIN_REPORT_MAX,
+  CHECKIN_REPORT_THROTTLE_MS,
+  validateCheckinReportBody,
+  submitCheckinReport,
 };

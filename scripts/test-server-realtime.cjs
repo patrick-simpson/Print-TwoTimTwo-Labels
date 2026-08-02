@@ -65,6 +65,10 @@ Module._load = function patched(request) {
 };
 
 const events = require(path.join(__dirname, '..', 'print-server', 'events.js'));
+// Same module instance server.js requires internally (Node's require cache is
+// keyed by resolved path) — used in phase 7 only to reset the /feed/checkin-
+// report throttle between assertions so the test isn't paced by it.
+const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
 
 async function j(pathname, opts) {
   const res = await fetch(BASE + pathname, opts);
@@ -132,6 +136,8 @@ async function main() {
     return (w && w.message) || '';
   });
 
+  let amyPrintedAt;
+
   // ── 1. Unkeyed: plaintext, and loudly said so ──────────────────────────────
   console.log('\nrealtime: with no display key');
   {
@@ -145,6 +151,10 @@ async function main() {
       warningTexts(h.body.warnings).some((w) => /Settings . Realtime privacy/i.test(w)),
       JSON.stringify(h.body.warnings));
 
+    amyPrintedAt = Date.now(); // phase 7 (R-1 undo detection) reuses her to prove the
+    // 25s duplicate-print window doesn't block a re-check-in "minutes later" —
+    // by the time that phase runs, real wall-clock time has already done the
+    // waiting for us.
     await post('/print', { firstName: 'Amy', lastName: 'Tester', clubName: 'Sparks' });
     const ck = sealedFrames('checkin');
     check('a checkin was published', ck.length === 1, `saw ${ck.length}`);
@@ -291,6 +301,127 @@ async function main() {
     const hist = await j('/history');
     const rows = Array.isArray(hist.body) ? hist.body : (hist.body && hist.body.history) || [];
     check('every print was recorded', rows.length >= 4, `history has ${rows.length} rows`);
+  }
+
+  // ── 7. R-1 undo detection: mark, decrement, roster, re-check-in, guards ────
+  // content.js's runReconcile() already polls /clubber/checkin_report every
+  // ~60s (R-1, since v5.2) to catch check-ins the roster-diff detector
+  // missed. This is the other direction that same report never covered: an
+  // UNDO on TwoTimTwo — a child removed from the roster after being checked
+  // in — which print-history.json has no way to learn on its own. This phase
+  // exercises the new POST /feed/checkin-report end to end, against the SAME
+  // running server (so it inherits Amy/Bella/Cody/Dana, checked in over the
+  // course of phases 1-6, as "already checked in tonight" — the messy
+  // real-world starting point). Amy specifically (not a fresh throwaway name)
+  // is reused throughout: /phone/roster only lists clubbers who are actually
+  // in clubbers.csv, and she's the one this fixture has.
+  //
+  // feeds._resetForTests() is called between report posts purely to bypass
+  // THIS feed's own 5s throttle so the test isn't paced by it — the throttle
+  // itself is already covered by feeds.submitCheckinReport's own unit test.
+  console.log('realtime: R-1 undo detection (POST /feed/checkin-report)');
+  {
+    const kidsByName = (body) => new Map((body.kids || []).map((k) => [k.name, k.checkedIn]));
+
+    const before = (await j('/stats/tonight')).body;
+    check('Amy/Bella/Cody/Dana are already checked in from earlier phases',
+      before.checkedIn === 4, `checkedIn=${before.checkedIn}`);
+
+    // Everyone tonight EXCEPT Amy — a reconcile pass that lost track of one child.
+    const everyoneButAmy = [
+      { name: 'Bella Tester', club: 'Sparks' },
+      { name: 'Cody Tester', club: 'Sparks' },
+      { name: 'Dana Tester', club: 'Sparks' },
+    ];
+
+    const wireBefore = wire.length;
+    const rep1 = await post('/feed/checkin-report', { ok: true, entries: everyoneButAmy });
+    check('a well-formed report is accepted and applied',
+      rep1.status === 200 && rep1.body.ok === true && rep1.body.applied === true, JSON.stringify(rep1.body));
+    check('exactly the one missing kid (Amy) is marked undone', rep1.body.changed === 1, JSON.stringify(rep1.body));
+
+    const afterUndo = (await j('/stats/tonight')).body;
+    check('checkedIn decrements immediately', afterUndo.checkedIn === before.checkedIn - 1,
+      `before=${before.checkedIn} afterUndo=${afterUndo.checkedIn}`);
+
+    const tallyFrames = wire.slice(wireBefore).filter((w) => w.event === 'tally');
+    check('a tally is republished immediately — not waiting for the 60s tick', tallyFrames.length >= 1);
+    check('and it already carries the decremented total',
+      tallyFrames.length > 0 && tallyFrames[tallyFrames.length - 1].payload.total === afterUndo.checkedIn,
+      JSON.stringify(tallyFrames[tallyFrames.length - 1] && tallyFrames[tallyFrames.length - 1].payload));
+
+    const roster1 = await post('/phone/roster', {});
+    check('the undone kid is available again for phone check-in',
+      kidsByName(roster1.body).get('Amy Tester') === false,
+      JSON.stringify(roster1.body.kids && roster1.body.kids.find((k) => k.name === 'Amy Tester')));
+    check('her still-checked-in friend is unaffected',
+      kidsByName(roster1.body).get('Bella Tester') === true);
+
+    // ── Reappearance with NO new print clears undone on the SAME row ────────
+    // (the undo was itself a mistake, corrected back on TwoTimTwo — no fresh
+    // print exists to supersede it, so the existing row must be un-marked
+    // rather than left stuck.)
+    const histBeforeClear = (await j('/history')).body;
+    check('exactly one history row for Amy so far',
+      histBeforeClear.filter((r) => r.firstName === 'Amy').length === 1);
+    feeds._resetForTests();
+    const rep2 = await post('/feed/checkin-report', { ok: true, entries: [...everyoneButAmy, { name: 'Amy Tester', club: 'Sparks' }] });
+    check('reappearing clears the undone flag', rep2.body.changed === 1, JSON.stringify(rep2.body));
+    const afterClear = (await j('/stats/tonight')).body;
+    check('checkedIn is restored', afterClear.checkedIn === before.checkedIn,
+      `before=${before.checkedIn} afterClear=${afterClear.checkedIn}`);
+    const histAfterClear = (await j('/history')).body;
+    const amyRowsAfterClear = histAfterClear.filter((r) => r.firstName === 'Amy');
+    check('still exactly ONE history row for Amy — the same row was un-marked, not a new one added',
+      amyRowsAfterClear.length === 1 && !amyRowsAfterClear[0].undone, JSON.stringify(amyRowsAfterClear));
+
+    // Re-undo her so the re-check-in-with-a-fresh-print path below starts from
+    // "undone", which is the scenario that actually matters operationally.
+    feeds._resetForTests();
+    await post('/feed/checkin-report', { ok: true, entries: everyoneButAmy });
+    check('she is undone again ahead of the re-check-in test',
+      kidsByName((await post('/phone/roster', {})).body).get('Amy Tester') === false);
+
+    // ── The 25s duplicate-print window (recordPrint/dupKey) must not block a
+    // real re-check-in minutes later — only an immediate retry of the SAME
+    // request. Amy's ORIGINAL /print call was all the way back in phase 1;
+    // everything phases 2-6 did is real wall-clock time that has already
+    // elapsed since then, so this proves the window against the actual /print
+    // path a re-check-in takes, with no artificial shortcut around it.
+    const elapsed = Date.now() - amyPrintedAt;
+    const remaining = 25200 - elapsed; // DUPLICATE_WINDOW_MS (25000) + margin
+    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+
+    const reprint = await post('/print', { firstName: 'Amy', lastName: 'Tester', clubName: 'Sparks' });
+    check('the re-check-in print succeeds (not suppressed as a stale duplicate)',
+      reprint.body && reprint.body.success === true, JSON.stringify(reprint.body));
+    const afterRecheckin = (await j('/stats/tonight')).body;
+    check('and counts her exactly once more (not twice)', afterRecheckin.checkedIn === afterClear.checkedIn,
+      `afterClear=${afterClear.checkedIn} afterRecheckin=${afterRecheckin.checkedIn}`);
+    const roster2 = await post('/phone/roster', {});
+    check('the phone roster reflects the re-check-in', kidsByName(roster2.body).get('Amy Tester') === true);
+
+    const histFinal = (await j('/history')).body;
+    const amyRowsFinal = histFinal.filter((r) => r.firstName === 'Amy');
+    check('two history rows for Amy now exist — history is a print log, an undo is never deleted',
+      amyRowsFinal.length === 2, `saw ${amyRowsFinal.length}`);
+    check('the newest row wins (not undone) even though an older undone row for her still exists',
+      amyRowsFinal.some((r) => r.undone === true) && amyRowsFinal.some((r) => !r.undone));
+
+    // ── Guards ────────────────────────────────────────────────────────────
+    feeds._resetForTests();
+    const badSignal = await post('/feed/checkin-report', { entries: [] });
+    check('a report missing the explicit ok:true signal is rejected outright (never inferred from emptiness)',
+      badSignal.status === 400, JSON.stringify(badSignal.body));
+
+    const beforeGuard = (await j('/stats/tonight')).body.checkedIn;
+    check('several kids are checked in before the guard test', beforeGuard >= 4, `checkedIn=${beforeGuard}`);
+    const guardRes = await post('/feed/checkin-report', { ok: true, entries: [] });
+    check('a suspiciously-empty report is well-formed enough to accept...', guardRes.status === 200);
+    check('...but the mass-undo guard (>50% in one pass) refuses to apply it',
+      guardRes.body.applied === false && guardRes.body.changed === 0, JSON.stringify(guardRes.body));
+    const afterGuard = (await j('/stats/tonight')).body.checkedIn;
+    check('so nothing was actually undone', afterGuard === beforeGuard, `before=${beforeGuard} after=${afterGuard}`);
   }
 
   listener.close();

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.6.1';
+  const EXTENSION_VERSION = '5.7.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -3191,6 +3191,32 @@
       });
   }
 
+  // Undo detection (roadmap follow-up to R-1): post this SAME authoritative
+  // list to the print server on every successful parse, not just when it's
+  // used to catch a missed check-in. The server has no way on its own to
+  // learn that a check-in it already printed a label for was later undone on
+  // TwoTimTwo — its print-history.json only ever grows — so it diffs this
+  // report against that history to notice one. `ok: true` is sent ONLY when
+  // fetchCheckinReport() actually parsed a real report (never inferred from
+  // an empty list, which just as plausibly means a login bounce or a missing
+  // table); the server refuses anything without it rather than guess.
+  // Best-effort and silent on failure, same as every other feed post in this
+  // codebase — a print-server hiccup or an older server build without this
+  // route must never interrupt reconcile's own missed-check-in/phantom work.
+  function postCheckinReport(entries) {
+    fetch(PRINT_SERVER + '/feed/checkin-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ok: true,
+        entries: entries.map(function(e) {
+          return { clubberId: e.clubberId, name: e.name, club: e.club };
+        })
+      }),
+      signal: AbortSignal.timeout(8000)
+    }).catch(function() { /* best-effort — never block reconcile on this */ });
+  }
+
   function updateReconcileWidget(phantomCount) {
     var el = document.getElementById('awana-reconcile-status');
     if (!el) return;
@@ -3215,6 +3241,7 @@
         return;
       }
       console.log('[Awana] Reconcile: report has ' + entries.length + ' checked-in kid(s)');
+      postCheckinReport(entries);
 
       if (!reconcileBaselineDone) {
         // First successful reconcile this session: seed dedup with everyone

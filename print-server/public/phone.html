@@ -69,6 +69,27 @@
 var PIN = sessionStorage.getItem('awanaPhonePin') || '';
 var KIDS = [];
 
+// Per-kid transient UI state, keyed by kid.name.toLowerCase(). Presence of a
+// key here means "this phone has a check-in for this kid in flight (or just
+// failed/timed out) — don't let a background roster refresh clobber it".
+// Anything NOT in STATE just renders straight off KIDS[i].checkedIn (server
+// truth). Keeping this out of the DOM (rather than mutating buttons in place)
+// is what lets render() be called freely from the search box, the periodic
+// roster refresh, and visibilitychange without losing a "Working…" button.
+var STATE = {};
+
+var unlockedState = false;   // true once we're past the PIN screen
+var unlockInFlight = false;  // guards unlock() against double-taps / Enter-mashing
+var pinCountdownTimer = null;
+
+var ROSTER_POLL_BASE_MS = 12000;   // ~12s — same family as the laptop dashboard's 10-15s poll
+var ROSTER_POLL_MAX_MS = 60000;
+var rosterPollMs = ROSTER_POLL_BASE_MS;
+var rosterPollTimer = null;
+var rosterPollResumeTimer = null;
+var rosterFetchInFlight = false;
+var pollActive = false;      // false while stopped by a 403/429 or before unlock
+
 function toast(msg, ms) {
   var t = document.getElementById('toast');
   t.textContent = msg;
@@ -77,56 +98,167 @@ function toast(msg, ms) {
   t._timer = setTimeout(function() { t.style.display = 'none'; }, ms || 3000);
 }
 
-function loadRoster() {
+// One low-level fetch, used by the initial unlock, the auto-unlock-on-load,
+// and every background refresh — so all three agree on what 403/429/network
+// mean. Throws an Error with a `.code` of 'pin' | 'locked' | 'network'; a
+// 'locked' error also carries `.retryAfter` (seconds) read off the server's
+// Retry-After header.
+function fetchRoster(pin) {
   return fetch('/phone/roster', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pin: PIN })
+    body: JSON.stringify({ pin: pin })
   }).then(function(r) {
-    if (r.status === 403) throw new Error('pin');
+    if (r.status === 403) {
+      var pinErr = new Error('pin'); pinErr.code = 'pin'; throw pinErr;
+    }
     // The server rate-limits wrong PINs, so distinguish "locked out" from
     // "wrong" — otherwise a volunteer who fat-fingered it a few times sees
     // "cannot reach the print server" and starts debugging the WiFi.
-    if (r.status === 429) throw new Error('locked');
+    if (r.status === 429) {
+      var retryAfter = parseInt(r.headers.get('Retry-After'), 10);
+      var lockedErr = new Error('locked');
+      lockedErr.code = 'locked';
+      lockedErr.retryAfter = (isFinite(retryAfter) && retryAfter > 0) ? retryAfter : 60;
+      throw lockedErr;
+    }
+    if (!r.ok) { var netErr = new Error('network'); netErr.code = 'network'; throw netErr; }
     return r.json();
-  }).then(function(data) {
-    KIDS = data.kids || [];
-    document.getElementById('pin-screen').style.display = 'none';
-    document.getElementById('main-screen').style.display = 'block';
-    render();
   });
 }
 
+// ── PIN screen ────────────────────────────────────────────────────────────
+function clearPinCountdown() {
+  clearInterval(pinCountdownTimer);
+  pinCountdownTimer = null;
+}
+
+// Live countdown ("try again in 37s…") instead of a static message, ticking
+// once a second off the server's own Retry-After value. Keeps the unlock
+// button disabled for the duration so mashing Enter can't re-arm the limiter
+// the moment it opens back up.
+function startPinCountdown(seconds) {
+  clearPinCountdown();
+  var remaining = seconds;
+  var btn = document.getElementById('pin-btn');
+  var err = document.getElementById('pin-err');
+  btn.disabled = true;
+  function tick() {
+    if (remaining <= 0) {
+      clearPinCountdown();
+      err.textContent = '';
+      btn.disabled = false;
+      return;
+    }
+    err.textContent = 'Too many wrong PINs — try again in ' + remaining + 's';
+    remaining -= 1;
+  }
+  tick();
+  pinCountdownTimer = setInterval(tick, 1000);
+}
+
+function showMainScreen() {
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('main-screen').style.display = 'block';
+}
+
+function showPinScreen(message) {
+  document.getElementById('main-screen').style.display = 'none';
+  document.getElementById('pin-screen').style.display = 'block';
+  document.getElementById('pin').value = '';
+  document.getElementById('pin-err').textContent = message || '';
+}
+
+// A 403 mid-poll means the desk changed the PIN out from under this phone.
+// A background timer must never be allowed to keep hammering the (now wrong)
+// saved PIN into the limiter, so this stops the loop outright rather than
+// backing off and retrying.
+function handlePinInvalidated() {
+  stopRosterPoll();
+  unlockedState = false;
+  sessionStorage.removeItem('awanaPhonePin');
+  PIN = '';
+  STATE = {};
+  clearPinCountdown();
+  showPinScreen('PIN changed — ask the check-in desk for the new PIN.');
+}
+
+// A 429 mid-poll means this address is rate-limited (could be this phone,
+// could be another device sharing the same NAT'd address) — not something a
+// re-typed PIN fixes. Stop polling immediately (same reason as the 403 case:
+// a timer must never grind the limiter) and resume on its own once the
+// lockout the server told us about should have cleared.
+function handleLockoutDuringPoll(retryAfterSeconds) {
+  var secs = (isFinite(retryAfterSeconds) && retryAfterSeconds > 0) ? retryAfterSeconds : 60;
+  pollActive = false;
+  clearTimeout(rosterPollTimer);
+  rosterPollTimer = null;
+  toast('Too many requests — pausing live updates for ' + secs + 's.', 6000);
+  clearTimeout(rosterPollResumeTimer);
+  rosterPollResumeTimer = setTimeout(function() { startRosterPoll(); }, (secs + 1) * 1000);
+}
+
 function unlock() {
-  PIN = document.getElementById('pin').value.trim();
-  loadRoster().then(function() {
+  if (unlockInFlight) return; // ignore double-taps / Enter-mashing while a request is outstanding
+  var pinVal = document.getElementById('pin').value.trim();
+  if (!pinVal) return;
+  unlockInFlight = true;
+  var btn = document.getElementById('pin-btn');
+  btn.disabled = true;
+  fetchRoster(pinVal).then(function(data) {
+    PIN = pinVal;
     sessionStorage.setItem('awanaPhonePin', PIN);
+    KIDS = data.kids || [];
+    STATE = {};
+    unlockedState = true;
+    showMainScreen();
+    render();
+    startRosterPoll();
+    unlockInFlight = false;
+    btn.disabled = false;
   }).catch(function(e) {
+    unlockInFlight = false;
+    if (e.code === 'locked') {
+      startPinCountdown(e.retryAfter); // manages btn.disabled itself for the duration
+      return;
+    }
+    btn.disabled = false;
     document.getElementById('pin-err').textContent =
-      e.message === 'pin' ? 'Wrong PIN — ask the check-in desk.'
-      : e.message === 'locked' ? 'Too many wrong PINs — wait a minute, then try again.'
+      e.code === 'pin' ? 'Wrong PIN — ask the check-in desk.'
       : 'Cannot reach the print server. Same Wi-Fi?';
   });
 }
 document.getElementById('pin-btn').addEventListener('click', unlock);
 document.getElementById('pin').addEventListener('keydown', function(e) { if (e.key === 'Enter') unlock(); });
 
+// ── Roster + rendering ────────────────────────────────────────────────────
 function render() {
   var q = document.getElementById('search').value.trim().toLowerCase();
   var list = document.getElementById('list');
   list.innerHTML = '';
   var shown = KIDS.filter(function(k) { return !q || k.name.toLowerCase().indexOf(q) !== -1; }).slice(0, 40);
   shown.forEach(function(k) {
+    var key = k.name.toLowerCase();
+    var st = STATE[key];
     var row = document.createElement('div');
-    row.className = 'kid' + (k.checkedIn ? ' done' : '');
+    row.className = 'kid' + (!st && k.checkedIn ? ' done' : '');
     var left = document.createElement('div');
     var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k.name;
     var cl = document.createElement('div'); cl.className = 'club'; cl.textContent = k.club || '';
     left.appendChild(nm); left.appendChild(cl);
     var btn = document.createElement('button');
-    btn.textContent = k.checkedIn ? 'Checked in' : 'Check in';
-    btn.disabled = !!k.checkedIn;
-    btn.addEventListener('click', function() { checkIn(k, btn); });
+    if (st && st.status === 'sending') {
+      btn.textContent = 'Sending…'; btn.disabled = true; btn.classList.add('busy');
+    } else if (st && st.status === 'pending') {
+      btn.textContent = 'Working…'; btn.disabled = true; btn.classList.add('busy');
+    } else if (st && st.status === 'noanswer') {
+      btn.textContent = 'No answer'; btn.disabled = true;
+    } else if (k.checkedIn) {
+      btn.textContent = 'Checked in'; btn.disabled = true;
+    } else {
+      btn.textContent = 'Check in'; btn.disabled = false;
+      btn.addEventListener('click', function() { checkIn(k); });
+    }
     row.appendChild(left); row.appendChild(btn);
     list.appendChild(row);
   });
@@ -136,54 +268,146 @@ function render() {
 }
 document.getElementById('search').addEventListener('input', render);
 
-function checkIn(kid, btn) {
-  btn.disabled = true;
-  btn.classList.add('busy');
-  btn.textContent = 'Sending…';
+// Folds a fresh server roster into KIDS. A kid this phone has a check-in
+// in flight for (anything with a STATE entry) keeps its EXISTING object —
+// same identity, same locally-known checkedIn value — so the "Working…"
+// button and the eventual `kid.checkedIn = true` from pollStatus still land
+// on the row actually on screen. Everyone else adopts the server's row
+// wholesale, which is how another phone's check-in (or an undo) shows up
+// here without a manual refresh.
+function mergeRoster(serverKids) {
+  var oldByName = {};
+  KIDS.forEach(function(k) { oldByName[k.name.toLowerCase()] = k; });
+  KIDS = serverKids.map(function(sk) {
+    var key = sk.name.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(STATE, key) && oldByName[key]) {
+      return oldByName[key];
+    }
+    return sk;
+  });
+}
+
+function scheduleRosterPoll(delay) {
+  clearTimeout(rosterPollTimer);
+  if (!pollActive) return;
+  rosterPollTimer = setTimeout(refreshRoster, delay == null ? rosterPollMs : delay);
+}
+
+function stopRosterPoll() {
+  pollActive = false;
+  clearTimeout(rosterPollTimer);
+  rosterPollTimer = null;
+  clearTimeout(rosterPollResumeTimer);
+  rosterPollResumeTimer = null;
+}
+
+function startRosterPoll() {
+  pollActive = true;
+  rosterPollMs = ROSTER_POLL_BASE_MS;
+  scheduleRosterPoll();
+}
+
+function refreshRoster() {
+  if (!pollActive || rosterFetchInFlight) return;
+  if (document.hidden) { scheduleRosterPoll(); return; } // only poll while the tab is on screen
+  rosterFetchInFlight = true;
+  fetchRoster(PIN).then(function(data) {
+    rosterFetchInFlight = false;
+    rosterPollMs = ROSTER_POLL_BASE_MS; // a success clears any backoff
+    mergeRoster(data.kids || []);
+    render();
+    scheduleRosterPoll();
+  }).catch(function(e) {
+    rosterFetchInFlight = false;
+    if (e.code === 'pin') { handlePinInvalidated(); return; }
+    if (e.code === 'locked') { handleLockoutDuringPoll(e.retryAfter); return; }
+    // Network hiccup: skip this tick and back off, up to ~60s, until a
+    // fetch actually succeeds again.
+    rosterPollMs = Math.min(rosterPollMs * 2, ROSTER_POLL_MAX_MS);
+    scheduleRosterPoll();
+  });
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden) return;
+  if (!unlockedState || !pollActive) return;
+  refreshRoster(); // catch up immediately on returning to the tab, don't wait for the next tick
+});
+
+// ── Check-in ──────────────────────────────────────────────────────────────
+function checkIn(kid) {
+  var key = kid.name.toLowerCase();
+  STATE[key] = { status: 'sending', tries: 0 };
+  render();
   fetch('/phone/checkin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: kid.name, pin: PIN })
   }).then(function(r) { return r.json(); }).then(function(data) {
     if (!data.id) throw new Error(data.error || 'failed');
-    btn.textContent = 'Working…';
-    pollStatus(data.id, kid, btn, 0);
+    STATE[key] = { status: 'pending', id: data.id, tries: 0 };
+    render();
+    pollStatus(key, kid);
   }).catch(function(e) {
-    btn.disabled = false;
-    btn.classList.remove('busy');
-    btn.textContent = 'Check in';
+    delete STATE[key];
+    render();
     toast('Could not queue: ' + e.message);
   });
 }
 
-function pollStatus(id, kid, btn, tries) {
-  if (tries > 45) { // ~90 s — the laptop may be closed
-    btn.textContent = 'No answer';
+function pollStatus(key, kid) {
+  var st = STATE[key];
+  if (!st || st.status !== 'pending') return; // superseded (e.g. cleared elsewhere)
+  if (st.tries > 45) { // ~90 s — the laptop may be closed
+    STATE[key] = { status: 'noanswer' };
+    render();
     toast('The door laptop is not responding — check in there instead.', 5000);
     return;
   }
   setTimeout(function() {
-    fetch('/phone/status/' + id).then(function(r) { return r.json(); }).then(function(st) {
-      if (st.status === 'done') {
+    var cur = STATE[key];
+    if (!cur || cur.status !== 'pending') return;
+    fetch('/phone/status/' + cur.id).then(function(r) { return r.json(); }).then(function(s) {
+      if (s.status === 'done') {
         kid.checkedIn = true;
-        btn.classList.remove('busy');
-        btn.textContent = 'Checked in';
+        delete STATE[key];
         toast(kid.name + ' is checked in — label printing at the door.');
         render();
-      } else if (st.status === 'failed') {
-        btn.disabled = false;
-        btn.classList.remove('busy');
-        btn.textContent = 'Check in';
-        toast('Check-in failed: ' + (st.detail || 'see the door laptop'), 5000);
+        refreshRoster(); // pick up server truth (and any other pending updates) right away
+      } else if (s.status === 'failed') {
+        delete STATE[key];
+        render();
+        toast('Check-in failed: ' + (s.detail || 'see the door laptop'), 5000);
+        refreshRoster();
       } else {
-        pollStatus(id, kid, btn, tries + 1);
+        cur.tries += 1;
+        pollStatus(key, kid);
       }
-    }).catch(function() { pollStatus(id, kid, btn, tries + 1); });
+    }).catch(function() {
+      cur.tries += 1;
+      pollStatus(key, kid);
+    });
   }, 2000);
 }
 
 // Auto-unlock if a PIN is cached (or none is required).
-loadRoster().catch(function() { /* show the PIN screen */ });
+if (PIN) {
+  fetchRoster(PIN).then(function(data) {
+    KIDS = data.kids || [];
+    STATE = {};
+    unlockedState = true;
+    showMainScreen();
+    render();
+    startRosterPoll();
+  }).catch(function(e) {
+    // Stale saved PIN: drop it and fall back to the PIN screen rather than
+    // silently retrying it (that would just feed the limiter).
+    sessionStorage.removeItem('awanaPhonePin');
+    PIN = '';
+    if (e.code === 'locked') startPinCountdown(e.retryAfter);
+    /* otherwise leave the PIN screen showing, no message needed */
+  });
+}
 </script>
 </body>
 </html>

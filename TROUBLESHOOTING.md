@@ -295,14 +295,24 @@ firewall rule is missing — re-run `install-and-run.ps1` once as admin (it adds
 main laptop with the extension loaded; that's what performs the real
 check-in. Also check Settings → "Allow driven check-ins" is on.
 
+**Phone shows a kid as not checked in when they are (or vice versa)** —
+since 5.7.0 the phone re-fetches the roster every ~12 seconds, so
+check-ins made on other devices (and undos made on TwoTimTwo) appear on
+their own. If a phone seems frozen anyway, its Wi-Fi likely dropped —
+the page backs off polling while unreachable and catches up as soon as
+the server answers again.
+
 **Wrong PIN** — the PIN is set on the dashboard (Settings → Check-in
 Features), and must be at least 4 characters. A blank PIN no longer means
 "no PIN required": it means phones cannot connect at all, because the server
 will not expose the roster without one.
 
-**"Too many wrong PINs"** — after 8 wrong attempts that phone is locked out for
-a minute. Wait it out; it clears on its own. (This is deliberate: without it a
-4-digit PIN could be guessed in seconds.)
+**"Too many wrong PINs"** — after 8 *different* wrong attempts that phone is
+locked out for a minute; the page shows a live countdown and lets you back in
+when it hits zero. Retyping the same wrong PIN (or mashing the button while it
+sends) no longer digs the hole deeper — only distinct guesses count. (The
+lockout itself is deliberate: without it a 4-digit PIN could be guessed in
+seconds.)
 
 ## Red banner: "the check-in page layout has changed"
 

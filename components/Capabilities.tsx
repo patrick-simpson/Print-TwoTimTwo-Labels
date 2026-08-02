@@ -35,7 +35,7 @@ const CATALOG: Group[] = [
       { name: 'Clubber id + club id on every row', use: 'used', where: 'recid / club_id',
         body: 'Each roster row carries TwoTimTwo’s own clubber id and club id. As of v5.1 we read these for exact identity — so two kids with the same name never pull the wrong allergy/photo data.' },
       { name: 'Check-in Report (who’s in tonight)', use: 'used', where: '/clubber/checkin_report',
-        body: 'The authoritative per-club table of exactly who is checked in tonight, with counts and per-row undo. Since v5.2 the printer reconciles against it every minute, so a check-in the roster-diff detector misses still gets a label (R-1). It also feeds the lobby ticker.' },
+        body: 'The authoritative per-club table of exactly who is checked in tonight, with counts and per-row undo. Since v5.2 the printer reconciles against it every minute, so a check-in the roster-diff detector misses still gets a label (R-1). Since v5.7 the same pass also detects undo: a kid who disappears from the report is uncounted from the tally broadcast and freed for re-check-in on the phones. It also feeds the lobby ticker.' },
       { name: 'Five documented check-in modes', use: 'partial',
         body: 'Central station, per-group leader phones, hybrid, printed paper forms keyed in later, and CSV import (incl. from KidCheck). TwoTimTwo explicitly supports third-party label printing at check-in — which is precisely our niche.' },
       { name: 'CSV check-in import (official write-path)', use: 'used', where: '/clubber/checkin_csv',

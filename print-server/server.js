@@ -1895,7 +1895,10 @@ app.use((req, res, next) => {
     (req.body && req.body.pin) || req.headers['x-awana-pin'] || req.query.pin || ''
   );
   if (!supplied || !security.timingSafeStringEqual(supplied, pin)) {
-    const rec = pinLimiter.recordFailure(addr, now);
+    // Pass the attempted PIN through so identical repeated wrong guesses
+    // (a phone retrying a stale saved PIN, Enter-mashing) count once instead
+    // of accumulating toward the lockout — see createPinLimiter's dedupe.
+    const rec = pinLimiter.recordFailure(addr, now, supplied);
     console.warn(`[security] Wrong/missing PIN for ${req.method} ${req.path} from ${addr} (failure ${rec.failures})`);
     return res.status(403).json({ error: 'Wrong PIN' });
   }
@@ -2414,6 +2417,118 @@ function historyIdentityKey(row) {
   return `name:${`${(row && row.firstName) || ''} ${(row && row.lastName) || ''}`.toLowerCase().trim()}`;
 }
 
+// Same identity key, computed from a checkin_report entry ({ clubberId, name,
+// club } — content.js's fetchCheckinReport() shape) instead of a history row,
+// so the two can be compared directly. Whitespace is collapsed (not just
+// trimmed): the report's name sits between two links in TwoTimTwo's own
+// markup and can come back with padding or a line break inside it, and a
+// history row never does, so leaving it uncollapsed would make an
+// already-checked-in child look "missing" from the report on a whitespace
+// technicality — exactly the false-undo this feature must not cause.
+function reportEntryIdentityKey(entry) {
+  const id = entry && entry.clubberId != null ? String(entry.clubberId).trim() : '';
+  if (id) return `id:${id}`;
+  const name = String((entry && entry.name) || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return `name:${name}`;
+}
+
+// R-1's /clubber/checkin_report is already the authoritative "who's checked in
+// tonight" list (content.js has polled it every ~60s since v5.2 to catch
+// missed check-ins). This is the other direction it never covered: an UNDO on
+// TwoTimTwo — a child removed from the roster after having been checked in —
+// is invisible to both the roster-diff detector and to print-history, which
+// has no way to learn a print it already recorded got undone. Reusing the same
+// report for this means no second scrape, no new event type, no parallel
+// pipeline — only a diff against history the server already owns.
+//
+// Pure by design (mirrors the display repo's decideBoard() philosophy per
+// CLAUDE.md): takes and returns a history array, so it is exhaustively
+// testable without touching disk. The caller (POST /feed/checkin-report)
+// owns load/save and the follow-up publishTally().
+//
+// History is never deleted — it doubles as the print log — so an undone
+// check-in is marked `undone: true` / `undoneAt: <ISO>` in place rather than
+// removed.
+//
+// Identity resolution: for each identity, only the NEWEST qualifying row
+// tonight (history is newest-first) is eligible to be marked/cleared. That is
+// the same row computeTonightStats() treats as "currently checked in" for
+// that identity, and it is what makes the outcome deterministic when both an
+// undone row and a newer successful re-check-in exist for the same child: the
+// newer row always wins, never an older duplicate (a same-night reprint, or a
+// stale prior undo) reviving or re-hiding a status that has since moved on.
+//
+// Safety guards baked in (a bad/partial scrape must never mass-undo a night):
+//   - Only entries actually present in the (already-validated) report count as
+//     "still checked in" — this function trusts its caller to have confirmed
+//     the report parsed successfully; see feeds.validateCheckinReportBody()'s
+//     `ok: true` requirement.
+//   - Visitors are exempt from being marked undone: it is unknown whether
+//     /clubber/checkin_report lists first-timers at all (TWOTIMTWO.md is
+//     silent on it), so treating their absence as "undone" could be nothing
+//     more than the report not tracking them. Reappearance still clears an
+//     existing `undone` flag for a visitor — that direction can only correct a
+//     false undo, never wrongly cause one.
+//   - If applying the report would mark more than half of tonight's currently
+//     checked-in kids as undone in one pass, the WHOLE pass is skipped (history
+//     comes back unchanged) rather than trusted partially — that ratio is far
+//     more consistent with a broken/partial scrape (wrong table, filtered
+//     view, login bounce mid-parse) than with a real mass walkout.
+function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const reportKeys = new Set(
+    (Array.isArray(reportEntries) ? reportEntries : [])
+      .map(reportEntryIdentityKey)
+      .filter(k => k !== 'name:')
+  );
+
+  // The newest (index-first, since history is unshift()ed newest-first) row
+  // per identity — the one row this pass is allowed to touch.
+  const activeIdx = new Map(); // identityKey -> index into history[]
+  history.forEach((row, i) => {
+    if (!row || row.success === false || row.isAward) return;
+    if (!row.timestamp || !row.timestamp.startsWith(today)) return;
+    const key = historyIdentityKey(row);
+    if (!activeIdx.has(key)) activeIdx.set(key, i);
+  });
+
+  const toUndo = [];
+  const toClear = [];
+  let checkedInBefore = 0;
+  activeIdx.forEach((i) => {
+    const row = history[i];
+    if (!row.undone) checkedInBefore++;
+    const inReport = reportKeys.has(historyIdentityKey(row));
+    if (!inReport && !row.undone && !row.visitor) toUndo.push(i);
+    else if (inReport && row.undone) toClear.push(i);
+  });
+
+  if (checkedInBefore > 0 && toUndo.length > checkedInBefore / 2) {
+    return {
+      history,
+      changed: 0,
+      skipped: true,
+      reason: `refusing to mark ${toUndo.length}/${checkedInBefore} checked-in kid(s) undone in one pass ` +
+        '(more than half — treating as a suspect/partial scrape rather than a real mass walkout)',
+    };
+  }
+
+  if (!toUndo.length && !toClear.length) {
+    return { history, changed: 0, skipped: false, reason: null };
+  }
+
+  // Copy-on-write: only the rows that actually change become new objects.
+  const next = history.slice();
+  const nowIso = new Date(now).toISOString();
+  toUndo.forEach((i) => { next[i] = { ...next[i], undone: true, undoneAt: nowIso }; });
+  toClear.forEach((i) => {
+    const { undone, undoneAt, ...rest } = next[i];
+    next[i] = rest;
+  });
+
+  return { history: next, changed: toUndo.length + toClear.length, skipped: false, reason: null };
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -2478,6 +2593,7 @@ function computeTonightStats() {
 
   const byClub = {};
   const seen = new Set();
+  let checkedIn = 0;
   let visitors = 0;
   const allergyKids = [];
   const birthdayKids = [];
@@ -2485,12 +2601,26 @@ function computeTonightStats() {
 
   entries.forEach(e => {
     const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
+    if (!name) return;
     // Keyed on the clubber id when the row has one, so two children who share a
     // name count as two. Older rows without an id keep the name key, which is
     // the previous behaviour.
     const key = historyIdentityKey(e);
-    if (!name || seen.has(key)) return;
+    // The FIRST row seen per identity is the newest (history/entries are
+    // newest-first) — the same row R-1 reconciliation is allowed to mark
+    // `undone`. Marking `seen` here, before the undone check, is what stops an
+    // older duplicate row (a same-night reprint, or a stale pre-undo print)
+    // from being read next and reviving/re-hiding a status the newest row has
+    // already settled — "latest record wins", deterministically.
+    if (seen.has(key)) return;
     seen.add(key);
+    // R-1 reconciliation (POST /feed/checkin-report) marks a row `undone` when
+    // TwoTimTwo's own authoritative check-in report no longer lists the
+    // child — an undo made on the site itself. Excluded from every count
+    // below so the next `tally` broadcast decrements instead of keeping the
+    // stale higher number all night.
+    if (e.undone) return;
+    checkedIn++;
     const club = (e.clubName || '').trim() || 'No club';
     byClub[club] = (byClub[club] || 0) + 1;
     if (e.visitor) visitors++;
@@ -2506,7 +2636,7 @@ function computeTonightStats() {
   return {
     date: today,
     prints: entries.length,
-    checkedIn: seen.size,
+    checkedIn,
     visitors,
     byClub,
     allergyKids,
@@ -3003,6 +3133,38 @@ app.post('/feed/checkout', (req, res, next) => {
     req.body.printed = distinctChildrenPrintedToday();
   }
   return makeFeedRoute('checkout')(req, res, next);
+});
+
+// Undo detection (roadmap follow-up to R-1). content.js's runReconcile()
+// already polls /clubber/checkin_report every ~60s to catch check-ins the
+// roster-diff detector misses; this reuses that SAME scrape for the direction
+// it never covered — an undo on TwoTimTwo removes a row from that report, and
+// nothing before this endpoint ever noticed. The extension posts the full
+// authoritative "who's in tonight" list here on every successful reconcile
+// pass (not just misses), and the server diffs it against its own
+// print-history.json, which is the one place that already knows who it thinks
+// is checked in.
+//
+// Deliberately NOT routed through makeFeedRoute()/feeds.submitFeed(): this
+// never publishes a Pusher event itself (no new event type, per the contract
+// freeze) — it mutates history, and only if that mutation actually changed
+// anything does it call publishTally() immediately, so a display isn't stuck
+// on a stale headcount until the next 60s tick.
+app.post('/feed/checkin-report', (req, res) => {
+  const result = feeds.submitCheckinReport(req.body, Date.now());
+  if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
+  if (result.throttled) return res.json({ ok: true, throttled: true });
+
+  const outcome = reconcileHistoryWithReport(loadHistory(), result.payload.entries, Date.now());
+  if (outcome.skipped) {
+    console.warn('[reconcile]', outcome.reason);
+    return res.json({ ok: true, applied: false, changed: 0, reason: outcome.reason });
+  }
+  if (outcome.changed > 0) {
+    saveHistory(outcome.history);
+    publishTally();
+  }
+  res.json({ ok: true, applied: true, changed: outcome.changed });
 });
 
 // ── Event-bus publishers ──────────────────────────────────────────────────────
@@ -3595,7 +3757,12 @@ app.post('/phone/roster', (req, res) => {
   clubbers = loadClubbers();
   const checkedIn = new Set(
     loadHistory()
-      .filter(e => e.timestamp && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)) && e.success !== false)
+      // !e.undone: R-1 reconciliation (POST /feed/checkin-report) marks a row
+      // undone when the child is no longer on TwoTimTwo's own authoritative
+      // check-in report — an undo made on the website itself. Without this a
+      // kid who was undone stayed "checkedIn: true" here forever, so a phone
+      // volunteer could never re-check them in.
+      .filter(e => e.timestamp && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)) && e.success !== false && !e.undone)
       .map(e => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim())
   );
   const kids = clubbers.map(r => {
@@ -3826,6 +3993,7 @@ module.exports = {
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
+  reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

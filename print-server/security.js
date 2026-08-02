@@ -209,6 +209,16 @@ function isAcceptablePin(pin) {
 
 // Per-remote-address failure tracking. Bounded so a spoofed-source flood cannot
 // grow it without limit; entries expire on their own.
+//
+// Repeated-identical-guess dedupe: a phone silently retrying the same stale
+// PIN, or a volunteer holding down Enter, must not cost more than ONE failure
+// per distinct wrong value — otherwise a handful of real mistakes plus a
+// flaky retry loop reach the lockout threshold before a human ever gets a
+// second try. Only the HASH of the last failed guess is kept (sha256 over a
+// per-process random salt + the guess) so the limiter never holds a
+// recoverable copy of an attempted PIN in memory. Distinct guesses always
+// still count — this dedupes retries, it does not raise maxFailures or widen
+// the brute-force window.
 function createPinLimiter(opts) {
   const {
     maxFailures = 8,
@@ -217,6 +227,11 @@ function createPinLimiter(opts) {
     maxTracked = 512,
   } = opts || {};
   const byAddr = new Map();
+  const guessSalt = crypto.randomBytes(32);
+
+  function hashGuess(guess) {
+    return crypto.createHash('sha256').update(guessSalt).update(String(guess)).digest('hex');
+  }
 
   function prune(now) {
     for (const [addr, rec] of byAddr) {
@@ -240,11 +255,19 @@ function createPinLimiter(opts) {
       byAddr.delete(key);              // lockout served — start fresh
       return 0;
     },
-    recordFailure(addr, now) {
+    // `guess` is the attempted PIN behind this failure. Omit it (existing
+    // callers/tests) to always count as a distinct failure — dedupe only
+    // engages when the caller actually has a guess to compare.
+    recordFailure(addr, now, guess) {
       prune(now);
       const key = String(addr);
-      const rec = byAddr.get(key) || { failures: 0, last: now, lockedUntil: 0 };
-      rec.failures += 1;
+      const rec = byAddr.get(key) || { failures: 0, last: now, lockedUntil: 0, lastGuessHash: null };
+      const guessHash = guess === undefined || guess === null ? null : hashGuess(guess);
+      const isRepeatGuess = guessHash !== null && rec.lastGuessHash !== null && guessHash === rec.lastGuessHash;
+      if (!isRepeatGuess) {
+        rec.failures += 1;
+        if (guessHash !== null) rec.lastGuessHash = guessHash;
+      }
       rec.last = now;
       if (rec.failures >= maxFailures) rec.lockedUntil = now + lockoutMs;
       byAddr.set(key, rec);
