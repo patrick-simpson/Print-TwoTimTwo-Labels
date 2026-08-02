@@ -97,12 +97,53 @@ fs.writeFileSync(path.join(dataDir, 'clubbers.csv'),
   + 'Testkid,Sample,2018-03-15,peanut allergy,Cubbies A,y\n');
 process.env.AWANA_DATA_DIR = dataDir;
 
-const { generateLabel, createCanvasForTest } = (() => {
+const { generateLabel, prepareLogoForThermal } = (() => {
   const mod = require(path.join(__dirname, '..', 'print-server', 'server.js'));
-  return { generateLabel: mod.generateLabel };
+  return { generateLabel: mod.generateLabel, prepareLogoForThermal: mod.prepareLogoForThermal };
 })();
 const { createCanvas, loadImage } = require(
   path.join(__dirname, '..', 'print-server', 'node_modules', '@napi-rs', 'canvas'));
+
+// ── Synthetic club logos ─────────────────────────────────────────────────────
+// Deterministic geometry, no text — a logo drawn with fonts would tie these
+// cases to the host font stack, which is exactly what the fingerprint machinery
+// exists to avoid. Each mimics a real failure mode of church-uploaded club
+// images on TwoTimTwo:
+//
+//   * lightCyanLogo — the actual Puggles incident: a light-cyan wordmark whose
+//     only DARK pixels are two small eyes. Unbinarized, thermal dithering
+//     erases the cyan and prints just the eyes — a tiny unreadable speck.
+//   * paddedLogo — real artwork marooned in a large transparent canvas (also
+//     what the extension's square capture produces for a wide source).
+//   * ghostLogo — near-white art: would print as literally nothing.
+//   * whiteOnDarkLogo — inverted branding; the white must survive as holes.
+function logoCanvas(w, h, draw) {
+  const c = createCanvas(w, h);
+  draw(c.getContext('2d'));
+  return c.toBuffer('image/png');
+}
+const lightCyanLogo = () => logoCanvas(300, 160, (ctx) => {
+  ctx.fillStyle = '#29b8ce';
+  ctx.beginPath(); ctx.arc(150, 45, 38, 0, Math.PI * 2); ctx.fill();   // duck head
+  ctx.fillRect(10, 95, 280, 50);                                       // wordmark bar
+  ctx.fillStyle = '#111111';                                           // the eyes —
+  ctx.fillRect(132, 38, 10, 8);                                        // the ONLY dark
+  ctx.fillRect(158, 38, 10, 8);                                        // pixels here
+});
+const paddedLogo = () => logoCanvas(320, 320, (ctx) => {
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(60, 115, 200, 90);   // 200x90 artwork in a 320x320 sea of alpha
+});
+const ghostLogo = () => logoCanvas(320, 160, (ctx) => {
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillRect(20, 20, 280, 120);
+});
+const whiteOnDarkLogo = () => logoCanvas(300, 150, (ctx) => {
+  ctx.fillStyle = '#0b2545';
+  ctx.fillRect(0, 0, 300, 150);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(60, 55, 180, 40);    // white lettering bar
+});
 
 // ── Cases ────────────────────────────────────────────────────────────────────
 // Each case is a declarative MODEL — the fields that differ from a plain label —
@@ -131,6 +172,16 @@ const CASES = [
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
   { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  // The thermal-logo pipeline. light-cyan is the real Puggles incident; padded
+  // proves the ink crop; ghost and white-on-dark pin the fallback boundaries.
+  { name: 'logo-light-cyan',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo() } },
+  { name: 'logo-padded',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', clubImageBuffer: paddedLogo() } },
+  { name: 'logo-ghost',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', clubImageBuffer: ghostLogo() } },
+  { name: 'logo-white-on-dark', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Trek', clubImageBuffer: whiteOnDarkLogo() } },
+  // Inverted (first-timer / award) labels print the icon panel near-black, so
+  // the logo must flip to WHITE ink or it vanishes into its own background —
+  // found by review, black-on-#1f2937, invisible on paper.
+  { name: 'logo-inverted-visitor', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo(), isVisitor: true, extras: { inverted: true } } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -357,6 +408,163 @@ async function main() {
       check(`${r.name}: is distinguishable from every other case`,
         twin === undefined, `identical to ${twin}`);
       if (twin === undefined) seen.set(h, r.name);
+    }
+  }
+
+  // ── Thermal ink in the ICON ZONE ──────────────────────────────────────────
+  // Font-independent (the logos are pure geometry), so CI enforces these. The
+  // measure is deliberately not "any non-white pixel": a light-cyan pixel IS
+  // non-white on screen and yet prints as NOTHING once the thermal driver
+  // dithers it — that gap is precisely the Puggles bug. So count only pixels
+  // dark enough to survive 1-bit output (luminance < 128), inside the icon
+  // column (x < (INSET + ICON_COL_W) * SCALE ≈ 375 device px).
+  //
+  // The floor of 3% separates cleanly: a binarized logo or monogram covers
+  // 10–23% of the zone; the unbinarized cyan wordmark left 0.09% (two eyes).
+  {
+    const ICON_ZONE_X = Math.round((6 + 84) * (300 / 72));   // 375
+    const iconInkRatio = async (buf) => {
+      const px = await pixels(buf);
+      let ink = 0, zone = 0;
+      for (let y = 0; y < px.h; y++) {
+        for (let x = 0; x < ICON_ZONE_X; x++) {
+          const i = (y * px.w + x) * 4;
+          zone++;
+          const lum = 0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2];
+          if (lum < 128) ink++;
+        }
+      }
+      return ink / zone;
+    };
+    const byName = new Map(rendered.map((r) => [r.name, r.buf]));
+    for (const name of ['logo-light-cyan', 'logo-padded', 'logo-ghost', 'logo-white-on-dark', 'club-monogram']) {
+      const buf = byName.get(name);
+      if (!buf) { check(`${name}: rendered (needed for icon-zone check)`, false); continue; }
+      const ratio = await iconInkRatio(buf);
+      check(`${name}: icon zone carries ink a thermal printer can actually print`,
+        ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
+    }
+
+    // The inverted label is the mirror image: its icon panel prints BLACK, so
+    // the logo is legible only as LIGHT pixels. Counting dark ink here would
+    // pass trivially (the panel itself is dark) and prove nothing — which is
+    // exactly how the black-on-black regression slipped past the first five
+    // logo checks and had to be caught by review instead.
+    {
+      const buf = byName.get('logo-inverted-visitor');
+      if (!buf) {
+        check('logo-inverted-visitor: rendered (needed for icon-zone check)', false);
+      } else {
+        const px = await pixels(buf);
+        let light = 0, zone = 0;
+        for (let y = 0; y < px.h; y++) {
+          for (let x = 0; x < ICON_ZONE_X; x++) {
+            const i = (y * px.w + x) * 4;
+            zone++;
+            const lum = 0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2];
+            if (lum > 200) light++;
+          }
+        }
+        const ratio = light / zone;
+        check('logo-inverted-visitor: the logo is WHITE on the dark panel, not black-on-black',
+          ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
+      }
+    }
+  }
+
+  // ── prepareLogoForThermal, at unit level ──────────────────────────────────
+  // The label-level checks above prove the zone ends up dark; these pin HOW —
+  // crop box, binarization, hole preservation, and every null fallback.
+  {
+    const readPx = (canvas) => canvas.getContext('2d')
+      .getImageData(0, 0, canvas.width, canvas.height);
+    const at = (imgData, x, y) => {
+      const i = (y * imgData.width + x) * 4;
+      return { r: imgData.data[i], g: imgData.data[i + 1], b: imgData.data[i + 2], a: imgData.data[i + 3] };
+    };
+
+    const cyan = await prepareLogoForThermal(lightCyanLogo());
+    check('cyan wordmark: survives as ink', cyan !== null);
+    if (cyan) {
+      const d = readPx(cyan.canvas);
+      const mid = at(d, Math.round(cyan.width / 2), cyan.height - 20);   // inside the bar
+      check('cyan wordmark: ink is rendered BLACK, not cyan',
+        mid.a > 200 && mid.r === 0 && mid.g === 0 && mid.b === 0,
+        JSON.stringify(mid));
+    }
+
+    const padded = await prepareLogoForThermal(paddedLogo());
+    check('padded canvas: cropped to the artwork, not the canvas',
+      padded !== null && padded.width <= 204 && padded.width >= 198
+      && padded.height <= 94 && padded.height >= 88,
+      padded ? `${padded.width}x${padded.height}` : 'null');
+
+    // A pale-gray card must read as PAPER: at the old threshold of 40 the
+    // whole card became a featureless black slab and the artwork inside it
+    // was indistinguishable from its background.
+    const paleCard = await prepareLogoForThermal(logoCanvas(320, 320, (ctx) => {
+      ctx.fillStyle = '#d0d0d0';
+      ctx.fillRect(0, 0, 320, 320);          // pale card background
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(120, 120, 80, 80);        // the actual artwork
+    }));
+    check('pale-gray card: the card is paper, the mark inside is the artwork',
+      paleCard !== null && paleCard.width <= 84 && paleCard.width >= 78
+      && paleCard.height <= 84 && paleCard.height >= 78,
+      paleCard ? `${paleCard.width}x${paleCard.height}` : 'null');
+
+    // The too-small gate must measure the artwork's TRUE resolution, not its
+    // size after the bounded scan's downscale — identical artwork must not
+    // pass or fail depending on how much empty canvas surrounds it.
+    const big = await prepareLogoForThermal(logoCanvas(4000, 4000, (ctx) => {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(1850, 1850, 300, 300);    // 300px artwork, oversized canvas
+    }));
+    check('oversized canvas: sourceWidth reports the artwork at source scale',
+      big !== null && big.sourceWidth >= 295 && big.sourceWidth <= 310
+      && big.sourceHeight >= 295 && big.sourceHeight <= 310,
+      big ? `${big.sourceWidth}x${big.sourceHeight} (scan ${big.width}x${big.height})` : 'null');
+    check('...which clears the 158px too-small gate that scan-space size would fail',
+      big !== null && Math.max(big.sourceWidth, big.sourceHeight) >= 158
+      && Math.max(big.width, big.height) < 158,
+      big ? `source ${big.sourceWidth}, scan ${big.width}` : 'null');
+
+    // A PNG whose header claims absurd dimensions is refused before decode.
+    const bomb = Buffer.alloc(64);
+    bomb.writeUInt32BE(0x89504e47, 0); bomb.writeUInt32BE(0x0d0a1a0a, 4);
+    bomb.writeUInt32BE(13, 8); bomb.write('IHDR', 12);
+    bomb.writeUInt32BE(100000, 16); bomb.writeUInt32BE(100000, 20);
+    check('a PNG header claiming 100000x100000 is refused without decoding',
+      (await prepareLogoForThermal(bomb)) === null);
+
+    check('near-white ghost art: rejected (would print as nothing)',
+      (await prepareLogoForThermal(ghostLogo())) === null);
+    check('fully transparent image: rejected',
+      (await prepareLogoForThermal(logoCanvas(64, 64, () => {}))) === null);
+    check('undecodable buffer: rejected without throwing',
+      (await prepareLogoForThermal(Buffer.from('not a png'))) === null);
+    check('null input: rejected', (await prepareLogoForThermal(null)) === null);
+
+    const whiteInk = await prepareLogoForThermal(lightCyanLogo(), { ink: [255, 255, 255] });
+    check('ink color is configurable: white ink for inverted labels', whiteInk !== null);
+    if (whiteInk) {
+      const d = readPx(whiteInk.canvas);
+      const mid = at(d, Math.round(whiteInk.width / 2), whiteInk.height - 20);
+      check('...and the ink really is white',
+        mid.a > 200 && mid.r === 255 && mid.g === 255 && mid.b === 255,
+        JSON.stringify(mid));
+    }
+
+    const inverted = await prepareLogoForThermal(whiteOnDarkLogo());
+    check('white-on-dark: the dark field is ink', inverted !== null);
+    if (inverted) {
+      const d = readPx(inverted.canvas);
+      const bg = at(d, 5, 5);                                            // dark corner
+      const bar = at(d, Math.round(inverted.width / 2), Math.round(inverted.height / 2)); // white bar
+      check('white-on-dark: background became black ink', bg.a > 200 && bg.r === 0,
+        JSON.stringify(bg));
+      check('white-on-dark: the white lettering survives as holes', bar.a === 0,
+        JSON.stringify(bar));
     }
   }
 

@@ -1,4 +1,33 @@
-﻿## [5.6.0] - 2026-08-01
+﻿## [5.6.1] - 2026-08-01
+Puggles labels are fixed: the club logo now prints as solid black instead of a ghost, and the meaningless "Puggles group" line is gone.
+
+### The Puggles logo printed as a tiny speck
+Every club's icon on TwoTimTwo is a standard Awana image except Puggles — this church's Puggles image is a custom upload (`/database/customFile/315`), and it is a **light-cyan** wordmark. A thermal printer has exactly two tones; the driver dithers everything else, and light cyan dithers to (almost) nothing. The only pixels dark enough to survive were the duckling's eyes and beak — so the printed label showed a tiny unreadable speck floating in the icon zone. And because a logo was "successfully" drawn, the club-name text line was suppressed too: the label carried no readable club identity at all.
+
+Club logos are now prepared for what the printer can actually say (`prepareLogoForThermal`):
+
+- **Anything opaque and meaningfully non-white becomes solid black ink.** The distance-from-white test is per-channel, so light-but-saturated colors — cyan, yellow, pink — count as ink even though their gray luminance is high. Gray luminance is exactly the measure the dither uses to erase them; that gap *was* this bug.
+- **White stays white**, so white-on-dark logos keep their lettering as holes, and the duck's eyes survive as white cutouts in the silhouette.
+- **The logo is cropped to its ink** before scaling, so artwork marooned in a padded canvas fills the icon zone instead of shrinking with its padding. The existing too-small-source check now measures the artwork, not the canvas.
+- **A logo with no printable ink at all** (all-white, near-white, transparent, undecodable) falls back to the monogram badge — and, since no logo was drawn, the club name still prints as text.
+
+All five standard Awana club images (Sparks, Cubbies, T&T, Trek, Journey) were rendered with the real assets from TwoTimTwo and come out crisper than before — solid black wordmarks instead of dithered color. The dashboard's Label Preview shows the binarized logo too, which is a feature: the preview now shows what the printer will actually produce.
+
+### "Puggles group" no longer prints
+TwoTimTwo assigns Puggles kids a pseudo handbook group — literally the string "Puggles group" — and it printed as an italic line under every Puggles name. Puggles is the toddler program: no handbooks, no handbook time, nothing to route to. The handbook-group line exists to send a child to the right table, so values that route nowhere now print as nothing (`effectiveHandbookGroup`): the "all" placeholder (existing rule, now centralized instead of pasted at four call sites), any Puggles group, and a group named after its own club ("Sparks group" says only what the icon already says). Real groups — "Sparks A", "Flight 3:16" — are untouched, end to end.
+
+One of the four call sites was fixed in the process: the reprint path referenced a variable that is not in scope in that handler, and the driven-print path now judges the group against the club that actually prints (after the roster fill), so a club-less POST for a Puggles kid still drops the pseudo-group.
+
+### Found by adversarial review, fixed in the same release
+An independent multi-agent review of the diff caught a real regression the first 831 assertions could not see: **on inverted labels (first-timer visitors and award slips) the icon panel prints near-black, and the newly binarized black logo vanished into it** — black on black, with the club-name text also suppressed because a logo "was drawn". Logo ink now follows the label's palette (white on inverted labels), pinned by a golden case whose invariant counts LIGHT pixels in the dark icon zone — counting dark ink there would pass trivially, which is exactly how this slipped past the other five logo checks.
+
+Also from review: club-less requests through `POST /label` (Print Dialog mode) and `GET /preview` now fill the club from the roster before judging the group — previously only `/print` did, so those two paths still printed "Puggles group"; the ink threshold was raised so a pale-gray card background reads as paper instead of becoming a black slab that swallows its own artwork; the too-small gate now measures the artwork's true source resolution rather than its size after the bounded scan; "T & T group" matches club "T&T" the same way `clubKey` already treats them as one club; and a PNG whose header claims absurd dimensions is refused before it is ever decoded.
+
+### Verification
+Rendered Marvin's exact label — the real custom Puggles asset, the real "Puggles group" value — and confirmed the wordmark fills the icon zone in solid black with no group line. Four new golden cases (light-cyan, padded, ghost, white-on-dark) with a new icon-zone invariant that counts only thermally printable ink (luminance < 128): with binarization removed, the cyan case drops to 0.10% zone coverage — the two-eyes speck from the photo, quantified — and fails. Negative-controlled the crop and the Puggles rule the same way. An end-to-end test proves enrichment through the real HTTP path produces a byte-identical label to the suppressed render while "Sparks A" survives. 843 assertions across eleven suites, all green.
+
+
+## [5.6.0] - 2026-08-01
 The display key is on the front page instead of buried, the extension says whether names are encrypted, and an app update now updates the extension too.
 
 ### "Where do I access the display key?"
