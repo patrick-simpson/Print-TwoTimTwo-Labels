@@ -1,4 +1,8 @@
-﻿## [5.8.0] - 2026-08-02
+﻿## [5.8.1] - 2026-08-02
+Identical to 5.8.0 in every feature — this release exists because 5.8.0's installer never got built. GitHub's workflow parser rejects `secrets.*` inside a step-level `if:` expression, and the new "ping laptops over Pusher" step used exactly that guard; the whole workflow file was invalid, so the tag was created but its build died before it began. The inline notify script already guards itself (it exits cleanly, with a log line, when the Pusher secrets are absent), so the `if:` is gone and the script is the guard. The orphaned `v5.8.0` tag remains in the repo with no release attached; this is the real 5.8 release. See 5.8.0's entry below for what actually shipped.
+
+
+## [5.8.0] - 2026-08-02
 Updates now reach the laptop in seconds, not hours — and an update that arrives mid-club installs itself immediately, because a mid-club release only ever means an urgent fix is on the way.
 
 ### Releases are pushed, not polled
