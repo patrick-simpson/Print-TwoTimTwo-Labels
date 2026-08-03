@@ -244,10 +244,10 @@ const HEADER_MAP = {
   'medrelease':       'MedRelease',
   'med_release':      'MedRelease',
   'medical release':  'MedRelease',
-  // TwoTimTwo exports BOTH "Med Release?" (medical consent) and
-  // "Photo Release?" (photography consent) — the no-photo label icon must
-  // come from the photo column, with MedRelease kept only as a fallback for
-  // older/manual rosters that had a single combined column.
+  // TwoTimTwo exports BOTH "Med Release?" and "Photo Release?", but which
+  // one a church actually fills in varies — KVB records the MEDIA release
+  // under "Med Release?" and never touches "Photo Release?". Both map to
+  // their own key and noPhotoFor() flags on an explicit "no" in either.
   'media release':    'PhotoRelease',
   'mediarelease':     'PhotoRelease',
   'photo release':    'PhotoRelease',
@@ -895,15 +895,23 @@ function parseNoPhoto(value) {
   return /^(n|no|false|0)$/i.test(String(value == null ? '' : value).trim());
 }
 
-// The do-not-photograph flag for a roster row. The real TwoTimTwo export has a
-// dedicated "Photo Release?" column (→ PhotoRelease); "Med Release?" is only a
-// legacy/manual-roster fallback for rosters that had a single combined column.
+// The do-not-photograph flag for a roster row: an explicit "no" in EITHER
+// release column flags the label. This is deliberately an OR, not a
+// precedence chain. The previous rule ("PhotoRelease when the column exists,
+// MedRelease only as a fallback") assumed the photo column is where photo
+// consent lives — but field data proved otherwise: KVB's TwoTimTwo instance
+// records the MEDIA release under "Med Release?" and leaves "Photo Release?"
+// unused, and since the unused column still exists in every export, the
+// precedence rule read the blank column and silently dropped the flag for
+// every no-photo child. A consent flag must fail toward protection: the
+// worst outcome of OR is a spurious camera icon; the worst outcome of
+// precedence was photographing a child whose family said no.
 // Every label/preview/reprint/dashboard path MUST derive the flag through here
 // so the printed label, its reprint, and the director's no-photo list can never
 // disagree for a child whose two consent answers differ.
 function noPhotoFor(record) {
   if (!record) return false;
-  return parseNoPhoto(record.PhotoRelease !== undefined ? record.PhotoRelease : record.MedRelease);
+  return parseNoPhoto(record.PhotoRelease) || parseNoPhoto(record.MedRelease);
 }
 
 // ── Unique temp file path ─────────────────────────────────────────────────────
@@ -3989,7 +3997,7 @@ module.exports = {
   applySavedConfig, setPrinterName,
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
-  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto, noPhotoFor,
   isSafePrinterName,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
