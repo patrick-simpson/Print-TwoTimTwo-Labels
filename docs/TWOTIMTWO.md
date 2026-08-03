@@ -218,8 +218,8 @@ whitespace-collapsed, trailing `?!.:` stripped):
 | `Handbook Group` / `Group` | `HandbookGroup` / `Group` | table-sorting line on label |
 | `Birthdate` | `Birthdate` | birthday-week cake |
 | `Notes` | `Notes` | **allergy source** (no dedicated allergy column) |
-| `Med Release?` | `MedRelease` | medical-release fallback for no-photo (legacy) |
-| `Photo Release?` | `PhotoRelease` | **the no-photo camera icon** |
+| `Med Release?` | `MedRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
+| `Photo Release?` | `PhotoRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
 | `Share Balance` | `ShareBalance` | Store-Night shares badge (also see §5) |
 | `Parent/Guardian#1` | `PrimaryContact` | family grouping |
 | `Parent/Guardian#2` | `Guardian` | family grouping |

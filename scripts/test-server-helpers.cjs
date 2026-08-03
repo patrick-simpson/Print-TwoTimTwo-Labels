@@ -12,7 +12,7 @@
 const path = require('path');
 
 const {
-  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto,
+  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto, noPhotoFor,
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
@@ -54,7 +54,10 @@ function realRow(values) {
 //    (blended family) — MUST group together.
 //  - Cal Zephyr: same last name as Amy but a different phone/household —
 //    MUST NOT group with her.
-//  - Amy: "Med Release?"=n but "Photo Release?"=y → photos are FINE.
+//  - Amy: "Med Release?"=n, "Photo Release?"=y → no-photo flag. An explicit
+//    "no" in EITHER column must flag: KVB's real export records the media
+//    release under "Med Release?" and never fills "Photo Release?", so a
+//    photo-column-wins rule dropped the flag for every no-photo child.
 //  - Ben: "Photo Release?"=n → no-photo flag.
 const FIXTURE = [
   REAL_HEADER,
@@ -122,14 +125,16 @@ console.log('parseCSV — real export shape');
   check('UTF-8 BOM stripped', bom.length === 3 && bom[0].FirstName === 'Amy');
 }
 
-console.log('parseNoPhoto — photo consent beats med consent');
+console.log('parseNoPhoto — an explicit "no" in either release column flags');
 {
   const rows = parseCSV(FIXTURE);
   const amy = rows[0], ben = rows[1], cal = rows[2];
-  const noPhoto = r => parseNoPhoto(r.PhotoRelease !== undefined ? r.PhotoRelease : r.MedRelease);
-  check('Amy (med=n, photo=y) → photos allowed', noPhoto(amy) === false);
-  check('Ben (med=y, photo=n) → no-photo flag', noPhoto(ben) === true);
-  check('Cal (both blank) → photos allowed', noPhoto(cal) === false);
+  // Tests the REAL noPhotoFor: OR of both columns, never a precedence
+  // chain — a blank-but-present "Photo Release?" column must not eat an
+  // explicit "no" recorded under "Med Release?" (KVB's real export shape).
+  check('Amy (med=n, photo=y) → no-photo flag', noPhotoFor(amy) === true);
+  check('Ben (med=y, photo=n) → no-photo flag', noPhotoFor(ben) === true);
+  check('Cal (both blank) → photos allowed', noPhotoFor(cal) === false);
   check('legacy single-column fallback still works', parseNoPhoto('No') === true);
 }
 

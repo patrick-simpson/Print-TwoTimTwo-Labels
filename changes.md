@@ -1,4 +1,12 @@
-﻿## [5.8.1] - 2026-08-02
+﻿## [5.8.2] - 2026-08-03
+The no-photo flag now honors an explicit "no" in EITHER release column — fixing a real consent failure at KVB, where every no-photo child was printing without the camera icon.
+
+### An unused column was eating the media release
+TwoTimTwo's clubber export carries both `Med Release?` and `Photo Release?`. The code assumed photo consent lives in the photo column and used `Med Release?` only as a fallback for exports that lacked `Photo Release?` entirely. Field data proved the assumption wrong: KVB records the **media** release under `Med Release?` and never touches `Photo Release?` — and since the unused column still exists in every export, the precedence rule read the blank photo column, found no explicit "no", and silently dropped the flag for every no-photo child. The label, the reprint, and the dashboard's no-photo list all inherited the same blindness, because they all (correctly) derive from the same helper.
+
+`noPhotoFor()` is now an OR, not a precedence chain: an explicit "no" under either column flags the child. A consent flag must fail toward protection — the worst outcome of OR is a spurious camera icon on a child whose medical release was declined but whose photos are fine; the worst outcome of precedence was photographing a child whose family said no. Blank, missing, and unrecognized values in both columns still mean "photos allowed", so rosters without either column are unaffected. The fixture test now pins the OR (`Amy: med=n, photo=y → flagged`) and calls the real exported `noPhotoFor` instead of a private copy of the rule.
+
+## [5.8.1] - 2026-08-02
 Identical to 5.8.0 in every feature — this release exists because 5.8.0's installer never got built. GitHub's workflow parser rejects `secrets.*` inside a step-level `if:` expression, and the new "ping laptops over Pusher" step used exactly that guard; the whole workflow file was invalid, so the tag was created but its build died before it began. The inline notify script already guards itself (it exits cleanly, with a log line, when the Pusher secrets are absent), so the `if:` is gone and the script is the guard. The orphaned `v5.8.0` tag remains in the repo with no release attached; this is the real 5.8 release. See 5.8.0's entry below for what actually shipped.
 
 

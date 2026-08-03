@@ -271,7 +271,8 @@ export const Capabilities: React.FC = () => (
             Every idea here respects the project’s core invariant: only first names ever leave the
             volunteer’s browser for a display. Allergy, contact, photo-release and household data are
             used locally to enrich a label and never broadcast. Any feature touching photos must gate
-            on each child’s <b>Photo Release?</b> value.
+            on each child’s release values — an explicit “no” under either <b>Photo Release?</b> or{' '}
+            <b>Med Release?</b> counts, since churches record the media release under either column.
           </p>
         </div>
       </section>
