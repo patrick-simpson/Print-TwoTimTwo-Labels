@@ -53,7 +53,7 @@ export default function SetupWizard({ onSaved }) {
         <div style={s.logoRow}>
           <span style={s.logo}>🖨️</span>
           <div>
-            <h1 style={s.title}>Awana Label Printer</h1>
+            <h1 style={s.title}>Club Label Printer</h1>
             <p style={s.subtitle}>First-time setup</p>
           </div>
         </div>

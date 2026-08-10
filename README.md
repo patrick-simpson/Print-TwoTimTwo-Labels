@@ -1,14 +1,14 @@
-# Awana® Label Printer
+# Club Label Printer
 
 **Automatic label printing for TwoTimTwo.com check-in system**
 
-> Not affiliated with, endorsed by, or approved by Awana Clubs International, or by TwoTimTwo.com — a community-built tool that works alongside their systems.
+> Not affiliated with, endorsed by, or approved by Awana Clubs International, or by TwoTimTwo.com — a community-built tool that works alongside their systems. (Called "Awana Label Printer" before v5.9.0.)
 
-When a child checks in during Awana, automatically print a 4" × 2" label to your label printer with zero dialogs or manual steps.
+When a child checks in during club, automatically print a 4" × 2" label to your label printer with zero dialogs or manual steps.
 
 ## Quick Start — Download the Installer (Recommended)
 
-**[👉 Download Awana-Label-Printer-Setup.exe](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Awana-Label-Printer-Setup.exe)**
+**[👉 Download Club-Label-Printer-Setup.exe](https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Club-Label-Printer-Setup.exe)**
 
 1. Download the `.exe` file (if SmartScreen shows "Windows protected your PC", click **More info → Run anyway**)
 2. Double-click to install (one-click, per-user, no admin needed)
@@ -183,7 +183,7 @@ git push origin v1.0.1
 GitHub Actions automatically:
 - Builds the installer on a Windows server
 - Creates a GitHub Release
-- Attaches `Awana-Label-Printer-Setup.exe` to it
+- Attaches `Club-Label-Printer-Setup.exe` to it
 
 Users download from: **https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest**
 

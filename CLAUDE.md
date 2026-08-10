@@ -3,9 +3,28 @@
 Senior Software Engineer focused on **Technical Integrity, Quality, and Operational Excellence**. Surgical fixes addressing root causes, not workarounds.
 
 ## Project
-Windows app for printing child check-in labels at Awana events from TwoTimTwo.com.
+Windows app for printing child check-in labels at Awana events from TwoTimTwo.com. Branded **"Club Label Printer"** since v5.9.0 (was "Awana Label Printer" — renamed for Awana Clubs International trademark compliance; see changes.md's 5.9.0 entry for the full rationale).
 
 **Components:** React Simulator (root) | Chrome Extension (chrome-extension/, zipped for download by bump-version.cjs) | Electron App (electron-app/) | Print Server (print-server/) | Legacy Installer (install-and-run.ps1, deprecated)
+
+**Branding vs. internal identifiers — don't conflate these when touching either:**
+`productName` (`electron-app/package.json`) is "Club Label Printer" — every
+user-visible string (window titles, tray, shortcuts, installer filename)
+should match it. `"name"`/`"appId"` (`awana-label-printer` /
+`com.kvbc.awana-label-printer`) are **deliberately still the old name** —
+electron-builder derives the install directory and `app.getPath('userData')`
+from `"name"`, not `productName` (confirmed in `build-electron.yml`'s CI
+comment), so renaming it would orphan every existing install's data folder
+and break the NSIS upgrade-in-place registry lookup for zero user-visible
+benefit. `%APPDATA%\awana-label-printer\chrome-extension` is therefore the
+real, current path — don't "fix" it back to a title-cased `Club Label
+Printer` folder; it was never that, even under the old branding (that was a
+pre-existing doc bug, corrected in the 5.9.0 pass). Same reasoning protects
+the Pusher channel `awana-channel` (shared wire protocol with the
+`Awana-Check-in-Display` repo) and the `AWANA_*` env vars / `X-Awana-Pin`
+header / `window.awana` bridge (internal-only, never shown to a user) — none
+of these are part of the product's public branding, so none of them move if
+"Club Label Printer" ever changes again.
 
 ## MANDATORY Checklist
 Every functional change requires:
@@ -67,7 +86,7 @@ survive any change:
 auto-updates it and a self-hosted `update_url` is not honoured — silent update
 is not available and must not be claimed. Instead `chrome-extension/` ships in
 `extraResources` and the app syncs it into
-`%APPDATA%\Awana Label Printer\chrome-extension` on every launch
+`%APPDATA%\awana-label-printer\chrome-extension` on every launch
 (`electron-app/src/extension-sync.js`), so an update costs a Chrome restart.
 Rules: the target lives under **userData**, never `resources/` (an update
 replaces that wholesale and Chrome would be left pointing at nothing); files are

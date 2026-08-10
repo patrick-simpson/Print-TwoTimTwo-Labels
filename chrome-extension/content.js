@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.8.2';
+  const EXTENSION_VERSION = '5.9.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1063,7 +1063,7 @@
       whiteSpace: 'nowrap',
       transition: 'all 0.15s ease'
     });
-    pill.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span> Awana Print';
+    pill.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span> Club Print';
     pill.title = 'Expand print controls';
     pill.addEventListener('mouseenter', function() { pill.style.background = '#43a047'; });
     pill.addEventListener('mouseleave', function() { pill.style.background = '#4caf50'; });
@@ -1124,7 +1124,7 @@
     const headerLeft = document.createElement('div');
     Object.assign(headerLeft.style, { display: 'flex', alignItems: 'center', gap: '6px' });
     headerLeft.innerHTML = '<span style="font-size:14px">&#x1F5A8;</span>' +
-      '<span style="font-weight:700;font-size:13px">Awana Print</span>' +
+      '<span style="font-weight:700;font-size:13px">Club Print</span>' +
       '<span style="font-size:10px;opacity:0.7">v' + EXTENSION_VERSION + '</span>';
 
     const closeBtn = document.createElement('button');
@@ -2090,7 +2090,7 @@
           alert(msg);
         })
         .catch(function() {
-          alert('\u274C Cannot reach the print server.\n\nMake sure the Awana Print window is open on this computer.');
+          alert('\u274C Cannot reach the print server.\n\nMake sure the Club Print window is open on this computer.');
         })
         .finally(function() {
           helpBtn.textContent = 'Help \u2014 Not Working?';
@@ -3361,7 +3361,7 @@
         selectorBannerShown = true;
         var banner = document.createElement('div');
         banner.id = 'awana-selector-banner';
-        banner.textContent = '⚠ AWANA PRINTER: the check-in page layout has changed — automatic label printing may be broken. Use the widget search or walk-in printing, and check the dashboard.';
+        banner.textContent = '⚠ CLUB PRINTER: the check-in page layout has changed — automatic label printing may be broken. Use the widget search or walk-in printing, and check the dashboard.';
         Object.assign(banner.style, {
           position: 'fixed', top: '0', left: '0', right: '0', zIndex: '2147483647',
           background: '#dc2626', color: '#fff', fontWeight: '700',

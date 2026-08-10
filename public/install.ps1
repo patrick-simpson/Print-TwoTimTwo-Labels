@@ -1,4 +1,4 @@
-# Awana Label Print Server -- Bootstrap Installer
+# Club Label Print Server -- Bootstrap Installer
 # Usage: irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex
 #
 # Downloads and runs the full installer, targeting c:\output as the install directory.
@@ -8,7 +8,7 @@ $InstallDir = "c:\output"
 
 Write-Host ""
 Write-Host "=========================================================" -ForegroundColor Cyan
-Write-Host "  Awana Label Print Server -- Bootstrap Installer" -ForegroundColor Cyan
+Write-Host "  Club Label Print Server -- Bootstrap Installer" -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host ""
 

@@ -49,7 +49,7 @@ export const Footer: React.FC = () => (
   <footer className="bg-slate-900 text-slate-400">
     <div className="max-w-6xl mx-auto px-4 py-10 text-center space-y-3 text-sm">
       <p className="font-bold text-white">
-        <i className="fa fa-print mr-2 text-brand-500"></i>Awana Label Printer <span className="font-mono text-xs text-slate-500">v{SERVER_VERSION}</span>
+        <i className="fa fa-print mr-2 text-brand-500"></i>Club Label Printer <span className="font-mono text-xs text-slate-500">v{SERVER_VERSION}</span>
       </p>
       <p className="text-xs max-w-xl mx-auto">
         Free &amp; open source. Not affiliated with, endorsed by, or approved by TwoTimTwo.com or

@@ -5,7 +5,7 @@ const net = require('net');
 const http = require('http');
 const os = require('os');
 const { execFileSync } = require('child_process');
-const { runMigration, removeShortcuts } = require('./src/migrate');
+const { runMigration, removeShortcuts, findOldBrandShortcuts } = require('./src/migrate');
 const configStore = require('./src/config-store');
 const extensionSync = require('./src/extension-sync');
 const updatePush = require('./src/update-push');
@@ -44,7 +44,7 @@ function openExternalSafely(value, context) {
   if (!isSafeExternalUrl(value)) {
     console.error(`[security] Refusing to open unsafe URL from ${context}:`, value);
     dialog.showErrorBox(
-      'Awana Label Printer — blocked link',
+      'Club Label Printer — blocked link',
       'The configured check-in address is not a valid web address, so it was not opened.\n\n'
       + 'Open Settings and set the check-in page URL (it should start with https://).'
     );
@@ -70,7 +70,13 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 const PORT = 3456;
 const isDev = process.env.NODE_ENV === 'development';
 const isAutoStart = process.argv.includes('--auto-start');
-const FIREWALL_RULE = 'Awana Print Server (TCP 3456)';
+// Renamed from 'Awana Print Server (TCP 3456)' in v5.9.0 (trademark
+// compliance rebrand). The rule-add below is idempotent on this new name, so
+// an already-updated machine simply gets a second, harmlessly redundant
+// allow rule under the old name rather than losing connectivity — removing
+// it would need an elevated prompt on every launch, which isn't worth it for
+// a leftover firewall rule nobody sees day to day.
+const FIREWALL_RULE = 'Club Print Server (TCP 3456)';
 
 let tray = null;
 let setupWindow = null;
@@ -384,7 +390,7 @@ function createSetupWindow() {
     width: 520,
     height: 560,
     resizable: false,
-    title: 'Awana Label Printer',
+    title: 'Club Label Printer',
     icon: getIconPath() || undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -418,11 +424,11 @@ function buildTray(config) {
 
   const failed = serverState.status === 'failed';
   tray.setToolTip(failed
-    ? 'Awana Label Printer  •  SERVER NOT RUNNING — click to start it'
-    : `Awana Label Printer  •  ${config.printerName || 'system default printer'}`);
+    ? 'Club Label Printer  •  SERVER NOT RUNNING — click to start it'
+    : `Club Label Printer  •  ${config.printerName || 'system default printer'}`);
 
   const template = [
-    { label: `Awana Label Printer v${app.getVersion()}`, enabled: false },
+    { label: `Club Label Printer v${app.getVersion()}`, enabled: false },
     failed
       ? { label: '⚠ Print server NOT RUNNING — open Settings', click: () => createSetupWindow() }
       : { label: `Printer: ${config.printerName || '(system default)'}`, enabled: false },
@@ -551,7 +557,7 @@ async function resolvePortConflict() {
     type: 'warning',
     title: 'Port 3456 is in use',
     message: `The print server's port is being used by ${desc}.`,
-    detail: 'This is usually a previous Awana print server still running (for example the old desktop shortcut\'s auto-start). Stop it so this app can take over?',
+    detail: 'This is usually a previous Club print server still running (for example the old desktop shortcut\'s auto-start). Stop it so this app can take over?',
     buttons: ['Stop it and continue', 'Continue anyway'],
     defaultId: 0,
     cancelId: 1,
@@ -598,7 +604,7 @@ function startServer(config) {
     serverState = { status: 'failed', error: `${e.message}\n${e.stack || ''}` };
     console.error('[server] Print server failed to start:', e);
     dialog.showErrorBox(
-      'Awana Label Printer — server failed to start',
+      'Club Label Printer — server failed to start',
       'Labels canNOT print until this is fixed.\n\n' + e.message +
       '\n\nPlease send a screenshot of this message to your administrator.'
     );
@@ -735,6 +741,14 @@ ipcMain.handle('check-for-updates', async () => {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
+// Deliberately NOT renamed alongside the v5.9.0 "Club Label Printer" rebrand
+// (see changes.md), same as package.json's "name"/"appId" — this is the
+// Windows taskbar-grouping/registry identity electron-builder's install and
+// update machinery keys off, invisible to the operator either way. Changing
+// it would make Windows treat the rebrand as a different app: a new install
+// directory, a broken electron-updater upgrade path, and a stranded old copy
+// nobody asked for. Only user-visible strings (window titles, tray text,
+// shortcuts) changed.
 app.setAppUserModelId('com.kvbc.awana-label-printer');
 
 app.whenReady().then(async () => {
@@ -744,6 +758,7 @@ app.whenReady().then(async () => {
   // Import data from a legacy script install (C:\output) before anything
   // reads config — makes .exe-over-script upgrades seamless.
   const migration = runMigration(app.getPath('userData'));
+  const oldBrandShortcuts = findOldBrandShortcuts();
 
   await resolvePortConflict();
 
@@ -792,6 +807,23 @@ app.whenReady().then(async () => {
       cancelId: 1,
     });
     if (response === 0) removeShortcuts(migration.shortcuts);
+  }
+
+  // v5.9.0 renamed the app from "Awana Label Printer" to "Club Label
+  // Printer" — the installer creates fresh "Club Label Printer" shortcuts
+  // but never removes the old-named ones. Offer once, same pattern as the
+  // legacy-shortcut cleanup above.
+  if (oldBrandShortcuts.length) {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'App renamed',
+      message: 'This app is now called "Club Label Printer" (same app, same settings — just the name).',
+      detail: 'Remove the old "Awana Label Printer" shortcut(s)?\n\n' + oldBrandShortcuts.join('\n'),
+      buttons: ['Remove old shortcut(s)', 'Keep them'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) removeShortcuts(oldBrandShortcuts);
   }
 });
 

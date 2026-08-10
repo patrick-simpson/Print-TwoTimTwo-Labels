@@ -17,7 +17,7 @@ export const Nav: React.FC = () => (
         <span className="w-9 h-9 rounded-xl bg-brand-600 text-white flex items-center justify-center text-lg shadow-sm">
           <i className="fa fa-print"></i>
         </span>
-        <span className="hidden sm:inline">Awana® Label Printer</span>
+        <span className="hidden sm:inline">Club Label Printer</span>
         <span className="text-[10px] font-mono font-medium bg-brand-50 text-brand-700 border border-brand-200 px-1.5 py-0.5 rounded-full">
           v{SERVER_VERSION}
         </span>

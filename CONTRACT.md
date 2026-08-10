@@ -1,4 +1,4 @@
-﻿# Awana Event Bus Contract (v2)
+﻿# Club Event Bus Contract (v2)
 
 This document pins the payload schemas for every event on the shared Pusher
 channel **`awana-channel`**. The **print server in this repo is the ONLY
