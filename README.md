@@ -1,6 +1,8 @@
-# Awana Label Printer
+# Awana® Label Printer
 
 **Automatic label printing for TwoTimTwo.com check-in system**
+
+> Not affiliated with, endorsed by, or approved by Awana Clubs International, or by TwoTimTwo.com — a community-built tool that works alongside their systems.
 
 When a child checks in during Awana, automatically print a 4" × 2" label to your label printer with zero dialogs or manual steps.
 
@@ -152,7 +154,7 @@ Total install size: ~300 MB (Puppeteer/Chromium is large, but one-time download)
 
 ## Disclaimer
 
-This project is **not affiliated with, endorsed by, or approved by TwoTimTwo.com**. It is a community-built tool that works alongside their check-in system. Use at your own discretion.
+This project is **not affiliated with, endorsed by, or approved by TwoTimTwo.com or Awana Clubs International**. It is a community-built tool that works alongside their systems. "Awana" and "Awana Clubs" are trademarks of Awana Clubs International, used here only to describe what this tool is for. Use at your own discretion.
 
 ## Getting Help
 

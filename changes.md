@@ -1,4 +1,10 @@
-﻿## [5.8.2] - 2026-08-03
+﻿## Unreleased — trademark compliance pass
+Reviewed the project against Awana Clubs International's published Trademark Guidelines. No version bump: this touches only the public website copy and README, not `server.js`/`install-and-run.ps1`/the shipped app, so nothing here needs a new release.
+
+- README and the website (`index.html`, `Nav.tsx`) now mark the first use of "Awana" with ® and the README's disclaimer section now names Awana Clubs International explicitly, matching the footer's existing wording (`Faq.tsx`) — previously the README's disclaimer only covered TwoTimTwo.com, omitting Awana entirely even though the page is titled "Awana Label Printer".
+- Flagged separately for the project owner (not code-fixable): the shipped product's name itself ("Awana Label Printer" — window titles, tray text, Start Menu/Desktop shortcuts, installer filename, `%APPDATA%\Awana Label Printer\`, package/bundle IDs) uses "Awana" as its primary brand, which the guidelines' "Products" section says they don't grant permission for; and the label-printing feature fetches and re-processes (dithers/binarizes) each club's official Awana logo from TwoTimTwo for thermal output, which touches the guidelines' "never modify our logos" rule. Both are business/branding calls, not something to silently rewrite.
+
+## [5.8.2] - 2026-08-03
 The no-photo flag now honors an explicit "no" in EITHER release column — fixing a real consent failure at KVB, where every no-photo child was printing without the camera icon.
 
 ### An unused column was eating the media release
