@@ -1,13 +1,13 @@
-# Night-of one-pager — Awana label printing
+# Night-of one-pager — club label printing
 
 Print this page and tape it near the check-in laptop.
 
 ## Before doors open (5 minutes)
 
-1. **Start the server** — double-click **Awana Labels** on the desktop
-   (or the Awana Label Printer tray app). A green window appears.
+1. **Start the server** — double-click **Club Label Printer** on the desktop
+   (or the tray app). A green window appears.
 2. **Open the check-in page** — it opens automatically; sign in to
-   TwoTimTwo if asked. The green **Awana widget** appears top-right.
+   TwoTimTwo if asked. The green **Club Print widget** appears top-right.
 3. **Run the night test** — widget → **Night Test** (or dashboard →
    *Test Night Systems*). You should get:
    - ✅ page selectors
@@ -33,7 +33,7 @@ Print this page and tape it near the check-in laptop.
 ## If printing stops
 
 1. Is the green server window still open? If not, double-click
-   **Awana Labels** again — queued labels print on reconnect.
+   **Club Label Printer** again — queued labels print on reconnect.
 2. Printer on, paper in, USB seated? The server retries by itself.
 3. Dashboard (`http://localhost:3456`) shows exactly what's wrong —
    *Night Status* + *Print Failures Tonight*.

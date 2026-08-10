@@ -3,7 +3,7 @@ import { HEALTH_CHECK_ENDPOINT, HEALTH_CHECK_TIMEOUT } from '../src/constants';
 
 type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error';
 
-const INSTALLER_URL = 'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Awana-Label-Printer-Setup.exe';
+const INSTALLER_URL = 'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Club-Label-Printer-Setup.exe';
 const LEGACY_INSTALL_CMD = "powershell -ExecutionPolicy Bypass -Command 'irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex'";
 
 const Step: React.FC<{ n: number; title: string; children: React.ReactNode }> = ({ n, title, children }) => (
@@ -37,7 +37,7 @@ export const InstallGuide: React.FC = () => {
       setConnDetail(`v${data.version} — printer: ${data.printer}`);
     } catch {
       setConnStatus('error');
-      setConnDetail('Server not reachable — make sure the Awana Check In window is open on this computer.');
+      setConnDetail('Server not reachable — make sure the Club Label Printer window is open on this computer.');
     }
   };
 
@@ -56,7 +56,7 @@ export const InstallGuide: React.FC = () => {
         <Step n={1} title="Install the app">
           <p>
             <a href={INSTALLER_URL} className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg shadow transition-colors">
-              <i className="fa fa-download"></i> Download Awana Label Printer for Windows
+              <i className="fa fa-download"></i> Download Club Label Printer for Windows
             </a>
             <span className="ml-3 text-xs text-slate-400">then run the downloaded file</span>
           </p>
@@ -75,7 +75,7 @@ export const InstallGuide: React.FC = () => {
             <strong>updates itself</strong> — no more re-running installers.
           </p>
           <p className="text-xs text-slate-500">
-            Server not running for any reason? Just launch <strong>Awana Label Printer</strong> from
+            Server not running for any reason? Just launch <strong>Club Label Printer</strong> from
             the desktop or Start menu again — every launch checks the server and starts it if it's
             down. There's also a <strong>▶ Start print server</strong> button in the tray menu and in
             Settings.
@@ -118,7 +118,7 @@ export const InstallGuide: React.FC = () => {
             <ol className="list-decimal list-inside space-y-1 text-slate-600">
               <li>Open <code className="bg-white px-1 rounded border border-slate-200">edge://extensions</code> or <code className="bg-white px-1 rounded border border-slate-200">chrome://extensions</code></li>
               <li>Turn on <strong>Developer Mode</strong> (top right)</li>
-              <li>Click <strong>Load unpacked</strong> and pick <code className="bg-white px-1 rounded border border-slate-200">%APPDATA%\Awana Label Printer\chrome-extension</code></li>
+              <li>Click <strong>Load unpacked</strong> and pick <code className="bg-white px-1 rounded border border-slate-200">%APPDATA%\awana-label-printer\chrome-extension</code></li>
             </ol>
             <p className="text-slate-500 pt-1">
               Can't find it? The tray menu has <strong>Open Chrome extension folder</strong>, and the
@@ -135,7 +135,7 @@ export const InstallGuide: React.FC = () => {
             </p>
           </div>
           <p className="text-xs text-slate-500">
-            The green <strong>Awana Print</strong> widget appears on your check-in page once it's loaded.
+            The green <strong>Club Print</strong> widget appears on your check-in page once it's loaded.
             (Old script installs have the folder at <code className="bg-slate-100 px-1 rounded">C:\output\Print-TwoTimTwo-Labels\chrome-extension</code>;{' '}
             <a href="chrome-extension.zip" download className="text-brand-600 hover:underline">the zip</a> is
             still there for anyone not using the Windows app.)

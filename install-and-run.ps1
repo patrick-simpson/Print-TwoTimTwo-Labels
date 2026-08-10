@@ -1,9 +1,10 @@
-﻿# Awana Label Print Server -- All-in-One Installer
-# Version    : 5.8.2
+﻿# Club Label Print Server -- All-in-One Installer
+# Version    : 5.9.0
 # Updated    : 2026-04-17
 #
 # DEPRECATED: this script install is superseded by the Windows app installer
-# (Awana-Label-Printer-Setup.exe on the GitHub Releases page). It keeps
+# (Club-Label-Printer-Setup.exe on the GitHub Releases page — this app was
+# called "Awana Label Printer" before v5.9.0). It keeps
 # working for existing installs, but will be removed in a future release.
 # The new app imports this install's config and roster automatically.
 #
@@ -31,7 +32,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "5.8.2"
+$ScriptVersion = "5.9.0"
 
 # The repository this install pulls its code from. A FORK must change this (or
 # pass -RepoSlug), otherwise the installer downloads upstream's code instead of
@@ -96,11 +97,11 @@ trap {
 }
 
 # Set window properties
-$Host.UI.RawUI.WindowTitle = "Awana Label Print Server Setup"
+$Host.UI.RawUI.WindowTitle = "Club Label Print Server Setup"
 
 Write-Host ""
 Write-Host "=================================================================================" -ForegroundColor Cyan
-Write-Host "  Awana Label Print Server -- All-in-One Installer" -ForegroundColor Cyan
+Write-Host "  Club Label Print Server -- All-in-One Installer" -ForegroundColor Cyan
 Write-Host "  Version $ScriptVersion" -ForegroundColor Cyan
 Write-Host "=================================================================================" -ForegroundColor Cyan
 Write-Host ""

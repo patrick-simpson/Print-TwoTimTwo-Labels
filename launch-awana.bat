@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title Awana Print
+title Club Print
 cls
 
 echo.
-echo   [ Awana Print ]
+echo   [ Club Print ]
 echo   ------------------------------------------------------------
 echo.
 echo   Starting server and connecting to TwoTimTwo...
@@ -117,7 +117,7 @@ if exist "%TEMP_PS1%" (
 
 :start_server
 :: --- 3. Start Server Logic ---
-echo   [#] Starting Awana Print Server...
+echo   [#] Starting Club Print Server...
 
 where node >nul 2>nul
 if errorlevel 1 (
@@ -151,7 +151,7 @@ echo   [#] Opening check-in page in Edge...
 start "" "%CHECKIN_URL%"
 
 echo.
-echo   [ OK ] Awana Print is starting.
+echo   [ OK ] Club Print is starting.
 echo   ------------------------------------------------------------
 echo.
 echo   Keep this window open during check-in.

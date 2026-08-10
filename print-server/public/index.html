@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Awana Print Server</title>
+<title>Club Print Server</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; }
@@ -88,7 +88,7 @@
 
 <div class="header">
   <div>
-    <h1>Awana Print Server</h1>
+    <h1>Club Print Server</h1>
     <span class="ver" id="version-text">Loading...</span>
   </div>
   <div style="display:flex;align-items:center;gap:12px">
@@ -543,7 +543,7 @@ function loadHealth() {
     tl.className = 'traffic-light red';
     td.className = 'traffic-dot red';
     tt.textContent = 'Server Offline';
-    tdet.textContent = 'Cannot connect. Make sure the Awana Print window is open.';
+    tdet.textContent = 'Cannot connect. Make sure the Club Print window is open.';
     // Say "unknown", never "encrypted". A stale green banner on an unreachable
     // server is a claim about privacy we cannot currently stand behind.
     var pb = document.getElementById('privacy-banner');

@@ -1,4 +1,4 @@
-// Awana Label Print Server
+// Club Label Print Server
 // Started by install-and-run.ps1 — listens on http://localhost:3456
 // Accepts POST /print and silently prints a 4×2 in label as PNG via canvas.
 
@@ -3961,7 +3961,7 @@ function startListening(attempt = 1) {
     envHost: process.env.AWANA_BIND_HOST,
   });
   const server = app.listen(PORT, bind.host, () => {
-    console.log(`\n  Awana Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
+    console.log(`\n  Club Print Server v${SERVER_VERSION}  •  http://localhost:${PORT}`);
     console.log(`  Dashboard : http://localhost:${PORT}/`);
     console.log(`  Printer   : ${PRINTER_NAME || '(system default)'}`);
     console.log(`  Network   : bound to ${bind.host} — ${bind.reason}`);

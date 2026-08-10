@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "5.8.2",
+  "version": "5.9.0",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
@@ -23,7 +23,7 @@
   },
   "build": {
     "appId": "com.kvbc.awana-label-printer",
-    "productName": "Awana Label Printer",
+    "productName": "Club Label Printer",
     "publish": {
       "provider": "github",
       "owner": "patrick-simpson",
@@ -39,7 +39,7 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "Awana-Label-Printer-Setup.exe"
+      "artifactName": "Club-Label-Printer-Setup.exe"
     },
     "files": [
       "main.js",

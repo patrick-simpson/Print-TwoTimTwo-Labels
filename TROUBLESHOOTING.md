@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Having issues with Awana Label Printer? This guide covers common problems and solutions.
+Having issues with Club Label Printer? This guide covers common problems and solutions.
 
 ## Windows App (.exe) Issues
 
@@ -62,14 +62,15 @@ the first time it detects an old install.
 
 Labels cannot print in this state — the app shows the error instead of degrading silently.
 Send a screenshot of the message to your administrator, or check
-`%APPDATA%\Awana Label Printer\` for config problems. Reinstalling the latest
-release is safe: your roster and settings live in `%APPDATA%\Awana Label Printer`, not in the
-install folder.
+`%APPDATA%\awana-label-printer\` for config problems. Reinstalling the latest
+release is safe: your roster and settings live in `%APPDATA%\awana-label-printer`, not in the
+install folder. (That folder is still named after the app's pre-v5.9.0 name,
+"Awana Label Printer" — see EXTENSION.md.)
 
 ### Where did my data go after switching from the script install?
 
 The first run imports `config.json`, `clubbers.csv`, print history, and attendance from
-`C:\output\Print-TwoTimTwo-Labels\print-server` into `%APPDATA%\Awana Label Printer`. The old
+`C:\output\Print-TwoTimTwo-Labels\print-server` into `%APPDATA%\awana-label-printer`. The old
 folder is left untouched as a backup.
 
 ---
@@ -214,7 +215,7 @@ folder is left untouched as a backup.
 3. JavaScript is disabled
 
 **Solution:**
-1. Go back to the Awana Label Printer web simulator
+1. Go back to the Club Label Printer web simulator
 2. Find the BookmarkletInfo section (red box with instructions)
 3. Drag the button again to your bookmarks
 4. Try clicking it on the TwoTimTwo page

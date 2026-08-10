@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title Awana Print -- Installer
+title Club Print -- Installer
 
 :: --- 1. Admin Check & Relaunch ---
 if "%1"=="--admin-relaunch" goto :pretty_header
@@ -27,7 +27,7 @@ exit /b
 :pretty_header
 cls
 echo.
-echo   [ Awana Print ] - Installer v1.8.0
+echo   [ Club Print ] - Installer v1.8.0
 echo   ------------------------------------------------------------
 echo.
 echo   Welcome! This script will prepare your computer for

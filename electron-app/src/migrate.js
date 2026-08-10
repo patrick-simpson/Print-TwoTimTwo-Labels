@@ -44,6 +44,31 @@ function findLegacyShortcuts() {
   return found;
 }
 
+// v5.9.0 renamed the product from "Awana Label Printer" to "Club Label
+// Printer" (trademark compliance — see changes.md). NSIS names the desktop
+// and Start Menu shortcuts after `productName`, and electron-builder doesn't
+// remove the old-named ones when a rebrand ships — an upgrading operator
+// would otherwise end up with both "Awana Label Printer.lnk" and
+// "Club Label Printer.lnk" pointing at the same app. This only looks for the
+// OLD name; the new shortcuts are created fresh by the installer as normal.
+const OLD_BRAND_SHORTCUT_NAMES = ['Awana Label Printer.lnk'];
+
+function findOldBrandShortcuts() {
+  const found = [];
+  const home = process.env.USERPROFILE || '';
+  const appData = process.env.APPDATA || '';
+  const candidates = [];
+  if (home) candidates.push(path.join(home, 'Desktop'));
+  if (appData) candidates.push(path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
+  for (const dir of candidates) {
+    for (const name of OLD_BRAND_SHORTCUT_NAMES) {
+      const p = path.join(dir, name);
+      try { if (fs.existsSync(p)) found.push(p); } catch { /* ignore */ }
+    }
+  }
+  return found;
+}
+
 // Copies legacy data into dataDir (never overwriting anything already there)
 // and returns what it found. Safe to call on every boot — it becomes a no-op
 // once the marker file exists or there is no legacy install.
@@ -96,4 +121,4 @@ function removeShortcuts(paths) {
   return removed;
 }
 
-module.exports = { runMigration, removeShortcuts, findLegacyShortcuts };
+module.exports = { runMigration, removeShortcuts, findLegacyShortcuts, findOldBrandShortcuts };

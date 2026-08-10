@@ -19,7 +19,10 @@ never updates and will quietly drift behind the print server.
    - the dashboard at `http://localhost:3456` → **Diagnostics** → *Chrome
      extension folder* → **Copy folder path**.
 
-   It is `%APPDATA%\Awana Label Printer\chrome-extension`.
+   It is `%APPDATA%\awana-label-printer\chrome-extension` (the folder is
+   still named after the app's pre-v5.9.0 name, "Awana Label Printer" —
+   `package.json`'s `name` field is intentionally NOT part of the v5.9.0
+   rebrand; see changes.md).
 2. Open your browser and go to the extensions page:
    - **Edge:** `edge://extensions`
    - **Chrome:** `chrome://extensions`

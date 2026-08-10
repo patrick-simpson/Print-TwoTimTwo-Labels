@@ -240,7 +240,7 @@ async function main() {
   // version travels and the path does not.
   {
     server.setExtensionInfo({
-      targetDir: 'C:\\Users\\pastor.jane\\AppData\\Roaming\\Awana Label Printer\\chrome-extension',
+      targetDir: 'C:\\Users\\pastor.jane\\AppData\\Roaming\\Club Label Printer\\chrome-extension',
       version: '9.9.9',
       action: 'updated',
     });

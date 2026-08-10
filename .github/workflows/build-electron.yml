@@ -81,7 +81,7 @@ jobs:
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Awana-Label-Printer-Setup
+          name: Club-Label-Printer-Setup
           path: |
             electron-app/dist/*.exe
             electron-app/dist/*.blockmap
@@ -96,7 +96,7 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: Awana-Label-Printer-Setup
+          name: Club-Label-Printer-Setup
           path: installer
 
       - name: Install silently
@@ -114,7 +114,7 @@ jobs:
           $deadline = (Get-Date).AddSeconds(60)
           $installed = $null
           while ((Get-Date) -lt $deadline) {
-            $found = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Filter 'Awana Label Printer.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            $found = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Filter 'Club Label Printer.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($found) { $installed = $found.FullName; break }
             Start-Sleep -Seconds 3
           }
@@ -125,7 +125,7 @@ jobs:
               Select-Object FullName | Format-Table -AutoSize | Out-String | Write-Host
             Write-Host "---- Diagnostics: uninstall registry entries ----"
             Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
-              Where-Object { $_.DisplayName -like '*Awana*' } | Format-List | Out-String | Write-Host
+              Where-Object { $_.DisplayName -like '*Label Printer*' } | Format-List | Out-String | Write-Host
             throw "App exe never appeared under `$env:LOCALAPPDATA\Programs after 60s (installer exit code: $($proc.ExitCode))"
           }
 
@@ -138,9 +138,11 @@ jobs:
       # --user-data-dir pins Electron's userData folder explicitly instead of
       # guessing where app.getPath('userData') lands: the install step above
       # just proved the install directory uses package.json's "name" field
-      # (awana-label-printer), not "productName" (Awana Label Printer) as
-      # assumed — guessing the config/userData path the same way is the same
-      # class of bug. --user-data-dir is a native Electron/Chromium switch
+      # (awana-label-printer — deliberately NOT renamed in the v5.9.0 "Club
+      # Label Printer" rebrand, see changes.md), not "productName" (now
+      # "Club Label Printer") as assumed — guessing the config/userData path
+      # the same way is the same class of bug. --user-data-dir is a native
+      # Electron/Chromium switch
       # that app.getPath('userData') honors automatically, so this sidesteps
       # the guess entirely. Stdout/stderr are captured so a future failure is
       # diagnosable from logs instead of another blind guess.
@@ -171,7 +173,7 @@ jobs:
           $appProc = $null
           $findDeadline = (Get-Date).AddSeconds(30)
           while ((Get-Date) -lt $findDeadline) {
-            $appProc = Get-Process 'Awana Label Printer' -ErrorAction SilentlyContinue | Select-Object -First 1
+            $appProc = Get-Process 'Club Label Printer' -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($appProc) { break }
             Start-Sleep -Milliseconds 500
           }
@@ -215,7 +217,7 @@ jobs:
             Get-NetTCPConnection -LocalPort 3456 -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
             Write-Host "---- Diagnostics: Windows Application event log (crash reports) ----"
             Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = [datetime]$env:APP_LAUNCH_TIME } -ErrorAction SilentlyContinue |
-              Where-Object { $_.Message -like '*Awana*' -or $_.ProviderName -like '*Application Error*' } |
+              Where-Object { $_.Message -like '*Label Printer*' -or $_.ProviderName -like '*Application Error*' } |
               Select-Object TimeCreated, Id, ProviderName, @{n='Message';e={$_.Message.Substring(0, [Math]::Min(500, $_.Message.Length))}} |
               Format-List | Out-String | Write-Host
             throw 'Server never answered /health'
@@ -241,7 +243,7 @@ jobs:
       - name: Stop app
         if: always()
         shell: pwsh
-        run: Get-Process 'Awana Label Printer' -ErrorAction SilentlyContinue | Stop-Process -Force
+        run: Get-Process 'Club Label Printer' -ErrorAction SilentlyContinue | Stop-Process -Force
 
   release:
     # Publish only after the INSTALLED app passed the smoke test.
@@ -253,7 +255,7 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: Awana-Label-Printer-Setup
+          name: Club-Label-Printer-Setup
           path: installer
 
       # latest.yml + blockmap are the electron-updater feed — without them

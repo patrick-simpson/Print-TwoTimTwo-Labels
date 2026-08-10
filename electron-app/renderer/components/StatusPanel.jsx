@@ -108,7 +108,7 @@ export default function StatusPanel({ config, onReset }) {
         <div style={s.logoRow}>
           <span style={s.logo}>🖨️</span>
           <div>
-            <h1 style={s.title}>Awana Label Printer</h1>
+            <h1 style={s.title}>Club Label Printer</h1>
             {failed
               ? <span style={s.badgeBad}>● Server NOT running</span>
               : <span style={s.badge}>● Server running{health?.version ? ` — v${health.version}` : ''}</span>}
