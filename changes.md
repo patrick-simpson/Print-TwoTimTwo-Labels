@@ -1,4 +1,15 @@
-﻿## [5.23.0] - 2026-08-22
+﻿## [5.24.0] - 2026-08-22
+Rehearsal mode (#19): one dashboard button runs a fake club night across BOTH apps. While armed, EVERY print is treated as a demo — real label, diagonal TEST band, and none of the persistent side effects (no history row, no attendance ledger, no publish, no tally bump) — and every tally broadcast carries the contract's optional `rehearsal: true` flag (staged in v5.20.0), so the check-in display wears an amber "rehearsal — practice run" watermark that appears and disappears within seconds of the toggle (the server publishes a tally immediately on arm/disarm).
+
+Safety rails, because an armed rehearsal is a loaded gun pointed at club night:
+- **Auto-disarm after 2 hours.** A rehearsal armed at Tuesday training and forgotten must never turn Wednesday's real check-ins into TEST labels.
+- **Never invisible.** `/health` reports the state and shouts a `{type, message}` warning while armed; the dashboard button itself flips to a red "End rehearsal (armed)" and always shows the current state.
+- **Loopback-gated.** `POST /rehearsal` uses the same trusted-origin check as the config endpoints — only the dashboard on the server PC can toggle it.
+- **In-memory only.** A server restart is always a clean exit from rehearsal.
+
+Display half landed in the display repo: the watermark pill follows the tally flag live and decays the moment the flag stops arriving.
+
+## [5.23.0] - 2026-08-22
 Batch check-in self-verify report (#2), extending the v3.0.4 guarantee. v3.0.4 made every driven check-in verify itself (the kid's row must vanish) and retry — but a check-in that STILL didn't stick died in console.log, and the operator found out at pickup. Now every terminal "could not verify" is tracked, retried, and reported:
 
 - **Tracked**: the three terminal failure points (modal never opened, verify retries exhausted, row missing from the DOM at batch time) land the kid on a "didn't stick" list keyed by identity.

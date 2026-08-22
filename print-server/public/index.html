@@ -172,7 +172,10 @@
   <div class="card">
     <div class="card-header">
       <span>Night Status</span>
-      <button class="btn btn-primary btn-sm" id="canary-btn" onclick="runCanary()">Test Night Systems</button>
+      <span style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" id="rehearsal-btn" onclick="toggleRehearsal()">Rehearsal mode</button>
+        <button class="btn btn-primary btn-sm" id="canary-btn" onclick="runCanary()">Test Night Systems</button>
+      </span>
     </div>
     <div class="card-body" style="padding:0">
       <div id="night-status" class="diag-list" style="padding:8px 16px">
@@ -578,6 +581,18 @@ function loadHealth() {
       }
     }
 
+    // Rehearsal mode (#19): the button always shows the CURRENT state and
+    // the click that gets you OUT is always available on it.
+    var rb = document.getElementById('rehearsal-btn');
+    if (rb) {
+      window.__rehearsalOn = data.rehearsal === true;
+      rb.textContent = data.rehearsal === true ? '⏹ End rehearsal (armed)' : 'Rehearsal mode';
+      rb.className = 'btn btn-secondary btn-sm';
+      rb.style.background = data.rehearsal === true ? '#dc2626' : '';
+      rb.style.color = data.rehearsal === true ? '#fff' : '';
+      rb.style.borderColor = data.rehearsal === true ? '#dc2626' : '';
+    }
+
     // Warnings + traffic light
     var warnings = data.warnings || [];
     var warnCard = document.getElementById('warnings-card');
@@ -843,6 +858,21 @@ function saveTemplates() {
   }).catch(function() {
     alert('Saving templates failed — this only works from the dashboard on the server PC.');
   });
+}
+
+// Rehearsal mode (#19): one button arms a fake club night — every print gets
+// the TEST band and records nothing, tallies tell the displays to watermark.
+function toggleRehearsal() {
+  var arming = window.__rehearsalOn !== true;
+  if (arming && !confirm('Arm rehearsal mode?\n\nEvery label will print with a TEST band and NOTHING will be recorded or broadcast as real (history, attendance, screens). It auto-disarms after 2 hours.')) return;
+  fetch(BASE + '/rehearsal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: arming }) })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { alert(res.d && res.d.error ? res.d.error : 'Could not toggle rehearsal mode.'); return; }
+      window.__rehearsalOn = res.d.rehearsal === true;
+      loadHealth();
+    })
+    .catch(function() { alert('Could not reach the server.'); });
 }
 
 // Musical printer (#11/#12): the demo button. 409 means the toggle is off.

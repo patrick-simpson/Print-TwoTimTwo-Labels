@@ -191,6 +191,44 @@ async function main() {
       stats.json && stats.json.checkedIn === 1, JSON.stringify(stats.json));
   }
 
+  // ── 3.5 Rehearsal mode (#19): the dashboard button's server half ──────────
+  // Arming rehearsal must turn EVERY print into a demo (TEST band, zero
+  // side effects) without the caller asking, say so loudly on /health, tell
+  // the event bus via tally's optional flag, and release completely on
+  // disarm. Same paired-run discipline as the rest of this file.
+  {
+    const historyBefore = countRows(readJson(dataDir, 'print-history.json'));
+
+    const arm = await post('/rehearsal', { on: true });
+    check('arming rehearsal succeeds from loopback', arm.status === 200 && arm.json && arm.json.rehearsal === true, JSON.stringify(arm.json));
+
+    let h = await get('/health');
+    check('/health reports rehearsal armed', h.json && h.json.rehearsal === true);
+    check('/health warns loudly while armed, as a {type, message} object',
+      (h.json.warnings || []).some((w) => w && w.type === 'rehearsalArmed' && /TEST band/.test(w.message || '')),
+      JSON.stringify(h.json.warnings));
+
+    const res = await post('/print', { firstName: 'Rehearsal', lastName: 'Kid', clubName: 'Sparks' });
+    check('a print WITHOUT the demo flag is treated as demo while armed',
+      res.status === 200 && res.json && res.json.demo === true, JSON.stringify(res.json));
+    check('an armed-rehearsal print writes NO history row',
+      countRows(readJson(dataDir, 'print-history.json')) === historyBefore);
+
+    const disarm = await post('/rehearsal', { on: false });
+    check('disarming succeeds', disarm.status === 200 && disarm.json && disarm.json.rehearsal === false, JSON.stringify(disarm.json));
+
+    h = await get('/health');
+    check('/health reports rehearsal off after disarm', h.json && h.json.rehearsal === false);
+    check('the armed warning is gone after disarm',
+      !(h.json.warnings || []).some((w) => w && w.type === 'rehearsalArmed'), JSON.stringify(h.json.warnings));
+
+    const real = await post('/print', { firstName: 'Ada', lastName: 'Rehearse', clubName: 'Sparks' });
+    check('a real print after disarm records again (the guard fully releases)',
+      real.status === 200 && !(real.json && real.json.demo)
+        && countRows(readJson(dataDir, 'print-history.json')) === historyBefore + 1,
+      JSON.stringify(real.json));
+  }
+
   // ── 4. A failing demo print stays silent ──────────────────────────────────
   // Remove the powershell stub so printImage() throws, and confirm the catch
   // block's demo guard holds: no history row, no ops print-failure event. A

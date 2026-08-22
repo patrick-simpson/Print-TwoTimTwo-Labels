@@ -2937,7 +2937,7 @@ app.post('/print', async (req, res) => {
   //   • publishTally      → inflates tonight's counts on every screen.
   // This is the same set /canary already skips; demo mode generalises it to an
   // arbitrary name and club.
-  const isDemo = demo === true || demo === 'true';
+  const isDemo = demo === true || demo === 'true' || isRehearsalActive();
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
 
@@ -4069,6 +4069,7 @@ function publishTally() {
     // boots mid-night picks it up on the next tally without any handshake.
     events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn, {
       season: currentLabelSeason(),
+      rehearsal: isRehearsalActive(),
     }));
   } catch (e) { console.warn('[events] tally publish skipped:', e.message); }
 }
@@ -4357,6 +4358,15 @@ app.get('/health', async (req, res) => {
   // #2: check-ins the extension could not verify as stuck on TwoTimTwo.
   // Names are allowed here: /health is loopback/operator-facing and this
   // list exists precisely so a human re-checks these kids on the site.
+  // Rehearsal mode is never an error, but it must never be INVISIBLE either:
+  // an armed rehearsal turns every print into a TEST label, so the dashboard
+  // has to shout it until it's turned off (or the 2h auto-disarm fires).
+  if (isRehearsalActive()) {
+    warnings.push({
+      type: 'rehearsalArmed',
+      message: 'Rehearsal mode is ON: every label prints with a TEST band and nothing is recorded or broadcast as real. Turn it off before real check-ins (it auto-disarms 2 hours after arming).',
+    });
+  }
   const unverified = feeds.getUnverifiedCheckins(Date.now());
   if (unverified.length) {
     const names = unverified.map(e => e.name).join(', ');
@@ -4376,6 +4386,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     printer: PRINTER_NAME || '(default)',
+    rehearsal: isRehearsalActive(),
     version: SERVER_VERSION,
     latestVersion: latestVersion,
     uptime: Math.round(process.uptime()),
@@ -4693,6 +4704,41 @@ app.post('/config/schedule', (req, res) => {
 // ── Musical printer (#11/#12) — endpoint ──────────────────────────────────────
 // Loopback/trusted-origin only: feeding paper is a physical act, and a phone
 // on the venue Wi-Fi has no business making the printer sing mid-club.
+// ── Rehearsal mode (#19) ──────────────────────────────────────────────────────
+// One dashboard button arms a fake club night across BOTH apps: while armed,
+// EVERY print is treated as a demo (real label, diagonal TEST band, zero
+// persistent side effects — no history, no ledger, no publish, no tally), and
+// every tally broadcast carries the contract's optional `rehearsal: true`
+// flag (staged in v5.20.0) so the displays watermark themselves. In-memory
+// only, and it auto-disarms after 2 hours: a rehearsal armed at Tuesday
+// training and forgotten must never turn Wednesday's real check-ins into
+// TEST labels. /health carries both the state and a loud warning while armed.
+const REHEARSAL_AUTO_DISARM_MS = 2 * 60 * 60 * 1000;
+let rehearsalState = { on: false, armedAt: 0 };
+
+function isRehearsalActive(now = Date.now()) {
+  if (!rehearsalState.on) return false;
+  if (now - rehearsalState.armedAt > REHEARSAL_AUTO_DISARM_MS) {
+    rehearsalState = { on: false, armedAt: 0 };
+    console.log('[rehearsal] Auto-disarmed after 2h — rehearsal mode never outlives a training session');
+    return false;
+  }
+  return true;
+}
+
+app.post('/rehearsal', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'Rehearsal mode can only be toggled from the dashboard on this computer' });
+  }
+  const on = (req.body || {}).on === true;
+  rehearsalState = on ? { on: true, armedAt: Date.now() } : { on: false, armedAt: 0 };
+  console.log('[rehearsal] ' + (on ? 'ARMED — every print is a TEST label, nothing is recorded, displays watermark' : 'disarmed — back to real check-ins'));
+  // Broadcast immediately so screens flip their watermark within seconds,
+  // not at the next 60s tally tick (and drop it just as fast on disarm).
+  publishTally();
+  res.json({ ok: true, rehearsal: rehearsalState.on });
+});
+
 app.post('/play-tune', (req, res) => {
   if (!isTrustedConfigOrigin(req)) {
     return res.status(403).json({ error: 'The tune button only works from the dashboard on this computer' });
