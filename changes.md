@@ -1,4 +1,13 @@
-﻿## [5.12.0] - 2026-08-22
+﻿## [5.13.0] - 2026-08-22
+Half-birthday cake: kids with June–August birthdays — whose real birthday week never lands on a club night, so they watch every other kid get a 🍰 and never get one — now get the same cake on their half-birthday week, six months on, squarely inside the Awana season. First of the round-3 build picks (#8); implemented serially, one feature per release entry, with a single Windows release at the end of the batch.
+
+### Label only, deliberately
+The cake icon now keys on `isCakeWeek()` (real birthday week OR a summer kid's half-birthday week) at all five label render sites — `/print`, `/label`, `/preview`, `/reprint`, `/print-award`. Everything display-facing stays on real birthdays: `/print` splits the value so the sealed `checkin` event's `isBirthday` is unchanged, and `publishBirthdays` plus the tonight-stats birthday roster are untouched — nobody on stage wishes a January "happy birthday" to an August kid, and the dashboard's birthday list stays literally true.
+
+### Mechanics
+`isBirthdayWeek` was refactored into `parseBirthdate` + `isWeekOfMonthDay` (behavior identical — the ISO-week semantics fixed in 3.6.2/5.x are shared, not copied), and `isHalfBirthdayWeek` gates on birth month June–August then targets month+6 with the day clamped into the target month (an Aug 31 half-birthday is end-of-February, never a roll into March). New unit tests pin the gate, the clamp, the garbage-in contract, a run-any-day dynamic check, and — by source inspection, same style as the `effectiveHandbookGroup` wiring test — that exactly the five label sites take the cake while the display feeds stay real.
+
+## [5.12.0] - 2026-08-22
 Per-club label templates: the dashboard's Label Preview tab is now an editor where each club (or the default for all of them) can switch parts of the label on or off and cap the name size, with a live server-rendered preview. Third and last of the ideas-triage picks (#1).
 
 ### A constrained template, not a free canvas

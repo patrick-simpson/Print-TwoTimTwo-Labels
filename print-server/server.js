@@ -754,29 +754,35 @@ function isSteppingUp(record, clubName) {
 // and the birthday is Jan 2, this returns true.
 // Returns false — without throwing — for blank, null, "N/A", or any
 // unparseable date string.
-function isBirthdayWeek(birthdateStr) {
-  // Guard: reject obviously bad input before touching Date
+
+// Parse a roster birthdate into a Date, or null for blank/"N/A"/unparseable.
+// Normalises MM/DD/YYYY → YYYY-MM-DD so Date() parses it correctly on all
+// platforms (the ISO form is the only reliably portable format in Node).
+function parseBirthdate(birthdateStr) {
   if (!birthdateStr || String(birthdateStr).trim() === '' || birthdateStr === 'N/A') {
-    return false;
+    return null;
   }
+  let normalised = String(birthdateStr).trim();
+  const slashMatch = normalised.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    normalised = `${slashMatch[3]}-${slashMatch[1].padStart(2, '0')}-${slashMatch[2].padStart(2, '0')}`;
+  }
+  const bday = new Date(normalised);
+  return isNaN(bday.getTime()) ? null : bday;
+}
+
+// True when the given month/day (0-indexed month) falls in the same ISO week
+// as today. Tested in both this calendar year and the next: the old code
+// rolled an already-passed birthday forward a year before comparing, so the
+// cake vanished the day after the birthday even though the documented
+// behavior is "the whole calendar week containing it". Checking next year as
+// well keeps the Dec→Jan ISO-week wrap working (e.g. today Dec 29 in ISO
+// week 1, target Jan 2).
+function isWeekOfMonthDay(month, day) {
   try {
-    // Normalise MM/DD/YYYY → YYYY-MM-DD so Date() parses it correctly on all
-    // platforms (the ISO form is the only reliably portable format in Node).
-    let normalised = String(birthdateStr).trim();
-    const slashMatch = normalised.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (slashMatch) {
-      normalised = `${slashMatch[3]}-${slashMatch[1].padStart(2, '0')}-${slashMatch[2].padStart(2, '0')}`;
-    }
-
-    const bday = new Date(normalised);
-    // Bail out if the date couldn't be parsed (e.g. "foo", "13/45/2020")
-    if (isNaN(bday.getTime())) return false;
-
-    // Use midnight local time for today so day-difference arithmetic is clean
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Check if birthday is in the same ISO week as today
     const getWeekNumber = (date) => {
       const d = new Date(date);
       d.setHours(0, 0, 0, 0);
@@ -787,15 +793,11 @@ function isBirthdayWeek(birthdateStr) {
     };
 
     const todayWeek = getWeekNumber(today);
-
-    // Test the birthday in both this calendar year and the next. The old
-    // code rolled an already-passed birthday forward a year before comparing,
-    // so the cake vanished the day after the birthday even though the
-    // documented behavior is "the whole calendar week containing it".
-    // Checking next year as well keeps the Dec→Jan ISO-week wrap working
-    // (e.g. today Dec 29 in ISO week 1, birthday Jan 2).
     for (const yr of [today.getFullYear(), today.getFullYear() + 1]) {
-      const candidate = new Date(yr, bday.getMonth(), bday.getDate());
+      // Clamp the day into the target month (Aug 31's half-birthday must be
+      // the end of February, not roll into March).
+      const lastDay = new Date(yr, month + 1, 0).getDate();
+      const candidate = new Date(yr, month, Math.min(day, lastDay));
       const w = getWeekNumber(candidate);
       if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
     }
@@ -804,6 +806,35 @@ function isBirthdayWeek(birthdateStr) {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
     return false;
   }
+}
+
+function isBirthdayWeek(birthdateStr) {
+  const bday = parseBirthdate(birthdateStr);
+  if (!bday) return false;
+  return isWeekOfMonthDay(bday.getMonth(), bday.getDate());
+}
+
+// Half-birthday cake (#8): the Awana year runs roughly late August to May, so
+// a June–August birthday NEVER lands on a club night — those kids watch every
+// other kid get a cake and never get one. Their half-birthday, six months on,
+// falls squarely inside the season and gets the same 🍰. Everyone else keeps
+// exactly one cake week a year.
+//
+// LABEL ONLY, deliberately: the display's checkin banner and the weekly
+// birthday list stay REAL birthdays (isBirthdayWeek), so nobody on stage
+// wishes a January "happy birthday" to an August kid.
+function isHalfBirthdayWeek(birthdateStr) {
+  const bday = parseBirthdate(birthdateStr);
+  if (!bday) return false;
+  const m = bday.getMonth();
+  if (m < 5 || m > 7) return false;   // June (5) – August (7) birthdays only
+  return isWeekOfMonthDay((m + 6) % 12, bday.getDate());
+}
+
+// What the LABEL's cake icon keys on: the real birthday week, or a summer
+// kid's half-birthday week.
+function isCakeWeek(birthdateStr) {
+  return isBirthdayWeek(birthdateStr) || isHalfBirthdayWeek(birthdateStr);
 }
 
 // ── Allergy parser ────────────────────────────────────────────────────────────
@@ -2280,7 +2311,7 @@ app.post('/label', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    birthday = isBirthdayWeek(record.Birthdate);
+    birthday = isCakeWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print: the group is judged
     // against the club that actually prints, so a club-less request for a
@@ -2398,14 +2429,15 @@ app.post('/print', async (req, res) => {
   // Attempt to enrich the label with data from the CSV
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens, handbookGroup, birthday, noPhoto;
+  let allergyTokens, handbookGroup, birthday, cakeWeek, noPhoto;
   let effectiveClubName = clubName;
   if (record) {
     // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
     // Check Allergies first (manual CSV), fall back to Notes (TwoTimTwo).
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    birthday      = isBirthdayWeek(record.Birthdate);
+    birthday      = isBirthdayWeek(record.Birthdate);   // real — feeds the display event
+    cakeWeek      = isCakeWeek(record.Birthdate);       // label icon: real or half-birthday
     noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
@@ -2422,6 +2454,7 @@ app.post('/print', async (req, res) => {
     allergyTokens = [];
     handbookGroup = '';
     birthday      = false;
+    cakeWeek      = false;
     noPhoto       = false;
     if (firstName || lastName) {
       console.log(`[csv] '${firstName} ${lastName}' not found in CSV — printing basic label`);
@@ -2482,7 +2515,7 @@ app.post('/print', async (req, res) => {
 
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
+      allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
@@ -2923,7 +2956,7 @@ app.get('/preview', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    birthday = isBirthdayWeek(record.Birthdate);
+    birthday = isCakeWeek(record.Birthdate);
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print — a preview must show the
     // label the same request would PRINT, pseudo-group suppression included.
@@ -3000,7 +3033,7 @@ app.post('/reprint', async (req, res) => {
       const allergySource = record.Allergies || record.Notes || '';
       allergyTokens = parseAllergies(allergySource);
       handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, entry.clubName);
-      birthday = isBirthdayWeek(record.Birthdate);
+      birthday = isCakeWeek(record.Birthdate);
       noPhoto = noPhotoFor(record);
     }
 
@@ -3101,7 +3134,7 @@ app.post('/print-award', async (req, res) => {
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
-    birthday = isBirthdayWeek(record.Birthdate);
+    birthday = isCakeWeek(record.Birthdate);
     noPhoto  = noPhotoFor(record);
     if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
   }
@@ -4327,6 +4360,9 @@ module.exports = {
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
   recordAttendance, isNonCheckinRow,
+  // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
+  // pinning (June–August gate, day clamping, ISO-week reuse).
+  parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going
