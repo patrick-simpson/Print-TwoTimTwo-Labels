@@ -183,6 +183,16 @@ function recordPrintFailure(name, club, error) {
 // ── Selector self-test + canary state ────────────────────────────────────────
 let lastSelfTest = null;   // { ok, results, extensionVersion, at } — posted by the extension
 let lastContractCanary = null; // { ok, results, extensionVersion, manual, at } — full daily sweep (#3)
+// Version skew (#7): the RUNNING extension version, as the extension itself
+// last reported it (every /selftest and /contract-canary post carries one).
+// The app knows what it SYNCED to disk (extensionInfo.version); Chrome keeps
+// running the old code until it restarts, and only the extension's own posts
+// reveal which version is actually live in the browser.
+let lastExtensionReport = null; // { version, at (ms) }
+function recordExtensionReport(version) {
+  const v = String(version || '').trim();
+  if (/^\d+\.\d+\.\d+$/.test(v)) lastExtensionReport = { version: v, at: Date.now() };
+}
 // The Electron shell registers a handler here to surface operator alerts as
 // tray/system notifications (contract drift, and anything else that must not
 // wait for someone to open the dashboard). No-op when running headless.
@@ -4154,6 +4164,7 @@ app.post('/selftest', (req, res) => {
     extensionVersion: String(body.extensionVersion || '').slice(0, 20),
     at: new Date().toISOString(),
   };
+  recordExtensionReport(body.extensionVersion);
   if (!lastSelfTest.ok && wasOk) {
     console.warn('[selftest] Extension reports selector failure — check-in page markup may have changed');
     events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('selector-fail'));
@@ -4183,6 +4194,7 @@ app.post('/contract-canary', (req, res) => {
     manual: body.manual === true,
     at: new Date().toISOString(),
   };
+  recordExtensionReport(body.extensionVersion);
   if (!lastContractCanary.ok && wasOk) {
     const failing = lastContractCanary.results.filter(r => !r.passed).map(r => r.check);
     console.warn('[contract-canary] TwoTimTwo contract drift detected: ' + failing.join(', '));
@@ -4336,6 +4348,20 @@ function setLatestVersion(ver) {
 // reporting a folder the app never wrote would be worse than reporting none.
 // Stays null under a standalone `node server.js`, which is the truth there.
 let extensionInfo = null;
+// Version skew (#7), pure half: warn only when the synced folder and the
+// running extension genuinely disagree AND the running-version report is
+// fresh. A report from before the sync (or from last week's session) must
+// not shout "restart Chrome" at an operator whose Chrome is already fine —
+// the extension reports every 10 minutes while a check-in page is open, so
+// 30 minutes of freshness covers a slow tab without covering a stale one.
+const EXTENSION_REPORT_FRESH_MS = 30 * 60 * 1000;
+function extensionSkew(syncedVersion, report, now = Date.now()) {
+  if (!syncedVersion || !report || !report.version) return null;
+  if (now - report.at > EXTENSION_REPORT_FRESH_MS) return null;
+  if (report.version === syncedVersion) return null;
+  return { running: report.version, synced: syncedVersion };
+}
+
 function setExtensionInfo(info) {
   if (!info || !info.targetDir) { extensionInfo = null; return; }
   extensionInfo = {
@@ -4401,6 +4427,17 @@ app.get('/health', async (req, res) => {
   // #2: check-ins the extension could not verify as stuck on TwoTimTwo.
   // Names are allowed here: /health is loopback/operator-facing and this
   // list exists precisely so a human re-checks these kids on the site.
+  // Version skew (#7): the app synced a new extension to disk, but Chrome is
+  // still running the old code until it restarts. The widget already shows
+  // its own "restart Chrome" banner; this is the dashboard half, driven by
+  // what the extension itself last reported it was running.
+  const skew = extensionSkew(extensionInfo && extensionInfo.version, lastExtensionReport);
+  if (skew) {
+    warnings.push({
+      type: 'extensionSkew',
+      message: `Chrome is running extension v${skew.running}, but v${skew.synced} is already installed on disk. Restart Chrome to load it — until then the browser keeps the old behavior.`,
+    });
+  }
   // Contract drift (#3): the daily sweep's latest verdict. A failing sweep is
   // exactly the "warn before club night" moment, so it belongs in the same
   // yellow box the operator already reads.
@@ -4463,6 +4500,7 @@ app.get('/health', async (req, res) => {
       : { version: extensionInfo.version, action: extensionInfo.action }),
     selectorSelfTest: lastSelfTest,
     contractCanary: lastContractCanary,
+    extensionRunning: lastExtensionReport,
     lastCanary,
     printFailures: printFailures.length,
     csv: { count: clubbers.length, updatedAt: csvUpdatedAt },
@@ -5182,7 +5220,7 @@ module.exports = {
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
-  shouldSendUpdateBeacon, parseLatestChangeEntry,
+  shouldSendUpdateBeacon, parseLatestChangeEntry, extensionSkew,
   // Attendance ledger — exported so the id-migration and the auto-connect-card
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
