@@ -7,7 +7,7 @@
 // server owns the security and realtime keys (phonePin, lanAccess,
 // allowedOrigins, pusherAppId/Key/Secret/Cluster), the operator schedule, and
 // assorted preferences (historyRetentionDays, connectCard, worksheetPrinter,
-// firstTimerInverted). The Electron setup wizard owns exactly three:
+// firstTimerInverted, labelFooter). The Electron setup wizard owns exactly three:
 // printerName, checkinUrl, launchOnBoot.
 //
 // The Electron writer used to do a bare whole-file `writeFileSync(path,

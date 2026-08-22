@@ -1221,7 +1221,7 @@ async function generateLabel(input) {
     firstName, lastName, clubName, clubImageBuffer,
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-    testBanner = false, extras = {},
+    testBanner = false, footerText = '', extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1232,6 +1232,7 @@ async function generateLabel(input) {
   clubName      = String(clubName  == null ? '' : clubName);
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
+  footerText    = String(footerText == null ? '' : footerText).trim();
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
   noPhoto       = !!noPhoto;
@@ -1404,11 +1405,14 @@ async function generateLabel(input) {
   const hasClub  = clubName.trim().length > 0 && !logoDrawn;
   const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
+  const hasFooter = footerText.length > 0;
 
-  // Reserve room for the bottom-right icon row (coin/cake/allergy) so the
-  // centered text block — especially a wide handbook-group line — can't
-  // collide with the icons.
-  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null || noPhoto) ? 20 : 0;
+  // Reserve room for the bottom band (right: coin/cake/allergy icon row;
+  // left: the operator's footer line) so the centered text block — especially
+  // a wide handbook-group line — can't collide with it. The occasional
+  // goTo/milestone lines deliberately don't reserve (they are rare and short),
+  // but a configured footer is on EVERY label, so it must.
+  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null || noPhoto || hasFooter) ? 20 : 0;
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
@@ -1525,6 +1529,11 @@ async function generateLabel(input) {
   // ── Bottom-right row: coin shares · cake birthday · allergy icons ─────────
   // Icons only along the bottom edge — no words. Allergens render as emoji
   // glyphs, sized up so they stay recognizable on 1-bit thermal output.
+  // Where the icon row begins (its leftmost pixel) — the bottom-left text lines
+  // below truncate against THIS, not a guessed fraction of the badge, so a wide
+  // allergy row and a footer can share the band without colliding. Defaults to
+  // the badge's right padding edge when there is no icon row at all.
+  let iconRowLeftX = BX + BW - 8;
   if (hasAllergy || isBirthday || awanaShares != null || noPhoto) {
     const EMOJI_SIZE         = 16;
     const ALLERGY_EMOJI_SIZE = 22;
@@ -1564,6 +1573,7 @@ async function generateLabel(input) {
     });
 
     let ex = BX + BW - PAD - totalW;
+    iconRowLeftX = ex;
     const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
     glyphs.forEach(function(g) {
       ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
@@ -1596,15 +1606,25 @@ async function generateLabel(input) {
   const extraLines = [];
   if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
   if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
+  // Operator-configured footer (#8: church name, a verse, service times) —
+  // pushed last so the reversed draw below puts it at the very bottom, under
+  // any routing/milestone lines. Italic so it reads as branding, not routing.
+  if (hasFooter) extraLines.push({ text: footerText.slice(0, 48), bold: false, italic: true });
   if (extraLines.length) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
+    const lineX = hasIcon ? DIVIDER_X + 8 : BX + 8;
+    // Truncate against where the bottom-right icon row actually begins (or the
+    // badge edge when there is none) rather than a guessed fraction of the
+    // badge — the old flat 55% cap both wasted half the band on icon-less
+    // labels and still collided under a five-allergy icon row. The 40pt floor
+    // keeps at least a word visible against a pathologically wide row.
+    const maxW = Math.max(40, iconRowLeftX - lineX - 4);
     let ly = BY + BH - 6;
     for (const line of extraLines.reverse()) {
-      ctx.font = `${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
+      ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
       ctx.fillStyle = COLOR.group;
-      const maxW = BW * 0.55;
-      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), (hasIcon ? DIVIDER_X + 8 : BX + 8), ly);
+      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), lineX, ly);
       ly -= 13;
     }
     ctx.textAlign = 'center';
@@ -1772,6 +1792,15 @@ function lateGoToLine(clubName, now = new Date()) {
   if (mins <= start + graceMin) return '';
   const where = [row.location, row.room].filter(Boolean).join(', ');
   return where ? `Go to: ${where}` : '';
+}
+
+// Operator-configured footer (#8) — one short line (church name, a verse,
+// service times) along the bottom of every label. Read from config here, at
+// the call sites, and passed INTO generateLabel as input.footerText: the
+// renderer stays a pure function of its argument, which is what keeps the
+// golden-image suite meaningful.
+function labelFooterText() {
+  return String(config.labelFooter || '').trim();
 }
 
 // ── Phone check-in queue (#17b) ───────────────────────────────────────────────
@@ -2135,6 +2164,7 @@ app.post('/label', async (req, res) => {
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
+      footerText: labelFooterText(),
       extras: labelExtras,
     });
     fs.unlink(result.pngPath, () => {});
@@ -2287,6 +2317,7 @@ app.post('/print', async (req, res) => {
       allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       testBanner: isDemo,   // a demo label is visibly marked
+      footerText: labelFooterText(),
       extras,
     });
     pngPath = result.pngPath;
@@ -2309,6 +2340,7 @@ app.post('/print', async (req, res) => {
           // field's 30-character truncation.
           handbookGroup: "We're so glad you're here!",
           isVisitor: true,
+          footerText: labelFooterText(),
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
@@ -2696,6 +2728,7 @@ app.get('/preview', async (req, res) => {
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName,
       allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      footerText: labelFooterText(),
     });
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
@@ -2757,6 +2790,7 @@ app.post('/reprint', async (req, res) => {
     const result = await generateLabel({
       firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
       clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      footerText: labelFooterText(),
     });
     pngPath = result.pngPath;
 
@@ -2857,6 +2891,7 @@ app.post('/print-award', async (req, res) => {
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      footerText: labelFooterText(),
       extras: { inverted: true },
     });
     pngPath = result.pngPath;
@@ -3627,6 +3662,7 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
+    labelFooter,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -3693,6 +3729,20 @@ app.post('/config', (req, res) => {
     }
     if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
     if (connectCard !== undefined) next.connectCard = !!connectCard;
+    // Label footer (#8): one short operator line (church name, a verse, service
+    // times) rendered along the bottom of every label. Not a secret, but it goes
+    // onto paper, so persist only a single printable line: control characters
+    // become spaces, whitespace collapses, and the length is capped. Clearing
+    // it deletes the key (same pattern as phonePin) so config.json stays clean.
+    if (labelFooter !== undefined) {
+      const lf = String(labelFooter == null ? '' : labelFooter)
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60);
+      if (lf === '') delete next.labelFooter;
+      else next.labelFooter = lf;
+    }
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a

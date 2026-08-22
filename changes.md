@@ -1,4 +1,18 @@
-﻿## [5.9.0] - 2026-08-10
+﻿## [5.10.0] - 2026-08-22
+Labels can now carry a configurable footer — one short operator-set line (church name, a verse, service times) printed along the bottom of every label. First of the three features picked from the ideas triage (#8 on the scratchpad); the connect-card auto-trigger (#10) and per-club template editor (#1) follow.
+
+### One line, on every label that goes home
+A new `labelFooter` config key (Settings → Check-in Features → "Label footer", blank by default) renders as an italic 10pt line at the very bottom-left of the badge, below any "Go to:" routing or milestone line. It rides on every render path a family sees — check-in labels, the connect card, reprints, award slips, `/label` dialog renders, and the dashboard preview — but not canary/test labels. The value is not a secret (it's printed on paper by design), so it saves through the normal `POST /config` path; it is sanitized to a single printable line before persisting (control characters become spaces, whitespace collapses, 60-char cap) and clearing it deletes the key, the same pattern as `phonePin`.
+
+The renderer never reads config: the handlers pass the footer in as `input.footerText` via a tiny `labelFooterText()` helper, so `generateLabel()` stays a pure function of its argument and the golden-image suite keeps meaning what it says. An empty footer renders byte-identically to 5.9.0 — confirmed by 22 of 24 baselines surviving regeneration untouched.
+
+### The bottom band stopped guessing where the icons are
+Adding a line that appears on *every* label exposed a latent collision: the bottom-left lines (goTo/milestone, now footer) truncated at a flat 55% of the badge width, while a five-allergy icon row grows leftward past that point — so the torture case interleaved text through the allergy emoji. The lines now truncate against the icon row's actual left edge (measured, not guessed), which also means an icon-less label lets the footer run nearly the full badge width instead of cutting off at half. A configured footer also reserves the same 20pt bottom strip the icon row does, so the centered name block can't descend onto it.
+
+### Tests
+Two new golden cases (`footer`, `footer-with-go-to` pinning the stack order: footer at the very bottom, routing above) and the torture case now carries a footer too — its baseline is the only regenerated one. `test-config-store.cjs` adds `labelFooter` to the server-owned keys that must survive a setup-wizard save.
+
+## [5.9.0] - 2026-08-10
 Renamed the product from "Awana Label Printer" to **"Club Label Printer"** — Awana Clubs International's published Trademark Guidelines say they don't grant permission to create products bearing their name, and this app's own branding (window titles, tray text, Start Menu/Desktop shortcuts, the installer filename, the website) was doing exactly that. A first pass the same guidelines review turned up (disclaimer wording, ® marking) shipped as website/README-only copy fixes with no version bump; this release is the actual rebrand.
 
 ### What changed, and what deliberately didn't

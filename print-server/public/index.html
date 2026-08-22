@@ -303,6 +303,11 @@
                   <p style="font-size:10px;color:#94a3b8">Past a club's start + grace, labels add a "Go to:" line</p>
                 </div>
               </div>
+              <div style="margin-top:8px">
+                <label>Label footer</label>
+                <input type="text" id="settings-label-footer" maxlength="60" placeholder="e.g. KVBC Awana &middot; Wednesdays 6:15&ndash;8:00pm">
+                <p style="font-size:10px;color:#94a3b8">One short line printed along the bottom of every label &mdash; church name, a verse, or service times. Blank = no footer. Check the Label Preview tab after saving.</p>
+              </div>
               <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; font-size:12px">
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-ft-inverted"> Visitor labels use the inverted (black) palette
@@ -688,6 +693,7 @@ function loadSettings() {
     document.getElementById('settings-pusher-secret').value = config.pusherSecret || '';
     document.getElementById('settings-phone-pin').value = config.phonePin || '';
     document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
+    document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
@@ -801,6 +807,7 @@ function saveSettings() {
       pusherSecret: pusherSecret,
       phonePin: document.getElementById('settings-phone-pin').value.trim(),
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
+      labelFooter: document.getElementById('settings-label-footer').value.trim(),
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
