@@ -1212,9 +1212,12 @@ function renderNightStatus(h) {
   if (!cc) {
     rows += statusRow('🟡', 'Site contract sweep', 'no run yet — runs daily from the check-in page, or use the widget\'s "Check site"');
   } else if (cc.ok) {
-    rows += statusRow('✅', 'Site contract sweep', (cc.results || []).length + ' checks passed ' + formatTime(cc.at) + (cc.manual ? ' (manual)' : ''));
+    var ccSoft = (cc.results || []).filter(function(r) { return !r.passed && r.soft; }).length;
+    rows += statusRow('✅', 'Site contract sweep',
+      (cc.results || []).length + ' checks passed ' + formatTime(cc.at) + (cc.manual ? ' (manual)' : '')
+      + (ccSoft ? ' · ' + ccSoft + ' off-day note' + (ccSoft > 1 ? 's' : '') : ''));
   } else {
-    var ccFailed = (cc.results || []).filter(function(r) { return !r.passed; }).map(function(r) { return r.check; });
+    var ccFailed = (cc.results || []).filter(function(r) { return !r.passed && !r.soft; }).map(function(r) { return r.check; });
     rows += statusRow('❌', 'Site contract sweep', 'DRIFT: ' + (ccFailed.join(', ') || 'unknown') + ' at ' + formatTime(cc.at));
   }
 

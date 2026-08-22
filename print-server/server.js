@@ -4214,6 +4214,9 @@ app.post('/contract-canary', (req, res) => {
           check: String(r && r.check || '').slice(0, 80),
           passed: !!(r && r.passed),
           detail: String(r && r.detail || '').slice(0, 120),
+          // soft (#3 refinement): meeting-dependent checks that legitimately
+          // miss on a non-club day — informational, never counted as drift.
+          soft: !!(r && r.soft),
         }))
       : [],
     extensionVersion: String(body.extensionVersion || '').slice(0, 20),
@@ -4222,7 +4225,7 @@ app.post('/contract-canary', (req, res) => {
   };
   recordExtensionReport(body.extensionVersion);
   if (!lastContractCanary.ok && wasOk) {
-    const failing = lastContractCanary.results.filter(r => !r.passed).map(r => r.check);
+    const failing = lastContractCanary.results.filter(r => !r.passed && !r.soft).map(r => r.check);
     console.warn('[contract-canary] TwoTimTwo contract drift detected: ' + failing.join(', '));
     events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('selector-fail'));
     fireOpsAlert('Club Label Printer — site check failed',
@@ -4468,7 +4471,7 @@ app.get('/health', async (req, res) => {
   // exactly the "warn before club night" moment, so it belongs in the same
   // yellow box the operator already reads.
   if (lastContractCanary && lastContractCanary.ok === false) {
-    const failing = lastContractCanary.results.filter(r => !r.passed).map(r => r.check);
+    const failing = lastContractCanary.results.filter(r => !r.passed && !r.soft).map(r => r.check);
     warnings.push({
       type: 'contractDrift',
       message: `The TwoTimTwo site no longer matches what this printer expects (${failing.join(', ') || 'unknown check'}). Automatic printing may be broken — run the widget's "Check site" after any fix.`,
