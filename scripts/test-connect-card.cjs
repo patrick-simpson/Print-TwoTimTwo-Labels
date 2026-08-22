@@ -170,6 +170,22 @@ async function main() {
     // Calendar gaps don't matter: only club nights count. (StreakKid's run
     // spans Feb 4 → today with multi-week silences in between.)
     check('weeks with no club at all never break a streak', s.streak === 6);
+
+    // New-kid sparkle (#15): within 14 days of the kid's FIRST-EVER night.
+    check('a first-ever check-in is a new kid', recordAttendance('Brand', 'New', null).isNewKid === true);
+    check('a long-timer is not a new kid', s.isNewKid === false, JSON.stringify(s));
+    const daysAgo = (n) => {
+      const d = new Date(); d.setDate(d.getDate() - n);
+      return d.toISOString().slice(0, 10);
+    };
+    const l2 = readJson(dataDir, 'attendance.json');
+    l2['recent kid'] = { name: 'Recent Kid', dates: [daysAgo(13)] };
+    l2['fortnight kid'] = { name: 'Fortnight Kid', dates: [daysAgo(14)] };
+    fs.writeFileSync(path.join(dataDir, 'attendance.json'), JSON.stringify(l2));
+    check('first night 13 days ago: still sparkling',
+      recordAttendance('Recent', 'Kid', null).isNewKid === true);
+    check('first night 14 days ago: sparkle expired',
+      recordAttendance('Fortnight', 'Kid', null).isNewKid === false);
   }
 
   // ── 2. isNonCheckinRow: one predicate for both non-check-in prints ─────────
