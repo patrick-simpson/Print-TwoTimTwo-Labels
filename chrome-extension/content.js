@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.29.0';
+  const EXTENSION_VERSION = '5.29.2';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -2095,10 +2095,10 @@
     REFOCUS_SEARCH = function() {
       if (isMinimized) return;
       var ae = document.activeElement;
-      if (ae && ae !== searchInput && ae !== document.body) {
-        var tag = (ae.tagName || '').toLowerCase();
-        if (tag === 'input' || tag === 'textarea' || tag === 'select' || ae.isContentEditable) return;
-      }
+      // Never steal from ANYTHING the operator focused — not just text
+      // fields: a keyboard operator tabbed onto the modal's Checkin button
+      // (or any link) must not have Enter rerouted into the search box.
+      if (ae && ae !== searchInput && ae !== document.body && ae !== document.documentElement) return;
       if (ae === searchInput && searchInput.value) return;
       searchInput.value = '';
       searchResults.style.display = 'none';
@@ -2466,23 +2466,41 @@
   // already holds a fresh report — no second fetch). Report present → kid
   // stuck after all, clear them; absent → retry the site check-in (twice,
   // then just keep them on the report for a human).
+  // Retry pacing: TwoTimTwo has ONE #checkin-modal, so driving two kids in
+  // the same pass spawns competing poll loops that click whichever modal
+  // button is visible — a double submission for one kid and a burnt retry
+  // for the other. One re-drive per pass, and never within 10s of the last
+  // (the 30s one-shot, the reconcile poll and the widget button can overlap).
+  var lastSelfVerifyDriveAt = 0;
+  var SELF_VERIFY_DRIVE_GAP_MS = 10000;
+
   function selfVerifyAgainstReport(entries) {
     var keys = Object.keys(UNVERIFIED);
     if (!keys.length) return;
-    var reportKeys = new Set();
+    var reportIdKeys = new Set();
+    var reportNameKeys = new Set();
     entries.forEach(function(e) {
-      reportKeys.add(identityKey(e.clubberId, e.name));
-      reportKeys.add('nm:' + nameKeyOf(e.name));
+      reportIdKeys.add(identityKey(e.clubberId, e.name));
+      reportNameKeys.add('nm:' + nameKeyOf(e.name));
     });
+    var drivenThisPass = false;
     keys.forEach(function(key) {
       var item = UNVERIFIED[key];
-      var nameKey = 'nm:' + nameKeyOf(item.name);
-      if (reportKeys.has(key) || reportKeys.has(nameKey)) {
+      // Clear on an id match always; on a bare NAME match only when we hold
+      // no id — with twins, sibling B's successful report row must not clear
+      // sibling A's tracked failure (same name, different clubberId).
+      var clearedById = reportIdKeys.has(key);
+      var clearedByName = !item.clubberId && reportNameKeys.has('nm:' + nameKeyOf(item.name));
+      if (clearedById || clearedByName) {
         console.log('[Awana] Self-verify: ' + item.name + ' is in tonight\'s report — cleared');
         delete UNVERIFIED[key];
         return;
       }
       if (item.retries >= UNVERIFIED_RETRY_MAX) return; // listed for the human now
+      if (drivenThisPass) return;                        // one modal dance at a time
+      if (Date.now() - lastSelfVerifyDriveAt < SELF_VERIFY_DRIVE_GAP_MS) return;
+      drivenThisPass = true;
+      lastSelfVerifyDriveAt = Date.now();
       item.retries++;
       console.log('[Awana] Self-verify: retrying check-in for ' + item.name +
         ' (' + item.retries + '/' + UNVERIFIED_RETRY_MAX + ')');
@@ -2528,7 +2546,7 @@
     var entries = Object.keys(UNVERIFIED).map(function(k) {
       var it = UNVERIFIED[k];
       return { name: it.name, clubberId: it.clubberId, club: it.club, at: it.at };
-    });
+    }).slice(-30); // the server caps at 30 — send the newest rather than 400 on #31
     fetch(PRINT_SERVER + '/feed/unverified-checkins', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

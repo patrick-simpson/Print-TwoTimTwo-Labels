@@ -9,6 +9,20 @@
 
 'use strict';
 
+// A crashed suite must FAIL, not pass: server.js's uncaughtException handler
+// (a production never-crash feature) can swallow a test-time crash, letting
+// the event loop drain and the process exit 0 without a summary ever printing.
+// If we reach 'exit' with code 0 and the suite never declared itself finished,
+// force red. (Found the hard way: a ReferenceError mid-suite passed CI.)
+let __suiteFinished = false;
+process.on('exit', (code) => {
+  if (code === 0 && !__suiteFinished) {
+    console.error('\u2717 Test suite terminated before completing (crash swallowed?) \u2014 failing.');
+    process.exitCode = 1;
+  }
+});
+
+
 const path = require('path');
 
 const {
@@ -408,8 +422,13 @@ console.log('feeds.submitUnverified — batch self-verify report (#2): validatio
   const noEntries = feeds.submitUnverified({}, t);
   check('a body missing the entries array is rejected', noEntries.valid === false && noEntries.status === 400);
 
-  const tooBig = feeds.submitUnverified({ entries: new Array(feeds.UNVERIFIED_MAX + 1).fill({ name: 'X' }) }, t);
-  check('an oversized entries array is rejected', tooBig.valid === false && tooBig.status === 400);
+  const tooBig = feeds.submitUnverified({
+    entries: new Array(feeds.UNVERIFIED_MAX + 5).fill(0).map((_, i) => ({ name: 'Kid ' + i })),
+  }, t);
+  check('an oversized list is truncated to the newest, never rejected — a mass failure is when this matters most',
+    tooBig.valid === true && tooBig.payload.entries.length === feeds.UNVERIFIED_MAX
+      && tooBig.payload.entries[feeds.UNVERIFIED_MAX - 1].name === 'Kid ' + (feeds.UNVERIFIED_MAX + 4),
+    JSON.stringify(tooBig.payload && tooBig.payload.entries.length));
 
   const r1 = feeds.submitUnverified({
     entries: [
@@ -1101,6 +1120,15 @@ console.log('collectible of the week (#20) — rotation math');
     collectibleIndexForDate(new Date()) === idx);
   check('one week on, the next icon', at(7 * DAY) === (idx + 1) % 12);
   check('twelve weeks on, the series wraps', at(12 * 7 * DAY) === idx);
+  // The week may only roll at LOCAL midnight (Monday anchor) — the old raw-ms
+  // version rolled at Thursday 00:00 UTC, mid-club-night in US timezones.
+  const wedEarly = collectibleIndexForDate(new Date(2026, 0, 14, 17, 30)); // Wed Jan 14 2026
+  const wedLate  = collectibleIndexForDate(new Date(2026, 0, 14, 23, 59));
+  const thu      = collectibleIndexForDate(new Date(2026, 0, 15, 0, 1));   // Thu — same week
+  const nextMon  = collectibleIndexForDate(new Date(2026, 0, 19, 0, 1));   // Mon — next week
+  check('the icon never flips within one local day', wedEarly === wedLate);
+  check('Wednesday and Thursday share a week (no mid-club-night roll)', wedLate === thu);
+  check('the week rolls on Monday', nextMon === (thu + 1) % 12);
 }
 
 console.log('musical printer (#11/#12) — the TSPL compiler');
@@ -1140,4 +1168,5 @@ console.log('musical printer (#11/#12) — the TSPL compiler');
 
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
+__suiteFinished = true;
 process.exit(failed > 0 ? 1 : 0);

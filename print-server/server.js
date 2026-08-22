@@ -142,15 +142,31 @@ if (pusher) {
 // ── Tonight's event buffer ────────────────────────────────────────────────────
 // The last ~50 checkin events, persisted so a mid-event server restart doesn't
 // lose the recap replay window. Only today's events survive a reload.
+// "Today" for a club night is the OPERATOR'S LOCAL calendar day. The UTC day
+// flips at 7pm EST / 6pm CST — the middle of a winter club night — so any
+// "today" derived from toISOString() splits one physical night in two:
+// attendance streaks break, tonight's stats drop the early arrivals at the
+// boundary, and opening-night connect-card gating misfires. Every today/
+// tonight comparison below goes through these two helpers (the same local-day
+// discipline the extension's todayIsoDate() has always used).
+function localDayISO(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function isOnLocalDay(isoTimestamp, localDay) {
+  if (typeof isoTimestamp !== 'string') return false;
+  const t = new Date(isoTimestamp);
+  return !Number.isNaN(t.getTime()) && localDayISO(t) === localDay;
+}
+
 const EVENT_BUFFER_FILE = path.join(DATA_DIR, 'events-buffer.json');
 const EVENT_BUFFER_MAX = 50;
 let eventBuffer = [];
 try {
   if (fs.existsSync(EVENT_BUFFER_FILE)) {
     const raw = JSON.parse(fs.readFileSync(EVENT_BUFFER_FILE, 'utf8'));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDayISO();
     if (Array.isArray(raw)) {
-      eventBuffer = raw.filter(e => e && typeof e.at === 'string' && e.at.startsWith(today));
+      eventBuffer = raw.filter(e => e && typeof e.at === 'string' && isOnLocalDay(e.at, today));
       if (eventBuffer.length) console.log(`[events] Restored ${eventBuffer.length} checkin event(s) from tonight's buffer`);
     }
   }
@@ -719,18 +735,8 @@ function effectiveHandbookGroup(rawGroup, clubName) {
   return g;
 }
 
-function parseBirthdate(s) {
-  if (!s || String(s).trim() === '' || s === 'N/A') return null;
-  try {
-    let t = String(s).trim();
-    const slash = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (slash) {
-      t = `${slash[3]}-${slash[1].padStart(2, '0')}-${slash[2].padStart(2, '0')}`;
-    }
-    const d = new Date(t);
-    return isNaN(d.getTime()) ? null : d;
-  } catch { return null; }
-}
+// (parseBirthdate lives with the birthday-week helpers further down — this
+// spot briefly held a duplicate declaration that the later one shadowed.)
 
 function parseGrade(s) {
   if (s === null || s === undefined) return null;
@@ -941,8 +947,14 @@ const COLLECTIBLE_SERIES = [
 // Stable for the whole calendar week (UTC), so a reprint later the same
 // night — or the same week — matches the original label.
 function collectibleIndexForDate(now = new Date()) {
-  const days = Math.floor(now.getTime() / 86400000);
-  return Math.floor(days / 7) % COLLECTIBLE_SERIES.length;
+  // Local-calendar days since epoch, so the week can only roll at LOCAL
+  // midnight — the old raw-ms version rolled at Thursday 00:00 UTC, i.e.
+  // Wednesday evening in US timezones, flipping the icon MID-CLUB-NIGHT and
+  // breaking both stated guarantees (same icon all night, reprint matches).
+  // Epoch day 0 was a Thursday; +3 moves the boundary to Monday, safely far
+  // from any club night.
+  const days = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000);
+  return Math.floor((days + 3) / 7) % COLLECTIBLE_SERIES.length;
 }
 
 function currentCollectibleIndex(now = new Date()) {
@@ -1098,12 +1110,26 @@ function parseBirthdate(birthdateStr) {
   if (!birthdateStr || String(birthdateStr).trim() === '' || birthdateStr === 'N/A') {
     return null;
   }
-  let normalised = String(birthdateStr).trim();
-  const slashMatch = normalised.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (slashMatch) {
-    normalised = `${slashMatch[3]}-${slashMatch[1].padStart(2, '0')}-${slashMatch[2].padStart(2, '0')}`;
+  const t = String(birthdateStr).trim();
+  // Build a LOCAL date from the components. The old path normalised to
+  // 'YYYY-MM-DD' and string-parsed it — which JS treats as UTC MIDNIGHT, so
+  // in any US timezone getMonth()/getDate() read back the PREVIOUS day: a
+  // Mar 1 twin printed "b. Feb", and 1st-of-month birthdays fell on the
+  // wrong side of the June–August half-birthday gate.
+  let year = null, month = null, day = null;
+  const slash = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // M/D/YYYY (the export's format)
+  const iso = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (slash) {
+    month = parseInt(slash[1], 10); day = parseInt(slash[2], 10); year = parseInt(slash[3], 10);
+  } else if (iso) {
+    year = parseInt(iso[1], 10); month = parseInt(iso[2], 10); day = parseInt(iso[3], 10);
   }
-  const bday = new Date(normalised);
+  if (year !== null) {
+    const bday = new Date(year, month - 1, day);
+    // Reject rollovers (2/30 → Mar 2) instead of silently shifting the date.
+    return (bday.getFullYear() === year && bday.getMonth() === month - 1 && bday.getDate() === day) ? bday : null;
+  }
+  const bday = new Date(t);
   return isNaN(bday.getTime()) ? null : bday;
 }
 
@@ -2375,7 +2401,7 @@ function recordAttendance(firstName, lastName, clubberId = null) {
   const idRaw = clubberId == null ? '' : String(clubberId).trim();
   const idKey = idRaw ? `id:${idRaw.toLowerCase()}` : '';
   if (!nameKey && !idKey) return { seasonCount: 0, firstEver: false, priorNightExists: false };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDayISO();
   const ledger = loadAttendance();
 
   let priorNightExists = false;
@@ -3127,9 +3153,9 @@ app.post('/print', async (req, res) => {
       if (visitor) {
         shouldConnectCard = true;
       } else if (autoFirstTimer) {
-        const todayIso = new Date().toISOString().slice(0, 10);
+        const todayIso = localDayISO();
         shouldConnectCard = !loadHistory().some(e => e && e.isConnectCard && e.success !== false
-          && e.timestamp && e.timestamp.startsWith(todayIso)
+          && isOnLocalDay(e.timestamp, todayIso)
           && historyRowMatches(e, firstName, lastName, clubberId));
       }
     }
@@ -3329,7 +3355,7 @@ function reportEntryIdentityKey(entry) {
 //     more consistent with a broken/partial scrape (wrong table, filtered
 //     view, login bounce mid-parse) than with a real mass walkout.
 function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
-  const today = new Date(now).toISOString().slice(0, 10);
+  const today = localDayISO(new Date(now));
   const reportKeys = new Set(
     (Array.isArray(reportEntries) ? reportEntries : [])
       .map(reportEntryIdentityKey)
@@ -3341,7 +3367,7 @@ function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
   const activeIdx = new Map(); // identityKey -> index into history[]
   history.forEach((row, i) => {
     if (!row || row.success === false || isNonCheckinRow(row)) return;
-    if (!row.timestamp || !row.timestamp.startsWith(today)) return;
+    if (!isOnLocalDay(row.timestamp, today)) return;
     const key = historyIdentityKey(row);
     if (!activeIdx.has(key)) activeIdx.set(key, i);
   });
@@ -3440,8 +3466,8 @@ app.get('/history', (req, res) => {
 
 app.get('/history/today', (req, res) => {
   const history = loadHistory();
-  const today = new Date().toISOString().slice(0, 10);
-  const todayEntries = history.filter(e => e.timestamp && e.timestamp.startsWith(today));
+  const today = localDayISO();
+  const todayEntries = history.filter(e => isOnLocalDay(e.timestamp, today));
   res.json(todayEntries);
 });
 
@@ -3452,11 +3478,11 @@ app.get('/history/today', (req, res) => {
 // no-photo kids). Each child counts once no matter how many reprints.
 function computeTonightStats() {
   const history = loadHistory();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDayISO();
   // Failed prints stay in history for the dashboard but never count a kid in.
   // Award slips and connect cards are excluded — they're a recognition/welcome
   // print, not a check-in, and must never inflate tonight's counts.
-  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false && !isNonCheckinRow(e));
+  const entries = history.filter(e => isOnLocalDay(e.timestamp, today) && e.success !== false && !isNonCheckinRow(e));
 
   const byClub = {};
   const seen = new Set();
@@ -3958,13 +3984,13 @@ function distinctChildrenPrintedToday(now = new Date()) {
 
 app.get('/checkin-csv-export', (req, res) => {
   const dateParam = String(req.query.date || '').trim();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : new Date().toISOString().slice(0, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : localDayISO();
 
   const history = loadHistory();
   const seen = new Set();
   const rows = [];
   for (const e of history) {
-    if (!e || !e.timestamp || !e.timestamp.startsWith(date)) continue;
+    if (!e || !isOnLocalDay(e.timestamp, date)) continue;
     if (e.success === false) continue;   // a failed print never actually checked the kid in
     if (isNonCheckinRow(e)) continue;    // award slips / connect cards are not check-ins
     const first = String(e.firstName || '').trim();
@@ -4814,6 +4840,11 @@ function isRehearsalActive(now = Date.now()) {
   if (now - rehearsalState.armedAt > REHEARSAL_AUTO_DISARM_MS) {
     rehearsalState = { on: false, armedAt: 0 };
     console.log('[rehearsal] Auto-disarmed after 2h — rehearsal mode never outlives a training session');
+    // Broadcast the disarm, or displays keep the TEST watermark until the
+    // next club night's first interval tally. Deferred a tick: this getter
+    // is called from inside publishTally itself, and the state above is
+    // already cleared, so the deferred tally reads rehearsal=false.
+    setTimeout(() => { try { publishTally(); } catch (e) { /* best-effort */ } }, 0);
     return false;
   }
   return true;
@@ -4907,7 +4938,7 @@ app.post('/phone/roster', (req, res) => {
       // check-in report — an undo made on the website itself. Without this a
       // kid who was undone stayed "checkedIn: true" here forever, so a phone
       // volunteer could never re-check them in.
-      .filter(e => e.timestamp && e.timestamp.startsWith(new Date().toISOString().slice(0, 10)) && e.success !== false && !e.undone)
+      .filter(e => isOnLocalDay(e.timestamp, localDayISO()) && e.success !== false && !e.undone)
       .map(e => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim())
   );
   const kids = clubbers.map(r => {

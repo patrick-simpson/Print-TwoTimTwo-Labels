@@ -1,4 +1,29 @@
-﻿## [5.29.0] - 2026-08-22
+﻿## [5.29.2] - 2026-08-22
+Quality sweep, part 2 — eight confirmed findings from the comprehensive post-wave code review (the display's five landed in its repo):
+
+**Timezone family — "today" now always means the operator's LOCAL day.** The UTC day flips at 7pm EST / 6pm CST, the middle of a winter club night, and several "today" computations used `toISOString()`:
+- `recordAttendance` split one physical night into two ledger nights past the boundary: streaks could read 0 forever for early-arriving kids, `priorNightExists` went true mid-opening-night (auto connect cards for every late first-timer — the exact mass-fire the gate exists to prevent), and a boundary-straddling reprint double-counted a night.
+- `computeTonightStats` / `/history/today` / the recap-buffer reload / reconcile's today-filter / `/checkin-csv-export` / the phone roster's checked-in set all dropped or misfiled the early half of the night at the boundary. All now share `localDayISO()`/`isOnLocalDay()` (the discipline the extension's `todayIsoDate()` always had).
+- `parseBirthdate` string-parsed `YYYY-MM-DD` as UTC midnight, so local getters read the PREVIOUS day: a Mar-1 twin printed "b. Feb" and 1st-of-month birthdays fell on the wrong side of the June–August half-birthday gate. Dates are now built from components in local time, with impossible dates (2/30) rejected instead of rolled.
+- The collectible week rolled at Thursday 00:00 UTC — Wednesday evening in US timezones, flipping the icon MID-club-night and breaking the "reprint matches" guarantee. Weeks now roll at local Monday midnight (new tests pin it).
+
+**Self-verify (#2) hardening:**
+- One re-drive per verify pass with a 10s gap between drives: TwoTimTwo has ONE check-in modal, and retrying two kids in the same tick spawned competing poll loops that could double-submit one kid and burn the other's retry.
+- Twin-safe clearing: sibling B's successful report row no longer clears sibling A's tracked failure — a bare name match only counts when no clubberId is held.
+- An oversized didn't-stick list (>30, e.g. mid-night contract drift) is now truncated to the newest by both sides instead of the server 400-ing and freezing the dashboard warning at a stale list.
+
+**Rehearsal (#19):** the 2h auto-disarm now broadcasts a tally, so displays drop the TEST watermark immediately instead of wearing it until the next club night's first interval tally.
+
+**Auto-focus (#1):** the never-steal guard now bails for ANY focused element (buttons, links, the modal's Checkin button a keyboard operator tabbed to) — not just text fields.
+
+## [5.29.1] - 2026-08-22
+Quality sweep, part 1 (with all 29 round-3 features now shipped):
+
+- **Removed a duplicate `parseBirthdate` definition** in server.js — two identical function declarations existed and the later one silently shadowed the first. Behavior-neutral (they were identical), but a future edit to the wrong copy would have been a no-op trap.
+- **Test suites can no longer pass by crashing.** server.js registers a production `uncaughtException` handler ("Never Crash"), which also swallowed test-time crashes: the event loop drained and the suite exited 0 without ever printing a summary — found the hard way when a ReferenceError mid-suite passed. Every suite now carries an exit guard: reaching `exit` with code 0 before the suite declared itself finished forces a failure.
+- **Ideas page**: a "Round 3: built" banner records the 29-idea August 2026 wave (printer v5.13.0–v5.29.0 + the display releases) so the scratchpad reflects reality.
+
+## [5.29.0] - 2026-08-22
 Version-skew banner, dashboard half (#7). The widget half has existed since the managed-extension work: when the app has already synced a newer extension to disk, the widget says "restart Chrome to load it". But that banner lives in Chrome — the one place the operator ISN'T looking when they wonder why the fix they just installed isn't behaving. Now the dashboard says it too ("widget + dashboard", operator's pick):
 
 - Every `/selftest` and `/contract-canary` post already carries the RUNNING extension's version; the server now records it (`extensionRunning` on `/health`).
