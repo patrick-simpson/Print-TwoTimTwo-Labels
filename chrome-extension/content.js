@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.22.0';
+  const EXTENSION_VERSION = '5.23.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -830,7 +830,7 @@
       return;
     }
     if (retriesLeft > 0) {
-      console.log('[Awana] Batch: ' + sib.name + ' did not check in after click — retrying once');
+      console.log('[Awana] Batch: ' + sib.name + ' did not check in after click — retrying (' + retriesLeft + ' left)');
       var freshEl = findClubberElByName(sib.name);
       if (freshEl) {
         freshEl.click();
@@ -846,13 +846,17 @@
       return;
     }
     console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted)');
+    recordUnverified(sib.name,
+      (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null,
+      sib.clubName || '');
     if (remaining.length > 0) {
       setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
     }
   }
 
   function pollForCheckinButton(sib, remaining, options, attempts, retriesLeft) {
-    if (typeof retriesLeft !== 'number') retriesLeft = 1;
+    // Retry budget is 2 (operator's pick for #2) — was 1 since v3.0.4.
+    if (typeof retriesLeft !== 'number') retriesLeft = 2;
     if (attempts <= 0) {
       // Modal never opened — click the row again before giving up
       if (retriesLeft > 0) {
@@ -867,6 +871,9 @@
         }
       }
       console.log('[Awana] Timed out waiting for check-in button for ' + sib.name);
+      recordUnverified(sib.name,
+        (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null,
+        sib.clubName || '');
       if (remaining.length > 0) {
         setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
       }
@@ -975,6 +982,7 @@
       var freshEl = findClubberElByName(sib.name);
       if (!freshEl || !freshEl.isConnected) {
         console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
+        recordUnverified(sib.name, sibRecid, sib.clubName || '');
         if (remaining.length > 0) {
           setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
         }
@@ -1669,6 +1677,25 @@
     });
     reconcileRow.append(reconcileStatus, syncNowBtn);
 
+    // ── #2: check-ins that didn't stick — hidden until there's something ──
+    var verifyRow = document.createElement('div');
+    verifyRow.id = 'awana-verify-row';
+    Object.assign(verifyRow.style, { display: 'none', alignItems: 'center', gap: '6px' });
+    var verifyStatus = document.createElement('span');
+    verifyStatus.id = 'awana-verify-status';
+    Object.assign(verifyStatus.style, { fontSize: '10px', color: '#f59e0b', fontWeight: '600', flex: '1' });
+    var verifyBtn = document.createElement('button');
+    verifyBtn.textContent = 'Verify';
+    Object.assign(verifyBtn.style, {
+      fontSize: '10px', padding: '2px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', cursor: 'pointer'
+    });
+    verifyBtn.addEventListener('click', function() {
+      verifyBtn.disabled = true;
+      runSelfVerify().then(function() { verifyBtn.disabled = false; });
+    });
+    verifyRow.append(verifyStatus, verifyBtn);
+
     // ── Quick Mode toggle ──
     var quickModeRow = document.createElement('div');
     Object.assign(quickModeRow.style, {
@@ -2139,7 +2166,7 @@
       divider(), sectionLabel('Printing'), controls, printerRow,
       divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields,
       divider(), tonightHeader, tonightList,
-      queueBadge, reconcileRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
+      queueBadge, reconcileRow, verifyRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
     );
     // A scrollbar the operator can actually SEE. A body that scrolls but shows
@@ -2366,6 +2393,114 @@
     if (REFOCUS_SEARCH) {
       try { REFOCUS_SEARCH(); } catch (e) { /* focus must never break printing */ }
     }
+  }
+
+  // ── Batch check-in self-verify report (#2) ─────────────────────────────
+  // v3.0.4 made driven check-ins verify themselves (row must vanish) and
+  // retry; what it never did was REPORT the ones that still didn't stick —
+  // those died in console.log, and the operator found out at pickup when a
+  // kid was never marked present. Every terminal "could not verify" now
+  // lands here: retried against the authoritative checkin_report (30s after
+  // the failure, then on every reconcile poll — up to 2 self-verify retries
+  // per kid), surfaced in the widget, and posted to the print server so the
+  // dashboard shows the same list. Entries clear themselves the moment the
+  // report shows the kid (a late-sticking check-in is a success, not a bug).
+  var UNVERIFIED = {};            // identity key → {name, clubberId, club, at, retries}
+  var unverifiedTimer = null;     // pending 30s one-shot verify pass
+  var UNVERIFIED_RETRY_MAX = 2;
+
+  function recordUnverified(name, clubberId, club) {
+    var key = resolveIdentityKey(name, clubberId);
+    if (!UNVERIFIED[key]) {
+      UNVERIFIED[key] = {
+        name: name, clubberId: clubberId || null, club: club || '',
+        at: new Date().toISOString(), retries: 0
+      };
+      console.warn('[Awana] Self-verify: ' + name + ' may not be checked in on TwoTimTwo — tracking');
+    }
+    updateVerifyWidget();
+    postUnverified();
+    if (!unverifiedTimer) {
+      unverifiedTimer = setTimeout(function() {
+        unverifiedTimer = null;
+        runSelfVerify();
+      }, 30000);
+    }
+  }
+
+  // Core pass, shared by the 30s one-shot and every reconcile poll (which
+  // already holds a fresh report — no second fetch). Report present → kid
+  // stuck after all, clear them; absent → retry the site check-in (twice,
+  // then just keep them on the report for a human).
+  function selfVerifyAgainstReport(entries) {
+    var keys = Object.keys(UNVERIFIED);
+    if (!keys.length) return;
+    var reportKeys = new Set();
+    entries.forEach(function(e) {
+      reportKeys.add(identityKey(e.clubberId, e.name));
+      reportKeys.add('nm:' + nameKeyOf(e.name));
+    });
+    keys.forEach(function(key) {
+      var item = UNVERIFIED[key];
+      var nameKey = 'nm:' + nameKeyOf(item.name);
+      if (reportKeys.has(key) || reportKeys.has(nameKey)) {
+        console.log('[Awana] Self-verify: ' + item.name + ' is in tonight\'s report — cleared');
+        delete UNVERIFIED[key];
+        return;
+      }
+      if (item.retries >= UNVERIFIED_RETRY_MAX) return; // listed for the human now
+      item.retries++;
+      console.log('[Awana] Self-verify: retrying check-in for ' + item.name +
+        ' (' + item.retries + '/' + UNVERIFIED_RETRY_MAX + ')');
+      var el = findClubberElByName(item.name);
+      if (el && el.isConnected) {
+        el.click();
+        pollForCheckinButton({ name: item.name, element: el }, [], {}, 30, 0);
+      } else if (item.clubberId) {
+        tryDirectCheckin(item.clubberId, item.name, null, {});
+      }
+    });
+    updateVerifyWidget();
+    postUnverified();
+  }
+
+  function runSelfVerify() {
+    if (!Object.keys(UNVERIFIED).length) return Promise.resolve();
+    return fetchCheckinReport().then(function(entries) {
+      if (entries === null) return; // report unavailable — next poll retries
+      selfVerifyAgainstReport(entries);
+    });
+  }
+
+  function updateVerifyWidget() {
+    var row = document.getElementById('awana-verify-row');
+    var el = document.getElementById('awana-verify-status');
+    if (!row || !el) return;
+    var names = Object.keys(UNVERIFIED).map(function(k) { return UNVERIFIED[k].name; });
+    if (!names.length) {
+      row.style.display = 'none';
+      return;
+    }
+    row.style.display = 'flex';
+    el.textContent = '\u26A0 ' + names.length + ' check-in' + (names.length > 1 ? 's' : '') + ' didn\'t stick';
+    el.title = 'Printed a label but never confirmed on TwoTimTwo: ' + names.join(', ') +
+      '. Click Verify to re-check; re-check these kids on the site if it persists.';
+  }
+
+  // Dashboard half of "widget + dashboard": replace-semantics list, so an
+  // emptied report clears the server warning too. Best-effort like every
+  // other feed post — never blocks printing or the retry chain.
+  function postUnverified() {
+    var entries = Object.keys(UNVERIFIED).map(function(k) {
+      var it = UNVERIFIED[k];
+      return { name: it.name, clubberId: it.clubberId, club: it.club, at: it.at };
+    });
+    fetch(PRINT_SERVER + '/feed/unverified-checkins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: entries }),
+      signal: AbortSignal.timeout(5000)
+    }).catch(function() { /* server offline — widget still shows the list */ });
   }
 
   function setStatus(text) {
@@ -3285,6 +3420,7 @@
       }
       console.log('[Awana] Reconcile: report has ' + entries.length + ' checked-in kid(s)');
       postCheckinReport(entries);
+      selfVerifyAgainstReport(entries); // #2: every poll re-checks the didn't-stick list
 
       if (!reconcileBaselineDone) {
         // First successful reconcile this session: seed dedup with everyone

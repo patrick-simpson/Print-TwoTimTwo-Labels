@@ -424,6 +424,31 @@ async function main() {
     check('so nothing was actually undone', afterGuard === beforeGuard, `before=${beforeGuard} after=${afterGuard}`);
   }
 
+  // ── 8. Batch self-verify report (#2): the "didn't stick" dashboard half ──
+  console.log('\nrealtime: unverified-checkins feed → /health warning');
+  {
+    const bad = await post('/feed/unverified-checkins', { nope: true });
+    check('a body without entries is rejected', bad.status === 400, JSON.stringify(bad.body));
+
+    const ok = await post('/feed/unverified-checkins', {
+      entries: [{ name: 'Zoe Tester', clubberId: '4242', club: 'Sparks', at: new Date().toISOString() }],
+    });
+    check('a well-formed list is accepted', ok.status === 200 && ok.body.count === 1, JSON.stringify(ok.body));
+
+    let h = await j('/health');
+    check('/health warns about the check-in that did not stick, naming the kid',
+      warningTexts(h.body.warnings).some((w) => /didn.t stick|may not have stuck/i.test(w) && /Zoe Tester/.test(w)),
+      JSON.stringify(h.body.warnings));
+
+    // Replace semantics: an emptied list clears the warning immediately —
+    // a resolved problem must not keep shouting on the dashboard.
+    await post('/feed/unverified-checkins', { entries: [] });
+    h = await j('/health');
+    check('an emptied list clears the warning',
+      !warningTexts(h.body.warnings).some((w) => /may not have stuck/i.test(w)),
+      JSON.stringify(h.body.warnings));
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });
