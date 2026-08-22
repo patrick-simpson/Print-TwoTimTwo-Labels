@@ -146,6 +146,32 @@ async function main() {
       JSON.stringify(after['id:778899']));
   }
 
+  // ── 1.5 Streak (#14): consecutive club nights, gaps between nights ignored ─
+  {
+    // Five past club nights. StreakKid attended all five; GapKid missed the
+    // third-from-last. The ledger's union of dates defines what a "club
+    // night" is, so the seeded veteran night (2025-11-05) participates too.
+    const nights = ['2026-02-04', '2026-02-11', '2026-02-18', '2026-02-25', '2026-03-04'];
+    const ledger = readJson(dataDir, 'attendance.json');
+    ledger['streak kid'] = { name: 'Streak Kid', dates: nights.slice() };
+    ledger['gap kid'] = { name: 'Gap Kid', dates: nights.filter(d => d !== '2026-02-18') };
+    fs.writeFileSync(path.join(dataDir, 'attendance.json'), JSON.stringify(ledger));
+
+    // Tonight is a club night for both (recordAttendance adds today).
+    const s = recordAttendance('Streak', 'Kid', null);
+    // today + the five nights = 6 consecutive; the 2025-11-05 veteran night
+    // breaks it there (StreakKid stayed home that night).
+    check('unbroken run counts today + every trailing club night', s.streak === 6, JSON.stringify(s));
+
+    const g = recordAttendance('Gap', 'Kid', null);
+    // today, 03-04, 02-25 attended; 02-18 was a club night GapKid missed.
+    check('a missed club night ends the streak', g.streak === 3, JSON.stringify(g));
+
+    // Calendar gaps don't matter: only club nights count. (StreakKid's run
+    // spans Feb 4 → today with multi-week silences in between.)
+    check('weeks with no club at all never break a streak', s.streak === 6);
+  }
+
   // ── 2. isNonCheckinRow: one predicate for both non-check-in prints ─────────
   {
     check('award slips are non-check-in rows', isNonCheckinRow({ isAward: true }) === true);

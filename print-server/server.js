@@ -1252,7 +1252,8 @@ async function generateLabel(input) {
     firstName, lastName, clubName, clubImageBuffer,
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-    testBanner = false, footerText = '', greeting = '', template = null, extras = {},
+    testBanner = false, footerText = '', greeting = '', template = null,
+    streakCount = null, extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1289,6 +1290,12 @@ async function generateLabel(input) {
   if (awanaShares !== null && awanaShares !== undefined) {
     const n = Number(awanaShares);
     awanaShares = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
+  }
+  // Streak flame (#14): same coercion discipline as awanaShares — a malformed
+  // value must never print "🔥 NaN".
+  if (streakCount !== null && streakCount !== undefined) {
+    const n = Number(streakCount);
+    streakCount = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
   }
 
   // Step-up labels are inverted (black bg, light text) and replace the
@@ -1464,7 +1471,7 @@ async function generateLabel(input) {
   // goTo/milestone lines used to skip this reservation as "rare and short", but
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
-  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto;
+  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null;
   const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
     + (hasFooter ? 1 : 0);
@@ -1567,7 +1574,7 @@ async function generateLabel(input) {
     // group is what sends a child to the right table, so it must stay readable.
     // Reserve the icon row's width on the right and centre what's left.
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
-      (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0);
+      (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0);
     const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
@@ -1606,7 +1613,7 @@ async function generateLabel(input) {
   // allergy row and a footer can share the band without colliding. Defaults to
   // the badge's right padding edge when there is no icon row at all.
   let iconRowLeftX = BX + BW - 8;
-  if (hasAllergy || isBirthday || awanaShares != null || noPhoto) {
+  if (hasIconRowGlyphs) {
     const EMOJI_SIZE         = 16;
     const ALLERGY_EMOJI_SIZE = 22;
     const BDAY_EMOJI_SIZE    = 26;
@@ -1621,6 +1628,10 @@ async function generateLabel(input) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
       glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
+    }
+    if (streakCount != null) {
+      // Flame + attendance streak (#14) - same coin-badge pattern.
+      glyphs.push({ ch: '\uD83D\uDD25 ' + streakCount, size: EMOJI_SIZE });
     }
     if (isBirthday) {
       glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
@@ -1873,11 +1884,29 @@ function recordAttendance(firstName, lastName, clubberId = null) {
   if (!entry.dates.includes(today)) entry.dates.push(today);
   ledger[key] = entry;
   saveAttendance(ledger);
+
+  // Streak (#14): consecutive CLUB NIGHTS attended, tonight included. A club
+  // night is any date some kid attended — walking that union (not calendar
+  // weeks) means Christmas break and cancelled weeks never break a streak;
+  // only a night the club met and this kid stayed home does.
+  const clubNights = new Set();
+  for (const k of Object.keys(ledger)) {
+    const ds = ledger[k] && Array.isArray(ledger[k].dates) ? ledger[k].dates : [];
+    for (const d of ds) if (typeof d === 'string' && d <= today) clubNights.add(d);
+  }
+  const mine = new Set(entry.dates);
+  let streak = 0;
+  for (const night of [...clubNights].sort().reverse()) {
+    if (mine.has(night)) streak++;
+    else break;
+  }
+
   const start = seasonStartISO();
   return {
     seasonCount: entry.dates.filter(d => d >= start).length,
     firstEver: entry.dates.length === 1,
     priorNightExists,
+    streak,
   };
 }
 
@@ -2492,10 +2521,13 @@ app.post('/print', async (req, res) => {
     // corrupt real milestone lines for the rest of the season.
     let milestoneLine = '';
     let autoFirstTimer = false;
+    let streakCount = null;
     if (!isDemo) {
       try {
         const att = recordAttendance(firstName, lastName, clubberId);
         milestoneLine = milestoneLineFor(att.seasonCount);
+        // Streak flame (#14): earns its ink at six consecutive club nights.
+        if (att.streak >= 6) streakCount = att.streak;
         // Auto connect card (#10): a new face at a club that has met before.
         // Both halves matter — firstEver alone fires for EVERY kid on opening
         // night (and on a fresh install), because everyone's ledger starts at
@@ -2516,7 +2548,7 @@ app.post('/print', async (req, res) => {
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
-      stepUp, stepUpNextClub, awanaShares, noPhoto,
+      stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
       template: labelTemplateFor(effectiveClubName),

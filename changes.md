@@ -1,4 +1,13 @@
-﻿## [5.13.0] - 2026-08-22
+﻿## [5.14.0] - 2026-08-22
+Attendance streak flame: from six consecutive club nights on, a kid's label carries a "🔥 N" badge in the bottom-right icon row — the same coin-badge pattern Store Night shares use. Feature 2 of the round-3 build (#14).
+
+### Club nights, not calendar weeks
+The streak walks the attendance ledger's union of dates — any night some kid attended is a club night — backwards from tonight, counting until the first club night this kid missed. Christmas break and cancelled weeks therefore never break a streak; only a night the club actually met and the kid stayed home does. Computed inside `recordAttendance()` (which already loads the ledger for milestones and the auto connect card) and returned alongside `seasonCount`/`firstEver`/`priorNightExists`; `/print` passes it to the renderer as a first-class `streakCount` input with the same never-print-NaN coercion as `awanaShares`. Attendance-derived, so like the milestone line it appears on real check-in prints only — never on previews, reprints, or demo labels.
+
+### Tests
+Ledger unit tests pin the unbroken-run count, the missed-night reset, and the gaps-don't-matter property; a new `streak-flame` golden baseline pins the render and the torture case now carries a streak too (its baseline regenerated — the only one).
+
+## [5.13.0] - 2026-08-22
 Half-birthday cake: kids with June–August birthdays — whose real birthday week never lands on a club night, so they watch every other kid get a 🍰 and never get one — now get the same cake on their half-birthday week, six months on, squarely inside the Awana season. First of the round-3 build picks (#8); implemented serially, one feature per release entry, with a single Windows release at the end of the batch.
 
 ### Label only, deliberately
