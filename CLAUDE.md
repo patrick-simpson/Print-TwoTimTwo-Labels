@@ -33,7 +33,14 @@ Every functional change requires:
 3. **Website/UI** — Update React components if affecting user install/usage.
 4. **Build** — `npm run build` to sync bookmarklet and dist.
 5. **Commit & push** — Never leave uncommitted. Changes only done when deployed.
-6. **Cut the release** (if `electron-app/` or `print-server/` changed) — see "Releasing the Windows app" below. Don't stop at pushing to `main`; the `.exe` isn't live until the tagged build publishes.
+6. **Open a PR to `main`** — ALWAYS, for every pushed branch, including
+   website-only changes: nothing is live until it lands on `main` (GitHub
+   Pages deploys from `main`, and releases are cut from `main`), so a pushed
+   branch with no PR is work stranded where the operator can't see it. This
+   rule exists because it happened: the round-2 ideas page sat pushed-but-dark
+   until someone asked where it was. If the operator hasn't said otherwise,
+   also merge it once CI is green.
+7. **Cut the release** (if `electron-app/` or `print-server/` changed) — see "Releasing the Windows app" below. Don't stop at pushing to `main`; the `.exe` isn't live until the tagged build publishes.
 
 ## Releasing the Windows app
 

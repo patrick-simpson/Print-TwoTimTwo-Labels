@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>Feature Ideas — decided</title>
-    <meta name="description" content="Private scratchpad of feature ideas for the label printer and check-in display. Triaged: three ideas picked to build, the rest passed on." />
+    <title>Feature Ideas — round 2</title>
+    <meta name="description" content="Private scratchpad of feature ideas for the label printer and check-in display. Round 1 shipped; round 2 has 100 fresh candidates to pick from." />
     <link rel="icon" type="image/png" href="/icon128.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,6 +28,8 @@
     </script>
     <style>
       html { scroll-behavior: smooth; }
+      /* Room at the bottom so the sticky bar never covers the last row. */
+      body { padding-bottom: 92px; }
     </style>
   </head>
   <body class="bg-slate-50 text-slate-800 antialiased font-sans">
@@ -40,66 +42,228 @@
           <span class="text-slate-300">•</span>
           <span>unlisted</span>
           <span class="text-slate-300">•</span>
-          <span class="text-brand-700">decided</span>
+          <span class="text-brand-700">round 2</span>
         </div>
         <h1 class="text-2xl sm:text-3xl font-black text-slate-900 mt-1">Feature Ideas</h1>
         <p class="text-sm text-slate-500 mt-1">
-          Triaged August 2026: of the 100 candidates, <strong class="text-slate-700">3 were picked to build</strong> —
-          the rest didn't make the cut and were passed on.
+          Round 1 is done — its three picks <strong class="text-slate-700">shipped in v5.10–5.12</strong>
+          (footer, auto connect card, per-club templates; record at the bottom of this page).
+          Below are <strong class="text-slate-700">100 fresh candidates</strong>, with a new
+          "Print quality &amp; hardware" section. Tick the ones you want, then copy a build prompt.
         </p>
+        <p class="text-xs text-slate-400 mt-2">
+          Note: your ticks live only in this tab and reset if you reload — copy the prompt before you close it.
+        </p>
+
+        <!-- Filters -->
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <div id="filter-chips" class="flex flex-wrap gap-1.5">
+            <button data-filter="all"     class="chip chip-active">All <span class="chip-count" data-count="all"></span></button>
+            <button data-filter="P"       class="chip">Printer <span class="chip-count" data-count="P"></span></button>
+            <button data-filter="D"       class="chip">Display <span class="chip-count" data-count="D"></span></button>
+            <button data-filter="B"       class="chip">Both <span class="chip-count" data-count="B"></span></button>
+          </div>
+          <div class="flex-1 min-w-[160px]">
+            <input id="search" type="search" placeholder="Search ideas…"
+              class="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500" />
+          </div>
+        </div>
+
+        <!-- Helpers -->
+        <div class="mt-3 flex flex-wrap items-center gap-3 text-xs">
+          <button id="select-visible" class="font-semibold text-brand-700 hover:text-brand-900">Select all (visible)</button>
+          <button id="clear-all" class="font-semibold text-slate-500 hover:text-slate-800">Clear</button>
+          <span id="empty-note" class="text-slate-400"></span>
+        </div>
       </div>
     </header>
 
-    <main class="max-w-4xl mx-auto px-5 py-6 space-y-8">
+    <!-- Round 2 list -->
+    <main id="list" class="max-w-4xl mx-auto px-5 py-6 space-y-6"></main>
 
-      <!-- Picked -->
-      <section>
-        <h2 class="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1.5">✓ Picked — building these</h2>
-        <div id="picked" class="bg-white rounded-xl border-2 border-brand-200 p-1.5"></div>
-      </section>
+    <!-- Round 1 record -->
+    <section class="max-w-4xl mx-auto px-5 pb-10 space-y-4">
+      <div class="border-t border-slate-200 pt-6">
+        <h2 class="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1.5">✓ Round 1 — shipped in v5.10–5.12</h2>
+        <div id="r1-picked" class="bg-white rounded-xl border-2 border-brand-200 p-1.5"></div>
+      </div>
+      <details>
+        <summary class="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-400 hover:text-slate-600 select-none">
+          Round 1 — passed on (<span id="r1-passed-count"></span>) — kept for the record
+        </summary>
+        <div id="r1-passed" class="mt-3 space-y-6 opacity-60"></div>
+      </details>
+    </section>
 
-      <!-- Passed -->
-      <section>
-        <details>
-          <summary class="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-400 hover:text-slate-600 select-none">
-            Passed on (<span id="passed-count"></span>) — kept for the record
-          </summary>
-          <div id="passed" class="mt-3 space-y-6 opacity-60"></div>
-        </details>
-      </section>
-
-    </main>
+    <!-- Sticky action bar -->
+    <div class="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200">
+      <div class="max-w-4xl mx-auto px-5 py-3 flex items-center gap-3">
+        <div class="text-sm text-slate-600">
+          <span id="selected-count" class="font-bold text-slate-900">0</span> of 100 selected
+        </div>
+        <div class="flex-1"></div>
+        <button id="copy-btn"
+          class="px-4 py-2 rounded-lg text-sm font-bold bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          Copy build prompt
+        </button>
+      </div>
+    </div>
 
     <style>
+      .chip { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+              background: #f1f5f9; color: #475569; border: 1px solid transparent; cursor: pointer; }
+      .chip:hover { background: #e2e8f0; }
+      .chip-active { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+      .chip-count { opacity: 0.6; font-weight: 700; }
       .tag { display: inline-block; min-width: 20px; text-align: center; font-size: 10px; font-weight: 800;
              padding: 2px 6px; border-radius: 5px; line-height: 1.3; }
       .tag-P { background: #dcfce7; color: #15803d; }
       .tag-D { background: #ede9fe; color: #6d28d9; }
       .tag-B { background: #fef3c7; color: #92400e; }
-      .idea-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; }
+      .idea-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+      .idea-row:hover { background: #f8fafc; }
+      .idea-row input { margin-top: 3px; width: 16px; height: 16px; accent-color: #16a34a; cursor: pointer; flex-shrink: 0; }
+      .idea-row.checked { background: #f0fdf4; }
+      .record-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 8px; }
     </style>
 
     <script>
-      // ── The ideas. Self-contained; no fetch, no external file. ──────────────
+      // ── Round 2: the pickable ideas (101–200). Self-contained; no fetch. ────
       // app: 'P' printer · 'D' display · 'B' both.
       var IDEAS = [
-        // Labels & printing — Printer
-        { n: 1,  app: 'P', cat: 'Labels & printing', title: 'Visual label-template editor (drag fields, save layouts per club)' },
+        // Print quality & hardware — Printer
+        { n: 101, app: 'P', cat: 'Print quality & hardware', title: 'Musical printing: vary raster density so the stepper motor "plays" a little tune (raw ESC/POS where supported; opt-in novelty on test prints)' },
+        { n: 102, app: 'P', cat: 'Print quality & hardware', title: 'Startup chirp: a two-second signature motor melody with the morning test print' },
+        { n: 103, app: 'P', cat: 'Print quality & hardware', title: 'Raw ESC/POS print path bypassing the Windows driver — faster, crisper, controllable' },
+        { n: 104, app: 'P', cat: 'Print quality & hardware', title: 'Darkness/density calibration wizard with a printed test chart' },
+        { n: 105, app: 'P', cat: 'Print quality & hardware', title: 'Dithering algorithm selector (Floyd–Steinberg / Atkinson / threshold) with side-by-side preview' },
+        { n: 106, app: 'P', cat: 'Print quality & hardware', title: 'Label stock profiles: die-cut, continuous, linerless — sizes and gap calibration per profile' },
+        { n: 107, app: 'P', cat: 'Print quality & hardware', title: 'Thermal-head wear tracker: ink coverage per label, head-cleaning reminders by mileage' },
+        { n: 108, app: 'P', cat: 'Print quality & hardware', title: 'Overheat-aware pacing that spaces labels out during check-in rushes' },
+        { n: 109, app: 'P', cat: 'Print quality & hardware', title: 'Portrait / rotated label mode for lanyard sleeves' },
+        { n: 110, app: 'P', cat: 'Print quality & hardware', title: 'Quality-vs-speed toggle per printer' },
+        { n: 111, app: 'P', cat: 'Print quality & hardware', title: "Auto-contrast for club logos tuned to each printer's measured density" },
+        { n: 112, app: 'P', cat: 'Print quality & hardware', title: 'Sibling labels grouped onto one tear strip' },
+        { n: 113, app: 'P', cat: 'Print quality & hardware', title: 'Big-name mode: double-height first name readable across the room' },
+        { n: 114, app: 'P', cat: 'Print quality & hardware', title: 'Full Unicode names: CJK / accent font fallback chain in the renderer' },
+
+        // Labels, round 2 — Printer
+        { n: 115, app: 'P', cat: 'Labels, round 2', title: 'Guardian phone last-4 printed for pickup verification' },
+        { n: 116, app: 'P', cat: 'Labels, round 2', title: 'Twin-safe labels: middle initial or hint when two kids share a name' },
+        { n: 117, app: 'P', cat: 'Labels, round 2', title: 'Attendance streak flame ("6 weeks in a row!")' },
+        { n: 118, app: 'P', cat: 'Labels, round 2', title: '"New this month" subtle marker so leaders learn new names fast' },
+        { n: 119, app: 'P', cat: 'Labels, round 2', title: 'Bus / ride-home route code on the label' },
+        { n: 120, app: 'P', cat: 'Labels, round 2', title: 'Medication-on-file icon (e.g. epipen) distinct from allergy icons' },
+        { n: 121, app: 'P', cat: 'Labels, round 2', title: 'Next-year room/club preview line in the final weeks of the season' },
+        { n: 122, app: 'P', cat: 'Labels, round 2', title: 'Seasonal border art (thermal-safe line work, not gray fills)' },
+        { n: 123, app: 'P', cat: 'Labels, round 2', title: 'Mid-year club-change flag ("moved up from Cubbies")' },
+        { n: 124, app: 'P', cat: 'Labels, round 2', title: 'Color-team stripe rendered as a thermal-safe pattern' },
+        { n: 125, app: 'P', cat: 'Labels, round 2', title: 'Verse-of-the-week rotation feeding the label footer automatically' },
+        { n: 126, app: 'P', cat: 'Labels, round 2', title: "QR on the connect card linking to the church's visitor page" },
+
+        // Print server & reliability, round 2 — Printer
+        { n: 127, app: 'P', cat: 'Print server & reliability, round 2', title: 'Second-printer hot standby with automatic failover' },
+        { n: 128, app: 'P', cat: 'Print server & reliability, round 2', title: 'Print-farm mode: split a rush across two printers round-robin' },
+        { n: 129, app: 'P', cat: 'Print server & reliability, round 2', title: 'Windows service mode — server runs with nobody logged in' },
+        { n: 130, app: 'P', cat: 'Print server & reliability, round 2', title: 'Nightly config + attendance backup zip with one-click restore' },
+        { n: 131, app: 'P', cat: 'Print server & reliability, round 2', title: 'Self-diagnosing errors: map driver/PowerShell failures to plain-English fixes' },
+        { n: 132, app: 'P', cat: 'Print server & reliability, round 2', title: 'Print-time metrics: p50/p95 seconds from check-in to paper' },
+        { n: 133, app: 'P', cat: 'Print server & reliability, round 2', title: 'Attendance-ledger explorer: per-kid season history in the dashboard' },
+        { n: 134, app: 'P', cat: 'Print server & reliability, round 2', title: 'Season rollover wizard (archive last year, reset milestones cleanly)' },
+        { n: 135, app: 'P', cat: 'Print server & reliability, round 2', title: 'Roster diff report on every CSV update (added / removed / changed kids)' },
+        { n: 136, app: 'P', cat: 'Print server & reliability, round 2', title: "Simulated club night: replay a past night's check-ins for load testing" },
+        { n: 137, app: 'P', cat: 'Print server & reliability, round 2', title: 'USB hot-unplug detection with an immediate tray alert' },
+        { n: 138, app: 'P', cat: 'Print server & reliability, round 2', title: 'Crash-loop guardian: auto-restart with capped backoff and a visible banner' },
+
+        // Dashboard, round 2 — Printer
+        { n: 139, app: 'P', cat: 'Dashboard, round 2', title: 'Per-club arrivals sparkline for tonight (who is still trickling in)' },
+        { n: 140, app: 'P', cat: 'Dashboard, round 2', title: '"Doors close" countdown in the dashboard header' },
+        { n: 141, app: 'P', cat: 'Dashboard, round 2', title: 'Volunteer check-in tracked alongside kids' },
+        { n: 142, app: 'P', cat: 'Dashboard, round 2', title: 'Printable leader name tents through the same renderer' },
+        { n: 143, app: 'P', cat: 'Dashboard, round 2', title: 'One-click end-of-night report (counts, visitors, failures)' },
+        { n: 144, app: 'P', cat: 'Dashboard, round 2', title: 'Search-as-you-type across all print history' },
+        { n: 145, app: 'P', cat: 'Dashboard, round 2', title: 'Keyboard-first operation: hotkeys for reprint, search, tabs' },
+        { n: 146, app: 'P', cat: 'Dashboard, round 2', title: 'Wall-mounted TV mode for the dashboard (big fonts, auto-refresh)' },
+        { n: 147, app: 'P', cat: 'Dashboard, round 2', title: 'Config audit log: who changed what setting, when' },
+        { n: 148, app: 'P', cat: 'Dashboard, round 2', title: 'Setting profiles: "normal night" / "big event" / "training"' },
+
+        // Check-in flow, round 2 — Printer
+        { n: 149, app: 'P', cat: 'Check-in flow, round 2', title: 'Family QR fast-pass: one code checks in every sibling at once' },
+        { n: 150, app: 'P', cat: 'Check-in flow, round 2', title: 'NFC wristband tap check-in' },
+        { n: 151, app: 'P', cat: 'Check-in flow, round 2', title: 'Parking-lot pre-check-in from the phone page (label waits at the desk)' },
+        { n: 152, app: 'P', cat: 'Check-in flow, round 2', title: 'Car-line mode: numbered pickup tags matched to a call board' },
+        { n: 153, app: 'P', cat: 'Check-in flow, round 2', title: 'Late-arrival auto-notify to that club’s leader' },
+        { n: 154, app: 'P', cat: 'Check-in flow, round 2', title: 'Absence follow-up prompt after three missed weeks' },
+        { n: 155, app: 'P', cat: 'Check-in flow, round 2', title: 'Kiosk attract screen with club branding while idle' },
+        { n: 156, app: 'P', cat: 'Check-in flow, round 2', title: 'Multi-station mode: two laptops share one duplicate-suppression domain' },
+        { n: 157, app: 'P', cat: 'Check-in flow, round 2', title: 'Offline-first phone page (PWA that syncs when Wi-Fi returns)' },
+        { n: 158, app: 'P', cat: 'Check-in flow, round 2', title: 'Accessibility: large-target / switch-friendly mode for the phone page' },
+
+        // Screen ideas, round 2 — Display
+        { n: 159, app: 'D', cat: 'Screen ideas, round 2', title: 'Name-reveal animations styled per club font' },
+        { n: 160, app: 'D', cat: 'Screen ideas, round 2', title: 'Welcome marquee timed to the moment the label finishes printing' },
+        { n: 161, app: 'D', cat: 'Screen ideas, round 2', title: 'Consent-safe fun avatars (generated monster per kid, no photos)' },
+        { n: 162, app: 'D', cat: 'Screen ideas, round 2', title: 'Club mascot animations between check-ins' },
+        { n: 163, app: 'D', cat: 'Screen ideas, round 2', title: 'Trivia / quiz loop while the lobby is quiet' },
+        { n: 164, app: 'D', cat: 'Screen ideas, round 2', title: 'Game-time hype countdown with synced music' },
+        { n: 165, app: 'D', cat: 'Screen ideas, round 2', title: 'Parent pickup board: security codes displayed at checkout time' },
+        { n: 166, app: 'D', cat: 'Screen ideas, round 2', title: 'Weather + drive-safe message on the exit screens' },
+        { n: 167, app: 'D', cat: 'Screen ideas, round 2', title: 'Memory-verse karaoke mode (bouncing-ball text)' },
+        { n: 168, app: 'D', cat: 'Screen ideas, round 2', title: 'Achievements wall: handbook completions this month' },
+        { n: 169, app: 'D', cat: 'Screen ideas, round 2', title: 'Live poll: kids vote next game-night theme from the floor' },
+        { n: 170, app: 'D', cat: 'Screen ideas, round 2', title: 'Anniversary shout-outs ("5th year in Awana!")' },
+        { n: 171, app: 'D', cat: 'Screen ideas, round 2', title: 'Multi-zone layout editor (banner / slides / ticker thirds)' },
+        { n: 172, app: 'D', cat: 'Screen ideas, round 2', title: 'OBS / ProPresenter overlay endpoints for pro AV booths' },
+        { n: 173, app: 'D', cat: 'Screen ideas, round 2', title: 'Ambient soundscape scheduler (pre-club, game time, quiet time)' },
+        { n: 174, app: 'D', cat: 'Screen ideas, round 2', title: 'Screen health beacon: each display reports uptime to the print server' },
+        { n: 175, app: 'D', cat: 'Screen ideas, round 2', title: 'Severe-weather alert takeover from the NWS feed' },
+        { n: 176, app: 'D', cat: 'Screen ideas, round 2', title: 'Slideshow synced from a shared church drive folder' },
+        { n: 177, app: 'D', cat: 'Screen ideas, round 2', title: '"Bring a friend" counter with confetti at milestones' },
+        { n: 178, app: 'D', cat: 'Screen ideas, round 2', title: 'End-of-night parent messages ("pickup starts in 10 minutes")' },
+
+        // Cross-app, round 2 — Both
+        { n: 179, app: 'B', cat: 'Cross-app, round 2', title: 'Director companion app: glance stats + a panic button' },
+        { n: 180, app: 'B', cat: 'Cross-app, round 2', title: "Leader phone alert when an allergy kid checks into their club" },
+        { n: 181, app: 'B', cat: 'Cross-app, round 2', title: 'Season analytics: retention, growth, first-timer conversion' },
+        { n: 182, app: 'B', cat: 'Cross-app, round 2', title: 'First-timer pipeline: connect card → follow-up list → CRM export' },
+        { n: 183, app: 'B', cat: 'Cross-app, round 2', title: 'Unified seasonal theming: label art and screen skin switch together' },
+        { n: 184, app: 'B', cat: 'Cross-app, round 2', title: 'QR pairing flow between the printer PC and each screen' },
+        { n: 185, app: 'B', cat: 'Cross-app, round 2', title: 'Config sync through the church’s shared drive (both apps read one file)' },
+        { n: 186, app: 'B', cat: 'Cross-app, round 2', title: 'Rehearsal mode: run a fake club night across both apps at once' },
+        { n: 187, app: 'B', cat: 'Cross-app, round 2', title: 'Capacity alerts: room over volunteer ratio warns dashboard and screens' },
+        { n: 188, app: 'B', cat: 'Cross-app, round 2', title: 'Data-retention dashboard: one place to purge PII on schedule' },
+        { n: 189, app: 'B', cat: 'Cross-app, round 2', title: 'Grandparent mode: bigger text everywhere with one switch' },
+        { n: 190, app: 'B', cat: 'Cross-app, round 2', title: 'Open metrics endpoint (Prometheus) for the church tech team' },
+
+        // Wild & delightful — mixed
+        { n: 191, app: 'P', cat: 'Wild & delightful', title: 'Golden ticket: one random label a night gets a star frame' },
+        { n: 192, app: 'P', cat: 'Wild & delightful', title: 'Collectible label icon series that changes weekly' },
+        { n: 193, app: 'D', cat: 'Wild & delightful', title: 'Boarding-pass theme night: labels and screens styled as flights' },
+        { n: 194, app: 'B', cat: 'Wild & delightful', title: 'Awana radio: lo-fi loop whose track flips on milestones' },
+        { n: 195, app: 'P', cat: 'Wild & delightful', title: 'Leader labels with fun titles ("Snack Commander")' },
+        { n: 196, app: 'D', cat: 'Wild & delightful', title: 'Pixel-art fireworks driven by the live check-in rate' },
+        { n: 197, app: 'B', cat: 'Wild & delightful', title: 'Year-in-review data reel generated from season stats' },
+        { n: 198, app: 'P', cat: 'Wild & delightful', title: 'Mini maze or puzzle printed beside the name for waiting kids' },
+        { n: 199, app: 'B', cat: 'Wild & delightful', title: '"Club night in numbers" postcard auto-printed at close for the director' },
+        { n: 200, app: 'B', cat: 'Wild & delightful', title: 'April Fools mode: everything renders upside down (opt-in!)' },
+      ];
+
+      // ── Round 1: the decided record (1–100; 3 shipped, 97 passed). ──────────
+      var ROUND1 = [
+        { n: 1,  app: 'P', cat: 'Labels & printing', title: 'Visual label-template editor (drag fields, save layouts per club)', picked: true, shipped: 'v5.12.0' },
         { n: 2,  app: 'P', cat: 'Labels & printing', title: 'Multiple label sizes (2×1, 3×2, 4×3) selectable per printer' },
         { n: 3,  app: 'P', cat: 'Labels & printing', title: "QR code on the label linking to the child's checkout record" },
         { n: 4,  app: 'P', cat: 'Labels & printing', title: 'Scannable barcode for fast, keyboard-free checkout' },
         { n: 5,  app: 'P', cat: 'Labels & printing', title: 'Optional child photo on the label, gated on photo-release consent' },
         { n: 6,  app: 'P', cat: 'Labels & printing', title: 'Allergy severity color-coding (red = anaphylaxis, amber = mild)' },
         { n: 7,  app: 'P', cat: 'Labels & printing', title: 'Custom allergy icon set the church can edit' },
-        { n: 8,  app: 'P', cat: 'Labels & printing', title: 'Configurable label footer (church name, a verse, service times)' },
+        { n: 8,  app: 'P', cat: 'Labels & printing', title: 'Configurable label footer (church name, a verse, service times)', picked: true, shipped: 'v5.10.0' },
         { n: 9,  app: 'P', cat: 'Labels & printing', title: 'Parent-pickup tag that prints the checkout security code to match' },
-        { n: 10, app: 'P', cat: 'Labels & printing', title: 'Connect-card second label auto-printed for first-time visitors' },
+        { n: 10, app: 'P', cat: 'Labels & printing', title: 'Connect-card second label auto-printed for first-time visitors', picked: true, shipped: 'v5.11.0' },
         { n: 11, app: 'P', cat: 'Labels & printing', title: 'Handbook-completion progress shown on the label' },
         { n: 12, app: 'P', cat: 'Labels & printing', title: 'Share-balance / store-credit line on store nights' },
         { n: 13, app: 'P', cat: 'Labels & printing', title: '"Go to: <room>" late-arrival routing shown more prominently' },
         { n: 14, app: 'P', cat: 'Labels & printing', title: 'Name pronunciation guide field printed under the name' },
-
-        // Print server & reliability — Printer
         { n: 15, app: 'P', cat: 'Print server & reliability', title: 'Offline print queue that flushes automatically when the printer returns' },
         { n: 16, app: 'P', cat: 'Print server & reliability', title: 'Multi-printer routing by club (Cubbies → front, T&T → gym)' },
         { n: 17, app: 'P', cat: 'Print server & reliability', title: 'Printer health polling with low-paper / offline warnings' },
@@ -111,8 +275,6 @@
         { n: 23, app: 'P', cat: 'Print server & reliability', title: 'Cloud backup / restore of config and schedule' },
         { n: 24, app: 'P', cat: 'Print server & reliability', title: 'Multi-campus config profiles switchable from the tray' },
         { n: 25, app: 'P', cat: 'Print server & reliability', title: 'Paper/label cost tracker with a monthly total' },
-
-        // Dashboard & operations — Printer
         { n: 26, app: 'P', cat: 'Dashboard & operations', title: 'Dark mode for the dashboard' },
         { n: 27, app: 'P', cat: 'Dashboard & operations', title: 'Mobile-responsive dashboard layout for phones at the door' },
         { n: 28, app: 'P', cat: 'Dashboard & operations', title: 'Attendance analytics: per-club trends across weeks' },
@@ -128,8 +290,6 @@
         { n: 38, app: 'P', cat: 'Dashboard & operations', title: 'Kiosk lock mode to prevent tampering at the station' },
         { n: 39, app: 'P', cat: 'Dashboard & operations', title: 'Chime / sound on a successful print' },
         { n: 40, app: 'P', cat: 'Dashboard & operations', title: 'Spoken name announce on check-in (accessibility)' },
-
-        // Check-in flow — Printer
         { n: 41, app: 'P', cat: 'Check-in flow', title: 'Self-check-in tablet kiosk mode at the door' },
         { n: 42, app: 'P', cat: 'Check-in flow', title: 'Guest pre-registration link families fill out ahead of time' },
         { n: 43, app: 'P', cat: 'Check-in flow', title: 'Walk-in visitor register + label in one step, label always wins' },
@@ -140,8 +300,6 @@
         { n: 48, app: 'P', cat: 'Check-in flow', title: 'Checkout screen with guardian + authorized-pickup matching' },
         { n: 49, app: 'P', cat: 'Check-in flow', title: 'Live "who\'s still here" board as kids check out' },
         { n: 50, app: 'P', cat: 'Check-in flow', title: 'Configurable late-grace per club instead of one global value' },
-
-        // Screen themes & effects — Display
         { n: 51, app: 'D', cat: 'Screen themes & effects', title: 'More seasonal skins (Thanksgiving, Easter, VBS, back-to-school)' },
         { n: 52, app: 'D', cat: 'Screen themes & effects', title: 'Custom theme builder (colors, shapes, motion) in the UI' },
         { n: 53, app: 'D', cat: 'Screen themes & effects', title: 'Per-club color pulled automatically from the Awana catalog' },
@@ -152,8 +310,6 @@
         { n: 58, app: 'D', cat: 'Screen themes & effects', title: 'Snow / rain / sparkle particle toggles' },
         { n: 59, app: 'D', cat: 'Screen themes & effects', title: 'Weather-driven theme (rainy night = cozy palette)' },
         { n: 60, app: 'D', cat: 'Screen themes & effects', title: 'Custom church logo upload for the stage' },
-
-        // Screen content & data — Display
         { n: 61, app: 'D', cat: 'Screen content & data', title: 'Live attendance goal thermometer ("42 of 60 checked in")' },
         { n: 62, app: 'D', cat: 'Screen content & data', title: 'Points-race animation between color teams' },
         { n: 63, app: 'D', cat: 'Screen content & data', title: 'Milestone celebrations (100th check-in of the night)' },
@@ -166,8 +322,6 @@
         { n: 70, app: 'D', cat: 'Screen content & data', title: 'Attendance-history sparkline on screen' },
         { n: 71, app: 'D', cat: 'Screen content & data', title: 'Sponsor / thank-you slide rotation' },
         { n: 72, app: 'D', cat: 'Screen content & data', title: 'Photo slideshow from the event, gated on consent' },
-
-        // Screen operations & a11y — Display
         { n: 73, app: 'D', cat: 'Screen operations & accessibility', title: 'Multi-screen sync (lobby + gym stay in lockstep)' },
         { n: 74, app: 'D', cat: 'Screen operations & accessibility', title: 'Presentation remote control from a phone' },
         { n: 75, app: 'D', cat: 'Screen operations & accessibility', title: 'On-screen QR to join phone check-in' },
@@ -180,8 +334,6 @@
         { n: 82, app: 'D', cat: 'Screen operations & accessibility', title: 'Auto-detect no-club nights from the schedule and show a rest screen' },
         { n: 83, app: 'D', cat: 'Screen operations & accessibility', title: 'Countdown-target editor UI (no code)' },
         { n: 84, app: 'D', cat: 'Screen operations & accessibility', title: 'Wake-lock status indicator with a nudge if it fails' },
-
-        // Cross-app / platform — Both
         { n: 85,  app: 'B', cat: 'Cross-app / platform', title: 'Shared theme sync so printer labels and the screen match' },
         { n: 86,  app: 'B', cat: 'Cross-app / platform', title: 'One config dashboard that manages both apps' },
         { n: 87,  app: 'B', cat: 'Cross-app / platform', title: 'A single unified church-config file both apps read' },
@@ -200,8 +352,18 @@
         { n: 100, app: 'B', cat: 'Cross-app / platform', title: 'End-to-end smoke test that exercises check-in → label → screen banner' },
       ];
 
-      // ── The decision (August 2026): these were picked; everything else passed. ──
-      var PICKED = new Set([1, 8, 10]);
+      var APP_NAME = { P: 'Printer', D: 'Display', B: 'Both' };
+
+      // ── State (in-memory only; resets on reload, by design) ─────────────────
+      var checked = new Set();
+      var filter = 'all';
+      var query = '';
+
+      var listEl = document.getElementById('list');
+      var searchEl = document.getElementById('search');
+      var selectedCountEl = document.getElementById('selected-count');
+      var copyBtn = document.getElementById('copy-btn');
+      var emptyNoteEl = document.getElementById('empty-note');
 
       function esc(s) {
         return String(s == null ? '' : s)
@@ -209,35 +371,164 @@
           .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
 
-      function row(idea, picked) {
-        return '<div class="idea-row">' +
+      function matchesFilter(idea) {
+        if (filter !== 'all' && idea.app !== filter) return false;
+        if (query && idea.title.toLowerCase().indexOf(query) === -1) return false;
+        return true;
+      }
+
+      function visibleIdeas() { return IDEAS.filter(matchesFilter); }
+
+      function render() {
+        var groups = [];
+        var byCat = {};
+        visibleIdeas().forEach(function (idea) {
+          if (!byCat[idea.cat]) { byCat[idea.cat] = []; groups.push(idea.cat); }
+          byCat[idea.cat].push(idea);
+        });
+
+        if (!groups.length) {
+          listEl.innerHTML = '<p class="text-sm text-slate-400 py-8 text-center">No ideas match your filter.</p>';
+        } else {
+          listEl.innerHTML = groups.map(function (cat) {
+            var rows = byCat[cat].map(function (idea) {
+              var on = checked.has(idea.n);
+              return '<label class="idea-row ' + (on ? 'checked' : '') + '" data-n="' + idea.n + '">' +
+                '<input type="checkbox" ' + (on ? 'checked' : '') + ' data-n="' + idea.n + '">' +
+                '<span class="tag tag-' + idea.app + '">' + idea.app + '</span>' +
+                '<span class="text-sm text-slate-700"><span class="text-slate-400 tabular-nums">' + idea.n + '.</span> ' + esc(idea.title) + '</span>' +
+                '</label>';
+            }).join('');
+            return '<section>' +
+              '<h2 class="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1.5">' + esc(cat) + '</h2>' +
+              '<div class="bg-white rounded-xl border border-slate-200 p-1.5">' + rows + '</div>' +
+              '</section>';
+          }).join('');
+        }
+        updateCounts();
+      }
+
+      function updateCounts() {
+        selectedCountEl.textContent = String(checked.size);
+        copyBtn.disabled = checked.size === 0;
+        emptyNoteEl.textContent = checked.size === 0 ? 'Nothing selected yet.' : '';
+        var counts = { all: IDEAS.length, P: 0, D: 0, B: 0 };
+        IDEAS.forEach(function (i) { counts[i.app]++; });
+        document.querySelectorAll('.chip-count').forEach(function (el) {
+          var key = el.getAttribute('data-count');
+          el.textContent = '(' + counts[key] + ')';
+        });
+      }
+
+      listEl.addEventListener('change', function (e) {
+        var cb = e.target;
+        if (!cb || cb.type !== 'checkbox') return;
+        var n = Number(cb.getAttribute('data-n'));
+        if (cb.checked) checked.add(n); else checked.delete(n);
+        var row = cb.closest('.idea-row');
+        if (row) row.classList.toggle('checked', cb.checked);
+        updateCounts();
+      });
+
+      document.getElementById('filter-chips').addEventListener('click', function (e) {
+        var btn = e.target.closest('button[data-filter]');
+        if (!btn) return;
+        filter = btn.getAttribute('data-filter');
+        document.querySelectorAll('#filter-chips .chip').forEach(function (c) { c.classList.remove('chip-active'); });
+        btn.classList.add('chip-active');
+        render();
+      });
+
+      searchEl.addEventListener('input', function () {
+        query = searchEl.value.trim().toLowerCase();
+        render();
+      });
+
+      document.getElementById('select-visible').addEventListener('click', function () {
+        visibleIdeas().forEach(function (i) { checked.add(i.n); });
+        render();
+      });
+      document.getElementById('clear-all').addEventListener('click', function () {
+        checked.clear();
+        render();
+      });
+
+      // ── Build the prompt from the checked ideas only ────────────────────────
+      function buildPrompt() {
+        var picked = IDEAS.filter(function (i) { return checked.has(i.n); });
+        var lines = [];
+        lines.push('I want to build the following features across my two Awana apps:');
+        lines.push('the label printer (github.com/patrick-simpson/Print-TwoTimTwo-Labels)');
+        lines.push('and the check-in display (github.com/patrick-simpson/Awana-Check-in-Display).');
+        lines.push('');
+        lines.push('Each feature is tagged [Printer], [Display], or [Both].');
+        lines.push('For each one, propose an implementation approach before writing code,');
+        lines.push('and flag anything that touches the privacy/security invariants.');
+        lines.push('');
+        picked.forEach(function (i, idx) {
+          lines.push((idx + 1) + '. [' + APP_NAME[i.app] + '] ' + i.title);
+        });
+        return lines.join('\n');
+      }
+
+      copyBtn.addEventListener('click', function () {
+        if (checked.size === 0) return;
+        var text = buildPrompt();
+        var done = function () {
+          var orig = copyBtn.textContent;
+          copyBtn.textContent = 'Copied ✓';
+          setTimeout(function () { copyBtn.textContent = orig; }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+        } else {
+          fallbackCopy(text, done);
+        }
+      });
+
+      function fallbackCopy(text, done) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); }
+        catch (e) { window.prompt('Copy the prompt below:', text); }
+        document.body.removeChild(ta);
+      }
+
+      render();
+
+      // ── Round 1 record (read-only) ───────────────────────────────────────────
+      function recordRow(idea) {
+        var picked = !!idea.picked;
+        return '<div class="record-row">' +
           '<span class="mt-0.5 text-sm ' + (picked ? 'text-brand-600 font-bold' : 'text-slate-300') + '">' + (picked ? '✓' : '–') + '</span>' +
           '<span class="tag tag-' + idea.app + '">' + idea.app + '</span>' +
           '<span class="text-sm ' + (picked ? 'text-slate-900 font-semibold' : 'text-slate-500') + '">' +
             '<span class="text-slate-400 tabular-nums font-normal">' + idea.n + '.</span> ' + esc(idea.title) +
+            (idea.shipped ? ' <span class="tag" style="background:#dcfce7;color:#15803d">shipped ' + esc(idea.shipped) + '</span>' : '') +
           '</span>' +
           '</div>';
       }
 
-      var pickedIdeas = IDEAS.filter(function (i) { return PICKED.has(i.n); });
-      var passedIdeas = IDEAS.filter(function (i) { return !PICKED.has(i.n); });
+      var r1Picked = ROUND1.filter(function (i) { return i.picked; });
+      var r1Passed = ROUND1.filter(function (i) { return !i.picked; });
+      document.getElementById('r1-picked').innerHTML = r1Picked.map(recordRow).join('');
+      document.getElementById('r1-passed-count').textContent = String(r1Passed.length);
 
-      document.getElementById('picked').innerHTML =
-        pickedIdeas.map(function (i) { return row(i, true); }).join('');
-
-      document.getElementById('passed-count').textContent = String(passedIdeas.length);
-
-      var groups = [];
-      var byCat = {};
-      passedIdeas.forEach(function (idea) {
-        if (!byCat[idea.cat]) { byCat[idea.cat] = []; groups.push(idea.cat); }
-        byCat[idea.cat].push(idea);
+      var r1Groups = [];
+      var r1ByCat = {};
+      r1Passed.forEach(function (idea) {
+        if (!r1ByCat[idea.cat]) { r1ByCat[idea.cat] = []; r1Groups.push(idea.cat); }
+        r1ByCat[idea.cat].push(idea);
       });
-      document.getElementById('passed').innerHTML = groups.map(function (cat) {
+      document.getElementById('r1-passed').innerHTML = r1Groups.map(function (cat) {
         return '<section>' +
           '<h2 class="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1.5">' + esc(cat) + '</h2>' +
           '<div class="bg-white rounded-xl border border-slate-200 p-1.5">' +
-            byCat[cat].map(function (i) { return row(i, false); }).join('') +
+            r1ByCat[cat].map(recordRow).join('') +
           '</div>' +
           '</section>';
       }).join('');
