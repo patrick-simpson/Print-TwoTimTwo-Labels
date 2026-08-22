@@ -4045,6 +4045,16 @@ app.post('/feed/checkin-report', (req, res) => {
   res.json({ ok: true, applied: true, changed: outcome.changed });
 });
 
+// #2: the extension's "didn't stick" list — kids whose driven site check-in
+// never verified (label printed, TwoTimTwo never confirmed). Stored in
+// memory only and surfaced as a /health warning so the dashboard shows the
+// same list the widget does. Replace semantics: an empty list clears it.
+app.post('/feed/unverified-checkins', (req, res) => {
+  const result = feeds.submitUnverified(req.body, Date.now());
+  if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
+  res.json({ ok: true, count: result.payload.entries.length });
+});
+
 // ── Event-bus publishers ──────────────────────────────────────────────────────
 // Interval publishers are gated by the church-config club-night window so the
 // channel stays quiet the other ~165 hours a week. Every publisher is wrapped:
@@ -4342,6 +4352,17 @@ app.get('/health', async (req, res) => {
     warnings.push({
       type: 'displayKeyInvalid',
       message: 'The saved display key is invalid, so names are going out in the clear. Open Settings → Realtime privacy and generate a new one.',
+    });
+  }
+  // #2: check-ins the extension could not verify as stuck on TwoTimTwo.
+  // Names are allowed here: /health is loopback/operator-facing and this
+  // list exists precisely so a human re-checks these kids on the site.
+  const unverified = feeds.getUnverifiedCheckins(Date.now());
+  if (unverified.length) {
+    const names = unverified.map(e => e.name).join(', ');
+    warnings.push({
+      type: 'unverifiedCheckins',
+      message: `${unverified.length} check-in${unverified.length > 1 ? 's' : ''} may not have stuck on TwoTimTwo: ${names}. Labels printed, but the site never confirmed - re-check these kids on the check-in page.`,
     });
   }
   let csvUpdatedAt = null;

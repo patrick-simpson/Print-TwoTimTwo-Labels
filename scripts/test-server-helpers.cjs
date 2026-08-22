@@ -397,6 +397,52 @@ console.log('feeds.submitCheckinReport — undo-detection intake: validation + t
   feeds._resetForTests();
 }
 
+console.log('feeds.submitUnverified — batch self-verify report (#2): validation + replace semantics + staleness');
+{
+  feeds._resetForTests();
+  let t = 1_700_000_000_000;
+
+  const notObj = feeds.submitUnverified('nope', t);
+  check('a non-object body is rejected', notObj.valid === false && notObj.status === 400);
+
+  const noEntries = feeds.submitUnverified({}, t);
+  check('a body missing the entries array is rejected', noEntries.valid === false && noEntries.status === 400);
+
+  const tooBig = feeds.submitUnverified({ entries: new Array(feeds.UNVERIFIED_MAX + 1).fill({ name: 'X' }) }, t);
+  check('an oversized entries array is rejected', tooBig.valid === false && tooBig.status === 400);
+
+  const r1 = feeds.submitUnverified({
+    entries: [
+      { name: '  Amy Zephyr ', clubberId: 201, club: 'Sparks', at: '2026-08-22T18:00:00Z' },
+      { name: 'No Id Kid', club: 'T&T' },
+      { name: '   ' }, // unreadable — dropped
+    ],
+  }, t);
+  check('a well-formed list is accepted and sanitized (trim, clubberId stringified, blank rows dropped)',
+    r1.valid === true &&
+    r1.payload.entries.length === 2 &&
+    r1.payload.entries[0].name === 'Amy Zephyr' &&
+    r1.payload.entries[0].clubberId === '201' &&
+    r1.payload.entries[1].clubberId === null,
+    JSON.stringify(r1));
+
+  check('getUnverifiedCheckins returns the stored list while fresh',
+    feeds.getUnverifiedCheckins(t + 60_000).length === 2);
+
+  // REPLACE semantics — the whole point: an emptied list clears the warning.
+  const r2 = feeds.submitUnverified({ entries: [] }, t + 120_000);
+  check('an empty list replaces (clears) the previous one — no merge, no throttle',
+    r2.valid === true && feeds.getUnverifiedCheckins(t + 120_001).length === 0);
+
+  // Staleness: a list left over from last week must not warn forever.
+  feeds.submitUnverified({ entries: [{ name: 'Stale Kid' }] }, t);
+  check('a fresh list is visible', feeds.getUnverifiedCheckins(t + 1000).length === 1);
+  check('a list older than 3h is treated as empty (extension gone — cannot clear itself)',
+    feeds.getUnverifiedCheckins(t + 3 * 60 * 60 * 1000 + 1).length === 0);
+
+  feeds._resetForTests();
+}
+
 console.log('reportEntryIdentityKey — matches historyIdentityKey\'s own key format');
 {
   check('an id-bearing entry keys on the id',

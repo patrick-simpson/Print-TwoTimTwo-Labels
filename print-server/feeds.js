@@ -216,6 +216,56 @@ function validateCheckinReportBody(body) {
   return { ok: true, payload: { entries } };
 }
 
+// ── POST /feed/unverified-checkins (#2: batch self-verify report) ─────────
+// The extension's list of kids whose driven site check-in could not be
+// verified as stuck (label printed, TwoTimTwo never confirmed). Same
+// loopback-only, never-published rule as the checkin report above — names
+// are allowed in because they never leave this process except via /health's
+// operator warning. REPLACE semantics: every post is the full current list,
+// so an emptied list clears the dashboard warning immediately.
+const UNVERIFIED_MAX = 30;
+
+function validateUnverifiedBody(body) {
+  if (!isPlainObject(body)) return { ok: false, reason: 'body must be an object' };
+  if (!Array.isArray(body.entries)) return { ok: false, reason: 'entries must be an array' };
+  if (body.entries.length > UNVERIFIED_MAX) {
+    return { ok: false, reason: `entries must not exceed ${UNVERIFIED_MAX}` };
+  }
+  const entries = [];
+  for (const raw of body.entries) {
+    if (!isPlainObject(raw)) continue;
+    const name = String(raw.name || '').trim().slice(0, 80);
+    if (!name) continue;
+    entries.push({
+      name,
+      clubberId: raw.clubberId != null && String(raw.clubberId).trim()
+        ? String(raw.clubberId).trim().slice(0, 40) : null,
+      club: String(raw.club || '').trim().slice(0, 60),
+      at: typeof raw.at === 'string' ? raw.at.slice(0, 40) : null,
+    });
+  }
+  return { ok: true, payload: { entries } };
+}
+
+let unverifiedState = { entries: [], updatedAt: null };
+
+function submitUnverified(body, now = Date.now()) {
+  const result = validateUnverifiedBody(body);
+  if (!result.ok) return { valid: false, status: 400, reason: result.reason };
+  unverifiedState = { entries: result.payload.entries, updatedAt: now };
+  return { valid: true, payload: result.payload };
+}
+
+// Read by /health's warning builder. Entries go stale after 3h so a list
+// left over from last week's club night can't paint a warning forever if
+// the extension never runs again to clear it.
+const UNVERIFIED_STALE_MS = 3 * 60 * 60 * 1000;
+function getUnverifiedCheckins(now = Date.now()) {
+  if (!unverifiedState.entries.length) return [];
+  if (now - (unverifiedState.updatedAt || 0) > UNVERIFIED_STALE_MS) return [];
+  return unverifiedState.entries;
+}
+
 let lastCheckinReportAt = 0;
 
 // Same shape as submitFeed()'s return ({valid, status, reason} | {valid:true,
@@ -298,6 +348,7 @@ function getFeedsHealth() {
 function _resetForTests() {
   FEED_NAMES.forEach(f => { lastPublishAt[f] = 0; feedState[f] = freshState(); });
   lastCheckinReportAt = 0;
+  unverifiedState = { entries: [], updatedAt: null };
 }
 
 module.exports = {
@@ -320,4 +371,9 @@ module.exports = {
   CHECKIN_REPORT_THROTTLE_MS,
   validateCheckinReportBody,
   submitCheckinReport,
+  // POST /feed/unverified-checkins (#2) — also standalone, never published.
+  UNVERIFIED_MAX,
+  validateUnverifiedBody,
+  submitUnverified,
+  getUnverifiedCheckins,
 };

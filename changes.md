@@ -1,4 +1,13 @@
-﻿## [5.22.0] - 2026-08-22
+﻿## [5.23.0] - 2026-08-22
+Batch check-in self-verify report (#2), extending the v3.0.4 guarantee. v3.0.4 made every driven check-in verify itself (the kid's row must vanish) and retry — but a check-in that STILL didn't stick died in console.log, and the operator found out at pickup. Now every terminal "could not verify" is tracked, retried, and reported:
+
+- **Tracked**: the three terminal failure points (modal never opened, verify retries exhausted, row missing from the DOM at batch time) land the kid on a "didn't stick" list keyed by identity.
+- **Retried twice** (operator's pick): the inline retry budget goes from 1 to 2, and the list itself is re-driven against the authoritative `/clubber/checkin_report` — 30 seconds after a failure and again on every reconcile poll ("both", operator's pick) — with up to 2 self-verify retries per kid (direct POST first, click-and-poll fallback). A kid who shows up in the report is cleared automatically: a late-sticking check-in is a success, not a bug.
+- **Widget + dashboard** (operator's pick): a new amber row in the widget lists the count with names on hover and a Verify button; the extension also posts the full list (replace semantics) to the new loopback `POST /feed/unverified-checkins`, which surfaces it as a `/health` `{type, message}` warning on the dashboard — naming each kid so a human can re-check them on the site. An emptied list clears the warning immediately, and a list older than 3h goes stale rather than shouting forever.
+
+Names stay loopback-only (same rule as the checkin-report feed): this list is never published anywhere. Printing is untouched — the label already printed; this is purely about the SITE check-in sticking.
+
+## [5.22.0] - 2026-08-22
 Auto-focus for the widget's roster search (#1): the search box is ready to type into on page load and again about half a second after every check-in resolves (printed, queued, or dialog fallback), cleared first so a leftover query never prefixes the next kid's name. Back-to-back arrivals become type -> Enter -> type -> Enter with no mouse.
 
 The guard that makes it safe: focus is NEVER stolen. If the cursor is in any other field — the guest register form, TwoTimTwo's own inputs, a modal — or the operator is mid-search in the box itself, nothing moves. Restoring the panel from the pill refocuses too; a minimized widget never grabs focus at all. The whole path is wrapped so a focus failure can never break printing.
