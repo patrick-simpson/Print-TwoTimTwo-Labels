@@ -228,11 +228,15 @@ const UNVERIFIED_MAX = 30;
 function validateUnverifiedBody(body) {
   if (!isPlainObject(body)) return { ok: false, reason: 'body must be an object' };
   if (!Array.isArray(body.entries)) return { ok: false, reason: 'entries must be an array' };
-  if (body.entries.length > UNVERIFIED_MAX) {
-    return { ok: false, reason: `entries must not exceed ${UNVERIFIED_MAX}` };
-  }
+  // Truncate, never reject: a mass failure (site contract drift mid-night) is
+  // exactly when this list matters most, and a hard 400 on entry #31 would
+  // freeze the dashboard warning at a stale list while the widget shows the
+  // truth. Keep the newest (the extension appends in insertion order).
+  const capped = body.entries.length > UNVERIFIED_MAX
+    ? body.entries.slice(-UNVERIFIED_MAX)
+    : body.entries;
   const entries = [];
-  for (const raw of body.entries) {
+  for (const raw of capped) {
     if (!isPlainObject(raw)) continue;
     const name = String(raw.name || '').trim().slice(0, 80);
     if (!name) continue;
