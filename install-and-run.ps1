@@ -1,5 +1,5 @@
 ﻿# Club Label Print Server -- All-in-One Installer
-# Version    : 5.29.3
+# Version    : 5.29.4
 # Updated    : 2026-04-17
 #
 # DEPRECATED: this script install is superseded by the Windows app installer
@@ -32,7 +32,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "5.29.3"
+$ScriptVersion = "5.29.4"
 
 # The repository this install pulls its code from. A FORK must change this (or
 # pass -RepoSlug), otherwise the installer downloads upstream's code instead of

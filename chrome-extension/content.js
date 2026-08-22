@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.29.3';
+  const EXTENSION_VERSION = '5.29.4';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1716,12 +1716,14 @@
       runContractCanary(true).then(function(r) {
         contractBtn.disabled = false;
         if (!r) { contractStatus.textContent = 'Site contract: check failed to run'; return; }
+        var soft = r.results.filter(function(x) { return !x.passed && x.soft; });
         if (r.ok) {
-          contractStatus.textContent = 'Site contract: \u2713 all ' + r.results.length + ' checks pass';
+          contractStatus.textContent = 'Site contract: \u2713 ' +
+            (soft.length ? 'passes (' + soft.length + ' off-day note' + (soft.length > 1 ? 's' : '') + ')' : 'all ' + r.results.length + ' checks pass');
           contractStatus.style.color = '#94a3b8';
-          contractStatus.title = '';
+          contractStatus.title = soft.map(function(x) { return x.check + ': ' + x.detail; }).join('\n');
         } else {
-          var bad = r.results.filter(function(x) { return !x.passed; }).map(function(x) { return x.check; });
+          var bad = r.results.filter(function(x) { return !x.passed && !x.soft; }).map(function(x) { return x.check; });
           contractStatus.textContent = '\u26A0 Site contract: ' + bad.length + ' check(s) failing';
           contractStatus.style.color = '#f59e0b';
           contractStatus.title = bad.join(', ');
@@ -3629,8 +3631,12 @@
     if (contractCanaryRunning) return Promise.resolve(null);
     contractCanaryRunning = true;
     var results = [];
-    var push = function(check, passed, detail) {
-      results.push({ check: check, passed: !!passed, detail: detail || '' });
+    // soft: a check that can legitimately fail outside a live meeting (no
+    // report tables on a Saturday, CSRF input not rendered off-day). Soft
+    // misses are shown as info but never flip the sweep to FAILING — the
+    // first real-world run cried DRIFT on a quiet weekend for exactly this.
+    var push = function(check, passed, detail, soft) {
+      results.push({ check: check, passed: !!passed, detail: detail || '', soft: !!soft && !passed });
     };
 
     // A: roster DOM contract (superset of the passive self-test).
@@ -3650,14 +3656,27 @@
     // B: check-in form contract (read statically — never clicks anything).
     var calInput = document.getElementById('calendar_id');
     push('#calendar_id has a meeting id', !!(calInput && calInput.value), 'direct check-in needs it');
-    push('YII_CSRF_TOKEN findable', !!findCsrfToken(), 'direct check-in needs it');
+    push('YII_CSRF_TOKEN findable', !!findCsrfToken(),
+      'often absent outside a live meeting; direct check-in falls back to the click path', true);
     push('input.event[name="events[]"] rows', document.querySelectorAll('input.event[name="events[]"]').length > 0,
       'check-in items (Attendance etc.)');
 
     // C: the two HTTP contracts, both read-only.
-    var reportCheck = fetchCheckinReport().then(function(entries) {
-      push('/clubber/checkin_report parses', entries !== null,
-        entries === null ? 'no tables / login bounce' : entries.length + ' checked-in kid(s) parsed');
+    var reportCheck = fetch('/clubber/checkin_report?date=' + todayIsoDate(), {
+      credentials: 'same-origin', signal: AbortSignal.timeout(15000)
+    }).then(function(r) { return r.ok ? r.text() : null; }).then(function(html) {
+      if (!html) {
+        push('/clubber/checkin_report parses', false, 'fetch failed (HTTP error)');
+      } else if (html.indexOf('Login Required') !== -1) {
+        push('/clubber/checkin_report parses', false, 'login bounce — session expired?');
+      } else {
+        var tables = new DOMParser().parseFromString(html, 'text/html').querySelectorAll('table').length;
+        push('/clubber/checkin_report parses', tables > 0,
+          tables > 0 ? tables + ' report table(s) found'
+                     : 'page loads but has no meeting tables — normal on a non-club day', true);
+      }
+    }).catch(function(e) {
+      push('/clubber/checkin_report parses', false, e.message);
     });
     var csvCheck = fetch('/clubber/csv', { credentials: 'same-origin', signal: AbortSignal.timeout(15000) })
       .then(function(r) { return r.ok ? r.text() : null; })
@@ -3672,7 +3691,7 @@
 
     return Promise.all([reportCheck, csvCheck]).then(function() {
       contractCanaryRunning = false;
-      var ok = results.every(function(r) { return r.passed; });
+      var ok = results.every(function(r) { return r.passed || r.soft; });
       console.log('[Awana] Contract canary (' + (manual ? 'manual' : 'auto') + '): ' +
         (ok ? 'all checks passed' : 'DRIFT DETECTED') + ' — ' + results.length + ' check(s)');
       fetch(PRINT_SERVER + '/contract-canary', {

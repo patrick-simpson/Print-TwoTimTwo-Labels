@@ -1,4 +1,13 @@
-﻿## [5.29.3] - 2026-08-22
+﻿## [5.29.4] - 2026-08-22
+Contract-canary refinement (#3), from its first real-world run: on a quiet Saturday the sweep cried "2 check(s) failing" — `YII_CSRF_TOKEN findable` and `/clubber/checkin_report parses` — and painted a DRIFT warning on the dashboard, when both are simply what a NON-CLUB DAY looks like (no meeting tables in today's report; the CSRF input not rendered outside a live meeting context). A canary that cries wolf on weekends trains the operator to ignore the one alarm that matters.
+
+Checks are now classified hard vs SOFT:
+- **Soft** (informational, never flips the sweep to FAILING): the CSRF token check (its absence only degrades direct check-in to the proven click path) and a report page that loads and parses but has zero meeting tables ("normal on a non-club day").
+- **Hard** (real drift, alarms as before): missing roster selectors, `#lastCheckin` gone, a report fetch failure or login bounce, a changed CSV export header.
+
+The widget shows "✓ passes (N off-day notes)" with the notes on hover; the dashboard's sweep row appends the note count; the `/health` drift warning and tray alert name only hard failures. New tests pin the rule both ways (soft-only miss → no warning; mixed failure → warning names only the hard check).
+
+## [5.29.3] - 2026-08-22
 Release-pipeline fix: the v5.29.2 Windows installer crashed on launch (0xC0000005 in the NSIS stub, reproduced on two clean runners), so its smoke test failed and nothing was published — no broken build reached anyone. The only packaging input that changed since the last green build (same electron 28.3.3, same electron-builder 24.13.3) was v5.28.0's `extraResources` entry shipping `changes.md` in the FILE form (`from: "../changes.md"`), a shape nothing else in this config uses. It now uses the directory + `filter` FileSet form every other entry has always used (`from: "../", filter: ["changes.md"]`), which lands the file at the same `resources/changes.md` path the what's-new panel reads. No application behavior changes.
 
 ## [5.29.2] - 2026-08-22

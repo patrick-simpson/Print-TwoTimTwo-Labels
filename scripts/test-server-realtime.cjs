@@ -491,6 +491,36 @@ async function main() {
       h.body.contractCanary.ok === true
         && !warningTexts(h.body.warnings).some((w) => /no longer matches/i.test(w)),
       JSON.stringify(h.body.warnings));
+
+    // Soft (off-day) misses: an ok sweep may carry them as info — never a
+    // warning — and a failing sweep's warning must name only the HARD checks.
+    await post('/contract-canary', {
+      ok: true,
+      results: [
+        { check: '.clubber roster rows', passed: true },
+        { check: '/clubber/checkin_report parses', passed: false, soft: true, detail: 'no meeting tables — non-club day' },
+      ],
+    });
+    h = await j('/health');
+    check('an ok sweep with soft off-day notes raises NO drift warning',
+      h.body.contractCanary.ok === true
+        && h.body.contractCanary.results.some((r) => r.soft === true)
+        && !warningTexts(h.body.warnings).some((w) => /no longer matches/i.test(w)),
+      JSON.stringify(h.body.warnings));
+
+    await post('/contract-canary', {
+      ok: false,
+      results: [
+        { check: '.clubber roster rows', passed: false },
+        { check: 'YII_CSRF_TOKEN findable', passed: false, soft: true },
+      ],
+    });
+    h = await j('/health');
+    check('a failing sweep\'s warning names only the hard failures',
+      warningTexts(h.body.warnings).some((w) => /roster rows/.test(w) && !/CSRF/.test(w)),
+      JSON.stringify(h.body.warnings));
+
+    await post('/contract-canary', { ok: true, results: [{ check: 'all', passed: true }] });
   }
 
   // ── 10. What's new (#6): the route serves the real top changes.md entry ──
