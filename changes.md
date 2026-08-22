@@ -1,4 +1,11 @@
-﻿## [5.24.0] - 2026-08-22
+﻿## [5.25.0] - 2026-08-22
+Contract-drift canary (#3): a full, read-only sweep of every TwoTimTwo selector and endpoint that docs/TWOTIMTWO.md documents as load-bearing — roster DOM (`.clubber`, `.name`, club icon, `recid`/`club_id` attrs, `#lastCheckin`), the check-in form contract (`#calendar_id`, CSRF token, `events[]` rows), the authoritative `/clubber/checkin_report` parse, and the `/clubber/csv` roster export header. The existing 10-minute self-test only probes the three passive selectors; this catches the rest of the surface a TwoTimTwo redesign would silently break.
+
+Runs automatically once per calendar day, ~45s after the check-in page settles (so drift is caught the first time the page opens that day — BEFORE club night, not mid-event), plus on demand from a new "Check site" button in the widget ("auto plus button", operator's pick). Results flow to a new loopback `POST /contract-canary`: the dashboard's Night Status card gains a "Site contract sweep" row, `/health` warns while the latest sweep is failing, a fresh failure publishes the existing `ops` `selector-fail` event (no contract change), and the Electron shell now exposes a `setOpsAlertHandler` hook that surfaces drift as a system notification ("dashboard + tray", operator's pick) so the operator hears about it even with no dashboard tab open.
+
+Deliberately read-only: the sweep never clicks, never posts a check-in, never prints.
+
+## [5.24.0] - 2026-08-22
 Rehearsal mode (#19): one dashboard button runs a fake club night across BOTH apps. While armed, EVERY print is treated as a demo — real label, diagonal TEST band, and none of the persistent side effects (no history row, no attendance ledger, no publish, no tally bump) — and every tally broadcast carries the contract's optional `rehearsal: true` flag (staged in v5.20.0), so the check-in display wears an amber "rehearsal — practice run" watermark that appears and disappears within seconds of the toggle (the server publishes a tally immediately on arm/disarm).
 
 Safety rails, because an armed rehearsal is a loaded gun pointed at club night:

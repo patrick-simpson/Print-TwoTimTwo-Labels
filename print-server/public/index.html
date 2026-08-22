@@ -1176,6 +1176,16 @@ function renderNightStatus(h) {
     rows += statusRow('❌', 'Check-in page selectors', 'FAILING: ' + (failedChecks.join(', ') || 'unknown') + ' at ' + formatTime(st.at));
   }
 
+  var cc = h.contractCanary;
+  if (!cc) {
+    rows += statusRow('🟡', 'Site contract sweep', 'no run yet — runs daily from the check-in page, or use the widget\'s "Check site"');
+  } else if (cc.ok) {
+    rows += statusRow('✅', 'Site contract sweep', (cc.results || []).length + ' checks passed ' + formatTime(cc.at) + (cc.manual ? ' (manual)' : ''));
+  } else {
+    var ccFailed = (cc.results || []).filter(function(r) { return !r.passed; }).map(function(r) { return r.check; });
+    rows += statusRow('❌', 'Site contract sweep', 'DRIFT: ' + (ccFailed.join(', ') || 'unknown') + ' at ' + formatTime(cc.at));
+  }
+
   var c = h.lastCanary;
   if (!c) {
     rows += statusRow('🟡', 'Last canary test', 'never run — use "Test Night Systems"');

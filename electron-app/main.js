@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -595,6 +595,16 @@ function startServer(config) {
     if (serverModule.setPrinterName) serverModule.setPrinterName(config.printerName || '');
     if (serverModule.applySavedConfig) serverModule.applySavedConfig(loadConfig() || {});
     serverModule.setUpdateHandler(() => installUpdateNow());
+    // Operator alerts (#3 contract drift, etc.): the server decides WHEN,
+    // this shell decides HOW — a system notification, so it lands even when
+    // no dashboard tab is open. Guarded: notifications are best-effort.
+    if (serverModule.setOpsAlertHandler) {
+      serverModule.setOpsAlertHandler(({ title, body }) => {
+        try {
+          if (Notification.isSupported()) new Notification({ title, body }).show();
+        } catch (e) { console.warn('[alert] Notification failed:', e.message); }
+      });
+    }
     if (updateState.available) serverModule.setLatestVersion(updateState.available);
     if (serverModule.setExtensionInfo) serverModule.setExtensionInfo(extensionState);
     serverInstance = serverModule.startListening();

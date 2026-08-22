@@ -182,6 +182,15 @@ function recordPrintFailure(name, club, error) {
 
 // ── Selector self-test + canary state ────────────────────────────────────────
 let lastSelfTest = null;   // { ok, results, extensionVersion, at } — posted by the extension
+let lastContractCanary = null; // { ok, results, extensionVersion, manual, at } — full daily sweep (#3)
+// The Electron shell registers a handler here to surface operator alerts as
+// tray/system notifications (contract drift, and anything else that must not
+// wait for someone to open the dashboard). No-op when running headless.
+let opsAlertHandler = null;
+function setOpsAlertHandler(fn) { opsAlertHandler = typeof fn === 'function' ? fn : null; }
+function fireOpsAlert(title, body) {
+  try { if (opsAlertHandler) opsAlertHandler({ title, body }); } catch (e) { /* alerts never break serving */ }
+}
 let lastCanary   = null;   // { at, stages } — result of the last POST /canary
 
 // ── Label geometry (1 pt = 1/72 inch) ────────────────────────────────────────
@@ -4152,6 +4161,40 @@ app.post('/selftest', (req, res) => {
   res.json({ ok: true });
 });
 
+// Contract-drift canary (#3): the extension's full once-a-day sweep of every
+// TwoTimTwo selector and endpoint docs/TWOTIMTWO.md documents as load-bearing.
+// Same shape as /selftest but a superset in scope; a fresh failure publishes
+// the existing ops selector-fail (no contract change) and raises a tray alert
+// through the Electron shell, so the operator hears about drift BEFORE club
+// night rather than when a modal click silently stops working.
+app.post('/contract-canary', (req, res) => {
+  const body = req.body || {};
+  const wasOk = !lastContractCanary || lastContractCanary.ok !== false;
+  lastContractCanary = {
+    ok: body.ok !== false,
+    results: Array.isArray(body.results)
+      ? body.results.slice(0, 40).map(r => ({
+          check: String(r && r.check || '').slice(0, 80),
+          passed: !!(r && r.passed),
+          detail: String(r && r.detail || '').slice(0, 120),
+        }))
+      : [],
+    extensionVersion: String(body.extensionVersion || '').slice(0, 20),
+    manual: body.manual === true,
+    at: new Date().toISOString(),
+  };
+  if (!lastContractCanary.ok && wasOk) {
+    const failing = lastContractCanary.results.filter(r => !r.passed).map(r => r.check);
+    console.warn('[contract-canary] TwoTimTwo contract drift detected: ' + failing.join(', '));
+    events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('selector-fail'));
+    fireOpsAlert('Club Label Printer — site check failed',
+      'The TwoTimTwo page no longer matches what the printer expects (' +
+      (failing[0] || 'unknown check') + (failing.length > 1 ? ' +' + (failing.length - 1) + ' more' : '') +
+      '). Open the dashboard before club night.');
+  }
+  res.json({ ok: true });
+});
+
 // ── Canary — end-to-end night-systems test ────────────────────────────────────
 // Stage 1 prints a real label with a TEST overlay (unique name defeats the
 // duplicate window; excluded from history, stats, tally, and the checkin
@@ -4358,6 +4401,16 @@ app.get('/health', async (req, res) => {
   // #2: check-ins the extension could not verify as stuck on TwoTimTwo.
   // Names are allowed here: /health is loopback/operator-facing and this
   // list exists precisely so a human re-checks these kids on the site.
+  // Contract drift (#3): the daily sweep's latest verdict. A failing sweep is
+  // exactly the "warn before club night" moment, so it belongs in the same
+  // yellow box the operator already reads.
+  if (lastContractCanary && lastContractCanary.ok === false) {
+    const failing = lastContractCanary.results.filter(r => !r.passed).map(r => r.check);
+    warnings.push({
+      type: 'contractDrift',
+      message: `The TwoTimTwo site no longer matches what this printer expects (${failing.join(', ') || 'unknown check'}). Automatic printing may be broken — run the widget's "Check site" after any fix.`,
+    });
+  }
   // Rehearsal mode is never an error, but it must never be INVISIBLE either:
   // an armed rehearsal turns every print into a TEST label, so the dashboard
   // has to shout it until it's turned off (or the 2h auto-disarm fires).
@@ -4409,6 +4462,7 @@ app.get('/health', async (req, res) => {
       ? extensionInfo
       : { version: extensionInfo.version, action: extensionInfo.action }),
     selectorSelfTest: lastSelfTest,
+    contractCanary: lastContractCanary,
     lastCanary,
     printFailures: printFailures.length,
     csv: { count: clubbers.length, updatedAt: csvUpdatedAt },
@@ -5034,7 +5088,7 @@ function startListening(attempt = 1) {
 }
 
 module.exports = {
-  app, startListening, setUpdateHandler, setLatestVersion, setExtensionInfo,
+  app, startListening, setUpdateHandler, setLatestVersion, setExtensionInfo, setOpsAlertHandler,
   // For the Electron shell: this module is require-cached across settings
   // saves, so the shell pushes the freshly merged config.json and printer
   // name into the LIVE module instead of relying on load-time state.

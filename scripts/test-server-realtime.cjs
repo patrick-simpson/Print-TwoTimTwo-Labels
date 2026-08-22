@@ -449,6 +449,36 @@ async function main() {
       JSON.stringify(h.body.warnings));
   }
 
+  // ── 9. Contract-drift canary (#3): route → /health card + warning ────────
+  console.log('\nrealtime: contract canary feed → /health');
+  {
+    const fail = await post('/contract-canary', {
+      ok: false,
+      extensionVersion: '9.9.9',
+      results: [
+        { check: '.clubber roster rows', passed: true, detail: '12 row(s)' },
+        { check: '/clubber/csv roster export', passed: false, detail: 'header changed' },
+      ],
+    });
+    check('a failing sweep is accepted', fail.status === 200, JSON.stringify(fail.body));
+
+    let h = await j('/health');
+    check('/health exposes the sweep result for the dashboard card',
+      h.body.contractCanary && h.body.contractCanary.ok === false
+        && h.body.contractCanary.results.length === 2,
+      JSON.stringify(h.body.contractCanary));
+    check('/health warns about contract drift, naming the failing check',
+      warningTexts(h.body.warnings).some((w) => /no longer matches/i.test(w) && /csv roster export/.test(w)),
+      JSON.stringify(h.body.warnings));
+
+    await post('/contract-canary', { ok: true, results: [{ check: 'all', passed: true }] });
+    h = await j('/health');
+    check('a passing sweep clears the drift warning',
+      h.body.contractCanary.ok === true
+        && !warningTexts(h.body.warnings).some((w) => /no longer matches/i.test(w)),
+      JSON.stringify(h.body.warnings));
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });
