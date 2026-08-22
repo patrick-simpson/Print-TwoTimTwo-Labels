@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.29.4';
+  const EXTENSION_VERSION = '5.32.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1637,7 +1637,49 @@
       color: '#475569', lineHeight: '16px'
     });
     tonightRefresh.addEventListener('click', loadTonight);
-    tonightHeader.append(tonightLabel, tonightCount, tonightRefresh);
+    // Reset tonight to zero (operator request): marks every check-in row
+    // undone on the server (tally and every display drop within seconds),
+    // pulls tonight out of the season ledger, clears the recap buffer, then
+    // clears this station's print dedup and RE-BASELINES reconcile from the
+    // live report — so kids still checked in on TwoTimTwo are re-seeded
+    // without a paper explosion, and fresh check-ins print again.
+    var tonightReset = document.createElement('button');
+    tonightReset.textContent = 'Reset';
+    tonightReset.title = 'Set tonight back to zero — marks every check-in undone (labels, tally, displays)';
+    Object.assign(tonightReset.style, {
+      fontSize: '10px', padding: '0 6px', background: '#fef2f2',
+      border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer',
+      color: '#991b1b', fontWeight: '600', lineHeight: '16px'
+    });
+    tonightReset.addEventListener('click', function() {
+      if (!confirm('Reset tonight to ZERO?\n\nEvery check-in tonight is marked undone: the count here, the tally, and every display drop to 0, and tonight comes out of streaks/milestones. Kids who check in again will print again.')) return;
+      tonightReset.disabled = true;
+      fetch(PRINT_SERVER + '/reset-tonight', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+        signal: AbortSignal.timeout(8000)
+      }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+        .then(function(res) {
+          tonightReset.disabled = false;
+          if (!res.ok) { alert(res.d && res.d.error ? res.d.error : 'Reset failed.'); return; }
+          printedNames.clear();
+          try {
+            sessionStorage.removeItem(REMOTE_PRINTED_KEY);
+            sessionStorage.removeItem(REMOTE_PRINTED_TS);
+            sessionStorage.removeItem(REMOTE_RECONCILE_BASELINE_KEY);
+          } catch (e) { /* ignore */ }
+          reconcileBaselineDone = false;
+          runReconcile();   // re-seed dedup from the live report, print nothing
+          loadTonight();
+          console.log('[Awana] Tonight reset: ' + (res.d && res.d.undone) + ' check-in(s) undone');
+        })
+        .catch(function() {
+          tonightReset.disabled = false;
+          alert('Could not reach the print server to reset.');
+        });
+    });
+    tonightHeader.append(tonightLabel, tonightCount, tonightReset, tonightRefresh);
 
     var tonightList = document.createElement('div');
     tonightList.id = 'awana-tonight-list';
@@ -2579,7 +2621,14 @@
     if (!list) return;
     fetch(PRINT_SERVER + '/history/today', { signal: AbortSignal.timeout(3000) })
       .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function(entries) {
+      .then(function(allEntries) {
+        // Count only LIVE check-ins: history is a log, so an undone kid's row
+        // stays in it forever — counting raw rows was why the number never
+        // went back down after an undo. Failed prints, award slips and
+        // connect cards never counted as check-ins either.
+        var entries = (allEntries || []).filter(function(e) {
+          return e && e.success !== false && !e.undone && !e.isAward && !e.isConnectCard;
+        });
         if (count) count.textContent = entries.length ? entries.length + ' printed' : '';
         while (list.firstChild) list.removeChild(list.firstChild);
         if (!entries.length) {
