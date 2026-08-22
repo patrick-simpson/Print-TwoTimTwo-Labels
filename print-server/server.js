@@ -4606,7 +4606,7 @@ app.post('/config', (req, res) => {
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
-    musicalPrinter,
+    musicalPrinter, updateBeacon,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -4703,6 +4703,7 @@ app.post('/config', (req, res) => {
     // Musical printer (#11/#12): OFF by default - raw TSPL bytes at an unknown
     // printer model are a party trick, not a guarantee.
     if (musicalPrinter !== undefined) next.musicalPrinter = !!musicalPrinter;
+    if (updateBeacon !== undefined) next.updateBeacon = !!updateBeacon;
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
@@ -5032,6 +5033,37 @@ const LISTEN_MAX_ATTEMPTS = 5;
 // after a few visits to Settings the event bus fired tally/recap/birthday
 // publishes N times a tick — and re-ran the prewarm blank print each time.
 let startupTasksDone = false;
+// ── Update health beacon (#5, opt-in) ────────────────────────────────────────
+// After an auto-update, the operator has no confirmation the new build came
+// back cleanly until they walk to the laptop. When config.updateBeacon is on,
+// the first boot of a NEW version publishes ops {type:'update-ok', version} —
+// version + ok flag only, nothing else rides it. The last-booted version is
+// recorded on EVERY boot regardless of the setting, so turning the beacon on
+// later never fires a stale beacon for an update that happened weeks ago.
+const LAST_BOOT_VERSION_FILE = path.join(DATA_DIR, 'last-boot-version.json');
+
+function shouldSendUpdateBeacon(prevVersion, currentVersion, enabled) {
+  if (enabled !== true) return false;
+  if (!prevVersion || typeof prevVersion !== 'string') return false; // first-ever boot is not an update
+  return prevVersion !== currentVersion;
+}
+
+function recordBootVersionAndMaybeBeacon() {
+  let prev = null;
+  try {
+    prev = JSON.parse(fs.readFileSync(LAST_BOOT_VERSION_FILE, 'utf8')).version || null;
+  } catch { /* first boot, or unreadable — treated as no previous version */ }
+  try {
+    fs.writeFileSync(LAST_BOOT_VERSION_FILE, JSON.stringify({ version: SERVER_VERSION, at: new Date().toISOString() }));
+  } catch (e) { console.warn('[update-beacon] Could not record boot version:', e.message); }
+  if (shouldSendUpdateBeacon(prev, SERVER_VERSION, config.updateBeacon === true)) {
+    console.log(`[update-beacon] Updated ${prev} → ${SERVER_VERSION} and came back cleanly — publishing ops update-ok`);
+    try {
+      events.publish(pusher, EVENT_CHANNEL, 'ops', events.buildOps('update-ok', null, { version: SERVER_VERSION }));
+    } catch (e) { console.warn('[update-beacon] publish skipped:', e.message); }
+  }
+}
+
 function startListening(attempt = 1) {
   if (attempt === 1 && !startupTasksDone) {
     startupTasksDone = true;
@@ -5048,6 +5080,9 @@ function startListening(attempt = 1) {
     // so the CSV is loaded and Pusher has settled.
     setTimeout(() => { try { publishBirthdays(); } catch (e) { /* ignore */ } }, 5000);
     prewarmPrinterIfConfigured();
+    // Update health beacon (#5): delayed so config.json is loaded and the
+    // Pusher client has settled — same reasoning as the birthday publish.
+    setTimeout(() => { try { recordBootVersionAndMaybeBeacon(); } catch (e) { /* never blocks boot */ } }, 4000);
   }
   // Bind loopback-only unless the operator has explicitly enabled LAN access
   // AND set a PIN. Previously this was a bare app.listen(PORT), which binds
@@ -5100,6 +5135,7 @@ module.exports = {
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
+  shouldSendUpdateBeacon,
   // Attendance ledger — exported so the id-migration and the auto-connect-card
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.

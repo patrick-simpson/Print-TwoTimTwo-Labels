@@ -177,13 +177,19 @@ console.log('buildBirthdays');
 console.log('buildOps');
 {
   const spec = vectors.events.ops;
-  const o = events.buildOps('print-failure', 'Sparks');
-  check('exact field set (with club)', keysOf(o).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','));
+  const o = events.buildOps('print-failure', 'Sparks', { version: '5.27.0' });
+  check('exact field set (club + version)', keysOf(o).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','));
   const o2 = events.buildOps('selector-fail');
-  check('club omitted when absent', keysOf(o2).join(',') === [...spec.fields].sort().join(','));
+  check('optional fields omitted when absent', keysOf(o2).join(',') === [...spec.fields].sort().join(','));
   check('unknown type returns null', events.buildOps('reboot-everything') === null);
   check('type enum matches vectors', JSON.stringify([...events.OPS_TYPES].sort()) === JSON.stringify([...spec.types].sort()));
   check('ops never carries a name field', !('name' in o) && !('firstName' in o));
+  // Update health beacon (#5): version + ok flag ONLY.
+  const beacon = events.buildOps('update-ok', null, { version: '5.27.0' });
+  check('update-ok carries the bare semver', beacon && beacon.version === '5.27.0' && beacon.type === 'update-ok');
+  const junk = events.buildOps('update-ok', null, { version: '<script>alert(1)</script>' });
+  check('non-semver version dropped, never published', junk && !('version' in junk) && !JSON.stringify(junk).includes('script'));
+  check('version with a v prefix dropped (bare semver only)', !('version' in events.buildOps('update-ok', null, { version: 'v5.27.0' })));
 }
 
 console.log('buildCanary');

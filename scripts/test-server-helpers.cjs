@@ -443,6 +443,16 @@ console.log('feeds.submitUnverified — batch self-verify report (#2): validatio
   feeds._resetForTests();
 }
 
+console.log('shouldSendUpdateBeacon (#5) — fires once per version change, opt-in only');
+{
+  const { shouldSendUpdateBeacon: f } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  check('fires when enabled and the version changed', f('5.26.0', '5.27.0', true) === true);
+  check('silent when the operator has not opted in', f('5.26.0', '5.27.0', false) === false);
+  check('silent when nothing changed (every later boot of the same build)', f('5.27.0', '5.27.0', true) === false);
+  check('silent on the first-ever boot — an install is not an update', f(null, '5.27.0', true) === false);
+  check('silent on junk previous-version state', f(undefined, '5.27.0', true) === false && f(42, '5.27.0', true) === false);
+}
+
 console.log('reportEntryIdentityKey — matches historyIdentityKey\'s own key format');
 {
   check('an id-bearing entry keys on the id',
