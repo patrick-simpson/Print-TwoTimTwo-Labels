@@ -173,6 +173,10 @@ const CASES = [
   // middle-initial variant riding the first-name line.
   { name: 'twin-hint',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', nameHint: 'b. Mar' } },
   { name: 'twin-initial',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', middleInitial: 'G' } },
+  // Collectibles (#20): two of the twelve — the distinctness check proves
+  // they differ from each other and from the plain label.
+  { name: 'collectible-star',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 0 } },
+  { name: 'collectible-rocket', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 1 } },
   // Seasonal art (#16): all eight, short name so the motif headroom exists.
   // The pairwise-distinctness check below is what proves each season's art
   // actually differs from every other's.

@@ -389,6 +389,9 @@
                   <input type="text" id="settings-connect-greeting" maxlength="60" placeholder="We're so glad you're here!">
                 </div>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-collectible" checked> Collectible icon of the week on labels (12-icon series)
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-driven-checkin" checked> Allow driven check-ins (phone page + sibling suggestions)
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
@@ -872,6 +875,7 @@ function loadSettings() {
     document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
     document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-season-theme').value = config.seasonTheme || 'auto';
+    document.getElementById('settings-collectible').checked = config.collectibleIcons !== false;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
@@ -989,6 +993,7 @@ function saveSettings() {
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
       labelFooter: document.getElementById('settings-label-footer').value.trim(),
       seasonTheme: document.getElementById('settings-season-theme').value,
+      collectibleIcons: document.getElementById('settings-collectible').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,

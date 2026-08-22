@@ -1,4 +1,13 @@
-﻿## [5.17.0] - 2026-08-22
+﻿## [5.18.0] - 2026-08-22
+Collectible of the week: every label now carries one tiny path-drawn icon from a twelve-icon series — star, rocket, crown, butterfly, kite, acorn, music note, lightning, fish, sailboat, balloon, snail — that changes each calendar week, so a season's worth of labels becomes a collection. Feature 6 of the round-3 build (#20), closing the label-delight batch.
+
+### Mechanics
+The rotation is whole-weeks-since-epoch mod twelve (UTC), so the icon is stable for the entire week — a reprint matches the original label — and the series wraps roughly three times across an Awana year. Callers resolve `currentCollectibleIndex()` (null when the new `collectibleIcons` setting is off; it's on by default, with a dashboard checkbox) and the renderer takes a first-class `collectibleIndex` with strict bounds coercion. The icon draws leftmost in the bottom-right icon row so the safety icons keep their familiar right-edge positions; the glyph row now supports path-drawn entries alongside emoji ones. Award slips are the one label kind that skips it — a recognition print stays formal. All twelve are pure stroke work at ~13pt, nothing to dither.
+
+### Tests
+Rotation units (twelve icons, valid index, same-week stability, next-week advance, twelve-week wrap); `collectible-star` and `collectible-rocket` golden baselines, proven distinct from each other and everything else by the pairwise check; existing baselines untouched (no index means byte-identical output).
+
+## [5.17.0] - 2026-08-22
 Seasonal border art: labels now wear the season — a dash-patterned badge outline in one of eight distinct rhythms plus a small top-center motif (holly, snowflake, sun, wheat, leaf, tulip, egg, pencil), all pure 1-bit-safe line work. Feature 5 of the round-3 build (#16), and the label half of the unified theming (#18) still to come.
 
 ### Auto by calendar, pinnable from the dashboard

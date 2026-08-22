@@ -1004,6 +1004,22 @@ console.log('seasonal art (#16) — the calendar tiling and the computus');
   check('the calendar tiling has no holes across 2026', holes === 0, `${holes} uncovered days`);
 }
 
+console.log('collectible of the week (#20) — rotation math');
+{
+  const { collectibleIndexForDate, COLLECTIBLE_SERIES } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  check('the series has twelve icons', COLLECTIBLE_SERIES.length === 12);
+  const idx = collectibleIndexForDate(new Date());
+  check('the index is a valid series position', Number.isInteger(idx) && idx >= 0 && idx < 12);
+  // Stable across one day, advances by one across one week, wraps after twelve.
+  const at = (ms) => collectibleIndexForDate(new Date(Date.now() + ms));
+  const DAY = 86400000;
+  check('same week, same icon (a reprint matches the original)',
+    collectibleIndexForDate(new Date()) === idx);
+  check('one week on, the next icon', at(7 * DAY) === (idx + 1) % 12);
+  check('twelve weeks on, the series wraps', at(12 * 7 * DAY) === idx);
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
