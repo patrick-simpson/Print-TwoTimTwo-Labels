@@ -1200,9 +1200,9 @@ async function prepareLogoForThermal(clubImageBuffer, { ink = [0, 0, 0] } = {}) 
 // to find out whether the seventh `false` was isBirthday or stepUp. Two of the
 // callers had already drifted: /reprint silently passed nothing for visitor,
 // stepUp, awanaShares, goToLine and milestoneLine because history never stored
-// them, and the connect card smuggles its greeting through `handbookGroup`,
-// which is why that greeting is subject to a 30-character truncation nobody
-// intended.
+// them, and the connect card used to smuggle its greeting through
+// `handbookGroup`, silently inheriting that field's 30-character truncation —
+// fixed since by the first-class `greeting` field below.
 //
 // The conversion is byte-identical by construction — every default below
 // matches the old parameter default — and the 18 golden-image baselines are the
@@ -1221,7 +1221,7 @@ async function generateLabel(input) {
     firstName, lastName, clubName, clubImageBuffer,
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-    testBanner = false, footerText = '', extras = {},
+    testBanner = false, footerText = '', greeting = '', extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1233,6 +1233,11 @@ async function generateLabel(input) {
   allergyTokens = Array.isArray(allergyTokens) ? allergyTokens : [];
   handbookGroup = (handbookGroup || '').trim();
   footerText    = String(footerText == null ? '' : footerText).trim();
+  // First-class greeting slot (connect cards). It renders on the same line the
+  // handbook group uses, but is NOT subject to that field's 30-character cap —
+  // the cap exists because a group name past 30 chars is roster noise, whereas
+  // a greeting is deliberate operator copy that just needs to fit the width.
+  greeting      = String(greeting == null ? '' : greeting).trim();
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
   noPhoto       = !!noPhoto;
@@ -1403,22 +1408,30 @@ async function generateLabel(input) {
   // print cleanly, failed to decode) fell back to the monogram badge, and the
   // label must then carry the club name in text like any other monogram label.
   const hasClub  = clubName.trim().length > 0 && !logoDrawn;
-  const hasGroup = stepUp ? !!stepUpGroupText : (handbookGroup.length > 0);
+  const hasGroup = stepUp ? !!stepUpGroupText : (greeting.length > 0 || handbookGroup.length > 0);
   const hasAllergy = allergyTokens.length > 0;
   const hasFooter = footerText.length > 0;
 
-  // Reserve room for the bottom band (right: coin/cake/allergy icon row;
-  // left: the operator's footer line) so the centered text block — especially
-  // a wide handbook-group line — can't collide with it. The occasional
-  // goTo/milestone lines deliberately don't reserve (they are rare and short),
-  // but a configured footer is on EVERY label, so it must.
-  const ALLERGY_STRIP_H = (hasAllergy || isBirthday || awanaShares != null || noPhoto || hasFooter) ? 20 : 0;
+  // Reserve room for the bottom band: right side is the coin/cake/allergy icon
+  // row, left side is the goTo/milestone/footer stack. 20pt covers the icon row
+  // or one text line; each additional bottom-left line stacks 13pt higher. The
+  // goTo/milestone lines used to skip this reservation as "rare and short", but
+  // the moment two bottom lines coexist (a connect card's schedule line over a
+  // footer) the centered block sat right on top of them.
+  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto;
+  const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
+    + ((extras && extras.milestoneLine) ? 1 : 0)
+    + (hasFooter ? 1 : 0);
+  const ALLERGY_STRIP_H = Math.max(
+    hasIconRowGlyphs ? 20 : 0,
+    bottomLineCount > 0 ? 7 + bottomLineCount * 13 : 0
+  );
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
 
   // Font sizes (in pt)
-  const fs1 = fitFontSize(ctx, firstName, 'bold', textW, 48, 18, fontFamily);
+  let fs1 = fitFontSize(ctx, firstName, 'bold', textW, 48, 18, fontFamily);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
@@ -1434,8 +1447,19 @@ async function generateLabel(input) {
   // it renders as a 🍰 emoji in the bottom-right corner alongside allergies.
 
   const usableH = BH - ALLERGY_STRIP_H;
+  // Height-fit: a crowded label (name + last + club + group over a stacked
+  // bottom band) shrinks the FIRST NAME rather than descending into the band —
+  // blockH is linear in fs1, so the overflow maps 1:1 onto the size reduction.
+  // Floor of 18 matches fitFontSize's width floor; past that, the clamp on y
+  // below keeps the block on the badge and any residual crowding lands at the
+  // bottom, where it degrades legibility instead of clipping the name.
+  if (blockH > usableH) {
+    const reduce = Math.min(blockH - usableH, fs1 - 18);
+    if (reduce > 0) { fs1 -= reduce; blockH -= reduce; }
+  }
+
   const centerY = BY + usableH / 2;
-  let y = centerY - blockH / 2;
+  let y = Math.max(BY + 2, centerY - blockH / 2);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
@@ -1485,7 +1509,9 @@ async function generateLabel(input) {
     y += GAP;
     let groupStr = stepUp
       ? stepUpGroupText
-      : (handbookGroup.length > 30 ? handbookGroup.slice(0, 29) + '…' : handbookGroup);
+      : greeting
+        ? greeting   // width-fitted by truncateTextCanvas below, no 30-char cap
+        : (handbookGroup.length > 30 ? handbookGroup.slice(0, 29) + '…' : handbookGroup);
     const groupFont = stepUp
       ? `bold ${fs4}px ${fontFamily}`
       : `italic ${fs4}px ${fontFamily}`;
@@ -1748,20 +1774,65 @@ function saveAttendance(ledger) {
   } catch (e) { console.warn('[attendance] Failed to save ledger:', e.message); }
 }
 
-// Upsert tonight for this kid; returns their night count within the season.
-function recordAttendance(firstName, lastName) {
+// Upsert tonight for this kid. Returns:
+//   seasonCount      — their night count within the current season (milestones)
+//   firstEver        — tonight is the first date this ledger has EVER seen them
+//                      (dates[] is never pruned, so this spans seasons)
+//   priorNightExists — some kid, any kid, attended on an earlier date, i.e.
+//                      the club has met before tonight on this machine
+// The last two exist for the auto connect card (#10): "new face at a club
+// that has met before" is what distinguishes a genuine first-timer from
+// opening night / a fresh install, where EVERY kid's count is 1 and firing a
+// welcome card per child would bury the printer.
+//
+// Keyed id-first with a one-time migration from the legacy name key, mirroring
+// historyIdentityKey: two same-named kids stop merging the moment a caller
+// knows who they are, and a kid's existing streak moves with them. A kid whose
+// entry migrated to the id key and who later prints WITHOUT an id starts a
+// fresh name entry — the failure modes there are a wrong milestone line and a
+// spurious welcome card, both benign, both no worse than the name-collision
+// behaviour this replaces.
+function recordAttendance(firstName, lastName, clubberId = null) {
   const nameKey = `${firstName} ${lastName}`.toLowerCase().trim();
-  if (!nameKey) return 0;
+  const idRaw = clubberId == null ? '' : String(clubberId).trim();
+  const idKey = idRaw ? `id:${idRaw.toLowerCase()}` : '';
+  if (!nameKey && !idKey) return { seasonCount: 0, firstEver: false, priorNightExists: false };
   const today = new Date().toISOString().slice(0, 10);
   const ledger = loadAttendance();
-  const entry = ledger[nameKey] && Array.isArray(ledger[nameKey].dates)
-    ? ledger[nameKey]
+
+  let priorNightExists = false;
+  for (const k of Object.keys(ledger)) {
+    const ds = ledger[k] && Array.isArray(ledger[k].dates) ? ledger[k].dates : [];
+    if (ds.some(d => d < today)) { priorNightExists = true; break; }
+  }
+
+  if (idKey && nameKey && ledger[nameKey]) {
+    // Migrate (or merge, if tonight already saw both shapes) the legacy
+    // name-keyed entry into the id key, then retire the name key.
+    const legacy = ledger[nameKey];
+    if (!ledger[idKey] || !Array.isArray(ledger[idKey].dates)) {
+      ledger[idKey] = legacy;
+    } else if (Array.isArray(legacy.dates)) {
+      for (const d of legacy.dates) {
+        if (!ledger[idKey].dates.includes(d)) ledger[idKey].dates.push(d);
+      }
+    }
+    delete ledger[nameKey];
+  }
+
+  const key = idKey || nameKey;
+  const entry = ledger[key] && Array.isArray(ledger[key].dates)
+    ? ledger[key]
     : { name: `${firstName} ${lastName}`.trim(), dates: [] };
   if (!entry.dates.includes(today)) entry.dates.push(today);
-  ledger[nameKey] = entry;
+  ledger[key] = entry;
   saveAttendance(ledger);
   const start = seasonStartISO();
-  return entry.dates.filter(d => d >= start).length;
+  return {
+    seasonCount: entry.dates.filter(d => d >= start).length,
+    firstEver: entry.dates.length === 1,
+    priorNightExists,
+  };
 }
 
 function milestoneLineFor(count) {
@@ -1801,6 +1872,14 @@ function lateGoToLine(clubName, now = new Date()) {
 // golden-image suite meaningful.
 function labelFooterText() {
   return String(config.labelFooter || '').trim();
+}
+
+// Connect-card greeting (#10) — operator-configurable, with the long-standing
+// default. Read from config at the call site (never inside the renderer) for
+// the same purity reason as labelFooterText above.
+const DEFAULT_CONNECT_GREETING = "We're so glad you're here!";
+function connectCardGreeting() {
+  return String(config.connectCardGreeting || '').trim() || DEFAULT_CONNECT_GREETING;
 }
 
 // ── Phone check-in queue (#17b) ───────────────────────────────────────────────
@@ -2305,12 +2384,27 @@ app.post('/print', async (req, res) => {
     // Skipped for demo prints — the ledger is permanent, and padding it would
     // corrupt real milestone lines for the rest of the season.
     let milestoneLine = '';
+    let autoFirstTimer = false;
     if (!isDemo) {
       try {
-        milestoneLine = milestoneLineFor(recordAttendance(firstName, lastName));
+        const att = recordAttendance(firstName, lastName, clubberId);
+        milestoneLine = milestoneLineFor(att.seasonCount);
+        // Auto connect card (#10): a new face at a club that has met before.
+        // Both halves matter — firstEver alone fires for EVERY kid on opening
+        // night (and on a fresh install), because everyone's ledger starts at
+        // one. This is deliberately "first time on this machine's ledger", not
+        // "first time ever at church" — the ledger is the only memory we have.
+        autoFirstTimer = !!config.connectCardAutoFirstTimer && att.firstEver && att.priorNightExists;
       } catch { /* ledger trouble must not stop the print */ }
     }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
+    // The operator's explicit visitor flag and the ledger heuristic converge
+    // here for the connect card and the display's welcome treatment. The
+    // label's inverted palette deliberately stays on the EXPLICIT flag only:
+    // a heuristic misfire that prints one extra welcome card is shrugged off,
+    // one that turns a regular kid's label black tells every volunteer to
+    // welcome the wrong child.
+    const isFirstTimerTonight = !!visitor || autoFirstTimer;
 
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
@@ -2325,26 +2419,51 @@ app.post('/print', async (req, res) => {
     printImage(pngPath, effectivePrinter);
     if (!isDemo) recordPrint(dupKey);
 
-    // Connect card (#27): visitors optionally get a second label pointing
-    // their family to the club's time and place. Failure here never fails
-    // the check-in — the main label already printed.
-    if (visitor && config.connectCard) {
+    // Connect card (#27/#10): first-time families optionally get a second
+    // label pointing them to the club's time and place — triggered by the
+    // operator's explicit visitor flag, or (when enabled) by the attendance
+    // ledger spotting a first-ever check-in. Failure here never fails the
+    // check-in — the main label already printed. Must stay a SAME-REQUEST
+    // second printImage: a separate POST would die in the 25s dedup window.
+    // The explicit visitor flag always fires (an operator re-flagging after a
+    // lost card is deliberate); the AUTO path fires once per kid per night —
+    // a re-print past the 25s dedup window (lost label, roster fix, a second
+    // station) must not hand the family a second welcome card, and firstEver
+    // alone can't see that because tonight is still the kid's only ledger date.
+    let shouldConnectCard = false;
+    if (config.connectCard) {
+      if (visitor) {
+        shouldConnectCard = true;
+      } else if (autoFirstTimer) {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        shouldConnectCard = !loadHistory().some(e => e && e.isConnectCard && e.success !== false
+          && e.timestamp && e.timestamp.startsWith(todayIso)
+          && historyRowMatches(e, firstName, lastName, clubberId));
+      }
+    }
+    if (shouldConnectCard) {
       try {
         const row = scheduleRowFor(effectiveClubName);
         const where = row ? [row.startTime, row.location, row.room].filter(Boolean).join(' · ') : '';
         const card = await generateLabel({
           firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-          // The greeting rides in `handbookGroup` because that is the slot which
-          // renders a line under the name. Now that the fields are named, the
-          // oddity is at least visible: it means the greeting inherits that
-          // field's 30-character truncation.
-          handbookGroup: "We're so glad you're here!",
+          greeting: connectCardGreeting(),
           isVisitor: true,
+          testBanner: isDemo,   // a demo card must be as visibly fake as its label
           footerText: labelFooterText(),
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
         printImage(connectPngPath, effectivePrinter);
+        console.log(`[print] Connect card printed for ${firstName} ${lastName}${autoFirstTimer && !visitor ? ' (auto: first-ever check-in)' : ''}`);
+        // Recorded like an award slip: visible in the dashboard's history,
+        // excluded from everything that counts check-ins.
+        if (!isDemo) {
+          addHistoryEntry({
+            firstName, lastName, clubName: effectiveClubName, clubImageData,
+            printer: effectivePrinter, success: true, isConnectCard: true, clubberId,
+          });
+        }
       } catch (e) {
         console.warn('[print] Connect card failed (non-critical):', e.message);
       }
@@ -2360,7 +2479,7 @@ app.post('/print', async (req, res) => {
       // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
       // plus a fresh tally so displays update within seconds of the check-in.
       const checkinEvent = events.buildCheckin({
-        firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: !!visitor,
+        firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: isFirstTimerTonight,
       });
       events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
       pushEventToBuffer(checkinEvent);
@@ -2526,7 +2645,7 @@ function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
   // per identity — the one row this pass is allowed to touch.
   const activeIdx = new Map(); // identityKey -> index into history[]
   history.forEach((row, i) => {
-    if (!row || row.success === false || row.isAward) return;
+    if (!row || row.success === false || isNonCheckinRow(row)) return;
     if (!row.timestamp || !row.timestamp.startsWith(today)) return;
     const key = historyIdentityKey(row);
     if (!activeIdx.has(key)) activeIdx.set(key, i);
@@ -2569,6 +2688,15 @@ function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
   return { history: next, changed: toUndo.length + toClear.length, skipped: false, reason: null };
 }
 
+// A history row that is a PRINT but not a CHECK-IN: award slips and connect
+// cards. One predicate, used by every consumer that counts check-ins (tonight's
+// stats, the CSV write-back into TwoTimTwo, undo reconciliation, milestones,
+// name-based reprint lookup) — a missed exclusion at any of those sites means a
+// recognition print double-counts a child, so they must all share this test.
+function isNonCheckinRow(e) {
+  return !!(e && (e.isAward || e.isConnectCard));
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -2590,6 +2718,10 @@ function addHistoryEntry(entry) {
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
     award: security.sanitizeStoredText(entry.award || ''),
+    // Connect cards (#10) are flagged for the same reason award slips are:
+    // they show in /history so the operator can see the card went out, but
+    // isNonCheckinRow() keeps them out of every place that counts check-ins.
+    isConnectCard: !!entry.isConnectCard,
     // TwoTimTwo's own clubber id, when the caller knew it. Everything here was
     // keyed on a lowercased "first last" string, so two children who share a
     // name merged into one row — the same defect the extension already fixed on
@@ -2627,9 +2759,9 @@ function computeTonightStats() {
   const history = loadHistory();
   const today = new Date().toISOString().slice(0, 10);
   // Failed prints stay in history for the dashboard but never count a kid in.
-  // Award slips are flagged (isAward) and excluded — they're a recognition
+  // Award slips and connect cards are excluded — they're a recognition/welcome
   // print, not a check-in, and must never inflate tonight's counts.
-  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false && !e.isAward);
+  const entries = history.filter(e => e.timestamp && e.timestamp.startsWith(today) && e.success !== false && !isNonCheckinRow(e));
 
   const byClub = {};
   const seen = new Set();
@@ -2760,7 +2892,7 @@ app.post('/reprint', async (req, res) => {
     const parts = String(name || '').trim().split(/\s+/);
     const first = parts[0] || '';
     const last = parts.slice(1).join(' ');
-    entry = history.find(e => !e.isAward && historyRowMatches(e, first, last, clubberId));
+    entry = history.find(e => !isNonCheckinRow(e) && historyRowMatches(e, first, last, clubberId));
   }
 
   if (!entry) {
@@ -3094,7 +3226,7 @@ function distinctChildrenPrintedToday(now = new Date()) {
     const when = new Date(e.timestamp);
     if (Number.isNaN(when.getTime()) || localDay(when) !== today) continue;
     if (e.success === false) continue;   // a failed print never checked anyone in
-    if (e.isAward) continue;             // award slips are not check-ins
+    if (isNonCheckinRow(e)) continue;    // award slips / connect cards are not check-ins
     const key = historyIdentityKey(e);
     if (!key) continue;
     seen.add(key);                       // reprints must not inflate the count
@@ -3112,7 +3244,7 @@ app.get('/checkin-csv-export', (req, res) => {
   for (const e of history) {
     if (!e || !e.timestamp || !e.timestamp.startsWith(date)) continue;
     if (e.success === false) continue;   // a failed print never actually checked the kid in
-    if (e.isAward) continue;             // award slips are not check-ins
+    if (isNonCheckinRow(e)) continue;    // award slips / connect cards are not check-ins
     const first = String(e.firstName || '').trim();
     const last  = String(e.lastName  || '').trim();
     if (!first && !last) continue;
@@ -3587,6 +3719,18 @@ app.post('/update-now', (req, res) => {
 // A LAN caller never gets these fields even with a valid PIN.
 const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey'];
 
+// Operator text that ends up printed on a label (labelFooter, the connect-card
+// greeting). Not secrets, but they go onto paper and into config.json, so only
+// a single bounded printable line is ever persisted: control characters become
+// spaces, whitespace collapses, and the length is capped.
+function printableConfigLine(value, maxLen) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
 // Make the live `config` object exactly mirror what was just written to disk.
 //
 // Object.assign() alone was NOT enough, and the gap was security-relevant. Both
@@ -3662,7 +3806,7 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
-    labelFooter,
+    labelFooter, connectCardAutoFirstTimer, connectCardGreeting,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -3730,18 +3874,20 @@ app.post('/config', (req, res) => {
     if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
     if (connectCard !== undefined) next.connectCard = !!connectCard;
     // Label footer (#8): one short operator line (church name, a verse, service
-    // times) rendered along the bottom of every label. Not a secret, but it goes
-    // onto paper, so persist only a single printable line: control characters
-    // become spaces, whitespace collapses, and the length is capped. Clearing
-    // it deletes the key (same pattern as phonePin) so config.json stays clean.
+    // times) rendered along the bottom of every label. Clearing it deletes the
+    // key (same pattern as phonePin) so config.json stays clean.
     if (labelFooter !== undefined) {
-      const lf = String(labelFooter == null ? '' : labelFooter)
-        .replace(/[\u0000-\u001f\u007f]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 60);
+      const lf = printableConfigLine(labelFooter, 60);
       if (lf === '') delete next.labelFooter;
       else next.labelFooter = lf;
+    }
+    // Connect card auto-trigger + greeting (#10). An empty greeting deletes the
+    // key and the printed card falls back to the built-in default.
+    if (connectCardAutoFirstTimer !== undefined) next.connectCardAutoFirstTimer = !!connectCardAutoFirstTimer;
+    if (connectCardGreeting !== undefined) {
+      const cg = printableConfigLine(connectCardGreeting, 60);
+      if (cg === '') delete next.connectCardGreeting;
+      else next.connectCardGreeting = cg;
     }
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
@@ -4052,6 +4198,10 @@ module.exports = {
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
+  // Attendance ledger — exported so the id-migration and the auto-connect-card
+  // signals (firstEver / priorNightExists) can be unit-tested against a temp
+  // AWANA_DATA_DIR without driving the whole /print route.
+  recordAttendance, isNonCheckinRow,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

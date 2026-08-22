@@ -1,4 +1,26 @@
-﻿## [5.10.0] - 2026-08-22
+﻿## [5.11.0] - 2026-08-22
+The connect card now prints itself for first-time visitors — no checkbox required — and lost its three known warts along the way. Second of the three ideas-triage picks (#10); the per-club template editor (#1) is next.
+
+### Auto-detection: a new face at a club that has met before
+There is no first-timer field anywhere in TwoTimTwo's data (`server.js` has documented that uncertainty for a while, and `docs/TWOTIMTWO.md` is silent), so the trigger is the attendance ledger — the one memory this machine already keeps. A new `connectCardAutoFirstTimer` toggle (off by default, under the existing connect-card checkbox) fires the card when **both** hold: tonight is the first date the ledger has ever seen this child (`dates[]` is never pruned, so this spans seasons), and some child attended on an earlier night. The second half is what keeps opening night — and a fresh install, where *every* kid's count is 1 — from burying the printer in welcome cards. The auto path also checks history so one kid gets at most one card per night, even across the 25s dedup window (re-print with a fresh clubberId, second station); the operator's explicit visitor flag stays unrestricted, because re-flagging after a lost card is deliberate. The roster's `New to Awana?` column was considered and passed over: it's registration-scoped (it would fire all season for the same kid), while the ledger fires exactly once — but it remains available verbatim on the row if a future refinement wants it.
+
+The label's inverted first-timer palette deliberately stays on the explicit flag only. A heuristic misfire that prints one extra welcome card is shrugged off; one that turns a regular kid's label black tells every volunteer to welcome the wrong child. The sealed Pusher `checkin` event's `isFirstTimer` **does** carry the auto-detection (same field, same boolean type — no envelope or consumer change; CONTRACT.md updated), so the lobby screen welcomes auto-detected families too.
+
+### The attendance ledger grew up
+`recordAttendance()` now returns `{seasonCount, firstEver, priorNightExists}` instead of a bare count, and is keyed id-first with a one-time migration from the legacy name key — the same identity fix `historyIdentityKey` already made for print history, so two same-named kids stop merging the moment a caller knows who they are, and a kid's existing streak moves with them. A kid whose entry migrated and who later prints *without* an id starts a fresh name entry; the failure modes there are a wrong milestone line and a spurious welcome card, both benign, both no worse than the collision behaviour this replaces.
+
+### The three warts
+- **The greeting had a 30-character ceiling nobody intended** — it rode in the `handbookGroup` slot. `generateLabel()` now has a first-class `greeting` field that renders on the same line but is width-fitted only, and the text is operator-configurable (`connectCardGreeting`, default unchanged: "We're so glad you're here!").
+- **The card was invisible** — it never reached print history. It's now recorded like an award slip: visible in the dashboard (with a CONNECT CARD badge; awards got an AWARD badge in passing), excluded from everything that counts check-ins. That exclusion now lives in one shared predicate, `isNonCheckinRow()`, used by tonight's stats, the CSV write-back into TwoTimTwo, undo reconciliation, milestones and reprint-by-name — a missed site at any of those would double-count a child, which is why it's one function and not five copies of `!e.isAward`.
+- **A demo visitor's card printed unmarked** — the card now carries the same diagonal TEST band as its demo label, and is never recorded in demo mode.
+
+### The bottom band reserves what it actually needs
+The card's own golden baseline caught the greeting line sitting on top of the schedule line: the centered text block reserved a flat 20pt for the bottom band, enough for the icon row or ONE text line, and the card stacks two (schedule + footer). The reservation now scales with the actual bottom-left line count (goTo/milestone/footer), and when a crowded label's text block would overflow the space that leaves, the FIRST NAME shrinks to fit (blockH is linear in its size, floor 18pt — same floor as the width fit) instead of descending into the band. Four baselines regenerated for this (`go-to-line`, `milestone-line`, `footer-with-go-to`, `torture-all-fields`) — the first two because goTo/milestone lines previously reserved nothing at all, which was the same latent collision one config option away.
+
+### Tests
+New `test-connect-card.cjs` (32 checks, wired into `npm test`): ledger signals including the opening-night guard and the id migration, the HTTP auto-trigger end-to-end, once-per-night behaviour, the toggle, greeting sanitization, and paired negative controls proving a card row never inflates tonight's stats, the write-back CSV, or reprint-by-name. One new golden case (`connect-card`) pins the card's shape — 34-char greeting past the old cap, visitor pill, schedule line, footer.
+
+## [5.10.0] - 2026-08-22
 Labels can now carry a configurable footer — one short operator-set line (church name, a verse, service times) printed along the bottom of every label. First of the three features picked from the ideas triage (#8 on the scratchpad); the connect-card auto-trigger (#10) and per-club template editor (#1) follow.
 
 ### One line, on every label that goes home

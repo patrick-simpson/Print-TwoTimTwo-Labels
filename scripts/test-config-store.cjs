@@ -69,6 +69,8 @@ function serverOwnedConfig() {
     firstTimerInverted: true,
     worksheetPrinter: 'Office Laser',
     connectCard: { enabled: true, greeting: 'Welcome!' },
+    connectCardAutoFirstTimer: true,
+    connectCardGreeting: "We're so glad you're here!",
     labelFooter: 'KVBC Awana · Wednesdays 6:15–8:00pm',
     schedule: [
       { label: 'Large Group', startsAt: '18:05' },
@@ -83,7 +85,8 @@ const SERVER_OWNED_KEYS = [
   'phonePin', 'lanAccess', 'allowedOrigins',
   'pusherAppId', 'pusherKey', 'pusherSecret', 'pusherCluster',
   'historyRetentionDays', 'firstTimerInverted', 'worksheetPrinter',
-  'connectCard', 'labelFooter', 'schedule',
+  'connectCard', 'connectCardAutoFirstTimer', 'connectCardGreeting',
+  'labelFooter', 'schedule',
 ];
 
 console.log('\nconfig-store: merge semantics');

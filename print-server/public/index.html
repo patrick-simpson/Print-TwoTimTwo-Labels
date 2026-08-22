@@ -315,6 +315,17 @@
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-connect-card"> Print a second "connect card" label for visitors
                 </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400;margin-left:22px">
+                  <input type="checkbox" id="settings-connect-card-auto"> Also print it automatically on a first-ever check-in
+                </label>
+                <p style="font-size:10px;color:#94a3b8;margin:0 0 0 44px">
+                  Fires when this PC has never printed for the child before AND the club has met at least
+                  once already &mdash; so opening night (or a fresh install) never buries the printer in cards.
+                </p>
+                <div style="margin:2px 0 0 22px">
+                  <label style="font-size:11px">Connect card greeting</label>
+                  <input type="text" id="settings-connect-greeting" maxlength="60" placeholder="We're so glad you're here!">
+                </div>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-driven-checkin" checked> Allow driven check-ins (phone page + sibling suggestions)
                 </label>
@@ -614,7 +625,10 @@ function loadHistory() {
     }
     tbody.innerHTML = entries.slice(0, 30).map(function(e, i) {
       return '<tr' + (e.success === false ? ' style="background:#fef2f2"' : '') + '>' +
-        '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' + (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') + '</td>' +
+        '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' +
+          (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') +
+          (e.isConnectCard ? ' <span style="color:#16a34a;font-size:10px;font-weight:700">CONNECT CARD</span>' : '') +
+          (e.isAward ? ' <span style="color:#b45309;font-size:10px;font-weight:700">AWARD</span>' : '') + '</td>' +
         '<td>' + esc(e.clubName || '--') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(e.printer || 'default') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(formatTime(e.timestamp)) + '</td>' +
@@ -696,6 +710,8 @@ function loadSettings() {
     document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
+    document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
+    document.getElementById('settings-connect-greeting').value = config.connectCardGreeting || '';
     document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
     document.getElementById('settings-lan-access').checked = config.lanAccess === true;
     // GET /config redacts displayKey like the Pusher secret, so we render its
@@ -810,6 +826,8 @@ function saveSettings() {
       labelFooter: document.getElementById('settings-label-footer').value.trim(),
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
+      connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,
+      connectCardGreeting: document.getElementById('settings-connect-greeting').value.trim(),
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
       lanAccess: document.getElementById('settings-lan-access').checked,
       displayKey: document.getElementById('settings-display-key').value.trim()

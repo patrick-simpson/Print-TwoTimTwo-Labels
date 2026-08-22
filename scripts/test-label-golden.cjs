@@ -171,6 +171,10 @@ const CASES = [
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
   { name: 'footer',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm' } },
+  // The connect card's shape: first-class greeting (34 chars — pins that the
+  // handbookGroup 30-char cap does NOT apply to it), visitor pill, schedule
+  // line, footer.
+  { name: 'connect-card',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true, greeting: "We're so glad you're here tonight!", footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: '6:15 · Main Hall · Rm 4' } } },
   // Footer stacked under a routing line — pins the bottom-left draw order
   // (footer at the very bottom, goTo above it).
   { name: 'footer-with-go-to', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: 'Go to: Music, Rm 4' } } },
