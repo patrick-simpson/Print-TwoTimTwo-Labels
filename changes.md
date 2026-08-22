@@ -1,4 +1,57 @@
-﻿## [5.9.0] - 2026-08-10
+﻿## [5.12.0] - 2026-08-22
+Per-club label templates: the dashboard's Label Preview tab is now an editor where each club (or the default for all of them) can switch parts of the label on or off and cap the name size, with a live server-rendered preview. Third and last of the ideas-triage picks (#1).
+
+### A constrained template, not a free canvas
+A template is a small set of switches — club logo/monogram panel, last name, club-name line, handbook-group line, VISITOR pill, footer — plus a first-name size cap (18–48pt). Deliberately NOT a drag-anything designer, for two graveyard-tested reasons: the v3.7.x per-club visual themes were removed because color and pattern dither to mush on 1-bit thermal output (per-club variation survives as font + icon, and templates don't reopen that door), and every pixel of freedom is a way to break the one artifact that must never fail at the door. Safety content is not templatable at all: allergy icons, the no-photo camera, and the birthday cake always print; the step-up callout and a connect card's greeting ignore the group-line switch.
+
+**Fail open, always.** Templates are resolved by the caller (`labelTemplateFor()`: exact club → `default` → stock) and passed into `generateLabel()` as part of its input — the renderer still never reads config, so the golden suite stays honest. Every switch defaults to on; a missing, partial, or hand-mangled template renders the stock label byte-identically. `test-label-templates.cjs` proves a config.json with arrays-for-templates garbage still prints.
+
+### Storage and the write gate
+`config.labelTemplates` stores overrides only, keyed by `clubKey()` (so `T&T`, `t & t` and `tnt` can't diverge into three templates; an unrecognized club name is served by `default`). It saves through its own `POST /config/label-templates` with a strict sanitizer — unknown fields dropped, out-of-range name caps dropped, at most 12 club entries — rather than more keys on the flat `/config` body, following the schedule endpoint's pattern. Writes are gated on `isTrustedConfigOrigin` — stricter than the other non-secret keys, deliberately: a template changes what gets printed for a whole club, and the phone PIN is a LAN-trust credential, not authorization to restyle every label. Reads are open like the rest of `/config`.
+
+### The editor
+Lives in the Label Preview tab: pick Default or a club, tick switches, drag the name-size slider, and the preview re-renders through the real `GET /preview` — which now accepts an unsaved `?template=<json>` override (sanitized identically, never persisted, malformed JSON falls back to the saved template) and `?visitor=1` so the pill switch is visible. Nothing prints differently until Save posts the whole map.
+
+### Tests
+New `test-label-templates.cjs` (20 checks, in `npm test`): sanitizer normalization and clamps, the origin gate, saved-template resolution changing real render bytes, the preview override, default-serves-unknown-clubs, and the garbage-in-config fail-open. Two new golden baselines: `template-no-icon` (full-width reflow) and `template-minimal` (everything templatable off — the name and the allergy icon survive).
+
+## [5.11.0] - 2026-08-22
+The connect card now prints itself for first-time visitors — no checkbox required — and lost its three known warts along the way. Second of the three ideas-triage picks (#10); the per-club template editor (#1) is next.
+
+### Auto-detection: a new face at a club that has met before
+There is no first-timer field anywhere in TwoTimTwo's data (`server.js` has documented that uncertainty for a while, and `docs/TWOTIMTWO.md` is silent), so the trigger is the attendance ledger — the one memory this machine already keeps. A new `connectCardAutoFirstTimer` toggle (off by default, under the existing connect-card checkbox) fires the card when **both** hold: tonight is the first date the ledger has ever seen this child (`dates[]` is never pruned, so this spans seasons), and some child attended on an earlier night. The second half is what keeps opening night — and a fresh install, where *every* kid's count is 1 — from burying the printer in welcome cards. The auto path also checks history so one kid gets at most one card per night, even across the 25s dedup window (re-print with a fresh clubberId, second station); the operator's explicit visitor flag stays unrestricted, because re-flagging after a lost card is deliberate. The roster's `New to Awana?` column was considered and passed over: it's registration-scoped (it would fire all season for the same kid), while the ledger fires exactly once — but it remains available verbatim on the row if a future refinement wants it.
+
+The label's inverted first-timer palette deliberately stays on the explicit flag only. A heuristic misfire that prints one extra welcome card is shrugged off; one that turns a regular kid's label black tells every volunteer to welcome the wrong child. The sealed Pusher `checkin` event's `isFirstTimer` **does** carry the auto-detection (same field, same boolean type — no envelope or consumer change; CONTRACT.md updated), so the lobby screen welcomes auto-detected families too.
+
+### The attendance ledger grew up
+`recordAttendance()` now returns `{seasonCount, firstEver, priorNightExists}` instead of a bare count, and is keyed id-first with a one-time migration from the legacy name key — the same identity fix `historyIdentityKey` already made for print history, so two same-named kids stop merging the moment a caller knows who they are, and a kid's existing streak moves with them. A kid whose entry migrated and who later prints *without* an id starts a fresh name entry; the failure modes there are a wrong milestone line and a spurious welcome card, both benign, both no worse than the collision behaviour this replaces.
+
+### The three warts
+- **The greeting had a 30-character ceiling nobody intended** — it rode in the `handbookGroup` slot. `generateLabel()` now has a first-class `greeting` field that renders on the same line but is width-fitted only, and the text is operator-configurable (`connectCardGreeting`, default unchanged: "We're so glad you're here!").
+- **The card was invisible** — it never reached print history. It's now recorded like an award slip: visible in the dashboard (with a CONNECT CARD badge; awards got an AWARD badge in passing), excluded from everything that counts check-ins. That exclusion now lives in one shared predicate, `isNonCheckinRow()`, used by tonight's stats, the CSV write-back into TwoTimTwo, undo reconciliation, milestones and reprint-by-name — a missed site at any of those would double-count a child, which is why it's one function and not five copies of `!e.isAward`.
+- **A demo visitor's card printed unmarked** — the card now carries the same diagonal TEST band as its demo label, and is never recorded in demo mode.
+
+### The bottom band reserves what it actually needs
+The card's own golden baseline caught the greeting line sitting on top of the schedule line: the centered text block reserved a flat 20pt for the bottom band, enough for the icon row or ONE text line, and the card stacks two (schedule + footer). The reservation now scales with the actual bottom-left line count (goTo/milestone/footer), and when a crowded label's text block would overflow the space that leaves, the FIRST NAME shrinks to fit (blockH is linear in its size, floor 18pt — same floor as the width fit) instead of descending into the band. Four baselines regenerated for this (`go-to-line`, `milestone-line`, `footer-with-go-to`, `torture-all-fields`) — the first two because goTo/milestone lines previously reserved nothing at all, which was the same latent collision one config option away.
+
+### Tests
+New `test-connect-card.cjs` (32 checks, wired into `npm test`): ledger signals including the opening-night guard and the id migration, the HTTP auto-trigger end-to-end, once-per-night behaviour, the toggle, greeting sanitization, and paired negative controls proving a card row never inflates tonight's stats, the write-back CSV, or reprint-by-name. One new golden case (`connect-card`) pins the card's shape — 34-char greeting past the old cap, visitor pill, schedule line, footer.
+
+## [5.10.0] - 2026-08-22
+Labels can now carry a configurable footer — one short operator-set line (church name, a verse, service times) printed along the bottom of every label. First of the three features picked from the ideas triage (#8 on the scratchpad); the connect-card auto-trigger (#10) and per-club template editor (#1) follow.
+
+### One line, on every label that goes home
+A new `labelFooter` config key (Settings → Check-in Features → "Label footer", blank by default) renders as an italic 10pt line at the very bottom-left of the badge, below any "Go to:" routing or milestone line. It rides on every render path a family sees — check-in labels, the connect card, reprints, award slips, `/label` dialog renders, and the dashboard preview — but not canary/test labels. The value is not a secret (it's printed on paper by design), so it saves through the normal `POST /config` path; it is sanitized to a single printable line before persisting (control characters become spaces, whitespace collapses, 60-char cap) and clearing it deletes the key, the same pattern as `phonePin`.
+
+The renderer never reads config: the handlers pass the footer in as `input.footerText` via a tiny `labelFooterText()` helper, so `generateLabel()` stays a pure function of its argument and the golden-image suite keeps meaning what it says. An empty footer renders byte-identically to 5.9.0 — confirmed by 22 of 24 baselines surviving regeneration untouched.
+
+### The bottom band stopped guessing where the icons are
+Adding a line that appears on *every* label exposed a latent collision: the bottom-left lines (goTo/milestone, now footer) truncated at a flat 55% of the badge width, while a five-allergy icon row grows leftward past that point — so the torture case interleaved text through the allergy emoji. The lines now truncate against the icon row's actual left edge (measured, not guessed), which also means an icon-less label lets the footer run nearly the full badge width instead of cutting off at half. A configured footer also reserves the same 20pt bottom strip the icon row does, so the centered name block can't descend onto it.
+
+### Tests
+Two new golden cases (`footer`, `footer-with-go-to` pinning the stack order: footer at the very bottom, routing above) and the torture case now carries a footer too — its baseline is the only regenerated one. `test-config-store.cjs` adds `labelFooter` to the server-owned keys that must survive a setup-wizard save.
+
+## [5.9.0] - 2026-08-10
 Renamed the product from "Awana Label Printer" to **"Club Label Printer"** — Awana Clubs International's published Trademark Guidelines say they don't grant permission to create products bearing their name, and this app's own branding (window titles, tray text, Start Menu/Desktop shortcuts, the installer filename, the website) was doing exactly that. A first pass the same guidelines review turned up (disclaimer wording, ® marking) shipped as website/README-only copy fixes with no version bump; this release is the actual rebrand.
 
 ### What changed, and what deliberately didn't

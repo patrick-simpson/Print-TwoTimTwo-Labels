@@ -37,7 +37,7 @@ Published on every successful label print (canary test prints excluded).
 | `firstName` | string | First name only, ≤40 chars |
 | `club` | string | Club display name as TwoTimTwo reports it |
 | `isBirthday` | boolean | Birthday-week flag |
-| `isFirstTimer` | boolean | Visitor flag |
+| `isFirstTimer` | boolean | Welcome flag: the operator's explicit visitor mark, or (when the publisher's `connectCardAutoFirstTimer` setting is on) an auto-detected first-ever check-in. Same field, same type — consumers need no change. |
 
 ### `recap` — replay buffer (every ~2 min during club hours)
 

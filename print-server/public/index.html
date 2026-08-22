@@ -234,6 +234,52 @@
             </div>
             <img id="preview-image" class="preview-img" alt="Label preview will appear here" style="display:none">
           </div>
+
+          <div style="margin-top:16px; border-top:1px solid #e2e8f0; padding-top:12px">
+            <label style="color:#4caf50">Per-club label template</label>
+            <p style="font-size:11px; color:#64748b; margin-bottom:8px">
+              Switch parts of the label on or off per club. "Default" applies to every club without
+              its own template (and to unrecognized club names). The preview above updates live as
+              you tick; nothing prints differently until you press Save. Safety items &mdash; allergy
+              icons, the no-photo camera, birthday &mdash; are not templatable and always print.
+            </p>
+            <div class="preview-section">
+              <div class="preview-form">
+                <select id="tpl-club">
+                  <option value="default">Default (all clubs)</option>
+                </select>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showIconPanel" checked> Club logo / monogram panel
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showLastName" checked> Last name
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showClubLine" checked> Club name line
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showGroupLine" checked> Handbook group line
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showVisitorPill" checked> VISITOR pill
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-showFooter" checked> Label footer
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569">
+                  Name size cap <span id="tpl-name-max-val">48</span>pt
+                  <input type="range" id="tpl-nameMaxPt" min="18" max="48" value="48" style="width:100%">
+                </label>
+                <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
+                  <input type="checkbox" id="tpl-preview-visitor"> Preview as a visitor label
+                </label>
+                <button class="btn btn-primary btn-sm" onclick="saveTemplates()">Save templates</button>
+                <button class="btn btn-secondary btn-sm" onclick="resetTemplate()">Reset this club to default</button>
+                <div id="tpl-status" style="font-size:12px;color:#22c55e;display:none">Templates saved</div>
+              </div>
+              <img id="tpl-preview-image" class="preview-img" alt="Template preview" style="display:none">
+            </div>
+          </div>
         </div>
       </div>
 
@@ -303,6 +349,11 @@
                   <p style="font-size:10px;color:#94a3b8">Past a club's start + grace, labels add a "Go to:" line</p>
                 </div>
               </div>
+              <div style="margin-top:8px">
+                <label>Label footer</label>
+                <input type="text" id="settings-label-footer" maxlength="60" placeholder="e.g. KVBC Awana &middot; Wednesdays 6:15&ndash;8:00pm">
+                <p style="font-size:10px;color:#94a3b8">One short line printed along the bottom of every label &mdash; church name, a verse, or service times. Blank = no footer. Check the Label Preview tab after saving.</p>
+              </div>
               <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; font-size:12px">
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-ft-inverted"> Visitor labels use the inverted (black) palette
@@ -310,6 +361,17 @@
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-connect-card"> Print a second "connect card" label for visitors
                 </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400;margin-left:22px">
+                  <input type="checkbox" id="settings-connect-card-auto"> Also print it automatically on a first-ever check-in
+                </label>
+                <p style="font-size:10px;color:#94a3b8;margin:0 0 0 44px">
+                  Fires when this PC has never printed for the child before AND the club has met at least
+                  once already &mdash; so opening night (or a fresh install) never buries the printer in cards.
+                </p>
+                <div style="margin:2px 0 0 22px">
+                  <label style="font-size:11px">Connect card greeting</label>
+                  <input type="text" id="settings-connect-greeting" maxlength="60" placeholder="We're so glad you're here!">
+                </div>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-driven-checkin" checked> Allow driven check-ins (phone page + sibling suggestions)
                 </label>
@@ -609,7 +671,10 @@ function loadHistory() {
     }
     tbody.innerHTML = entries.slice(0, 30).map(function(e, i) {
       return '<tr' + (e.success === false ? ' style="background:#fef2f2"' : '') + '>' +
-        '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' + (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') + '</td>' +
+        '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' +
+          (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') +
+          (e.isConnectCard ? ' <span style="color:#16a34a;font-size:10px;font-weight:700">CONNECT CARD</span>' : '') +
+          (e.isAward ? ' <span style="color:#b45309;font-size:10px;font-weight:700">AWARD</span>' : '') + '</td>' +
         '<td>' + esc(e.clubName || '--') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(e.printer || 'default') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(formatTime(e.timestamp)) + '</td>' +
@@ -647,6 +712,107 @@ function loadPreview() {
   var img = document.getElementById('preview-image');
   img.src = url;
   img.style.display = 'block';
+}
+
+// ── Per-club label templates ──────────────────────────────────────────────────
+// TPL_STATE mirrors config.labelTemplates: a map of clubKey (or 'default') →
+// overrides-only template object. The form edits one club at a time; Save
+// POSTs the whole map.
+var TPL_STATE = {};
+var TPL_FIELDS = ['showIconPanel', 'showLastName', 'showClubLine', 'showGroupLine', 'showVisitorPill', 'showFooter'];
+var TPL_CLUB_LABELS = { 'puggle': 'Puggles', 'cubbie': 'Cubbies', 'spark': 'Sparks', 't&t': 'T&T', 'trek': 'Trek', 'journey': 'Journey' };
+
+function loadTemplates() {
+  fetch(BASE + '/config/label-templates').then(function(r) { return r.json(); }).then(function(data) {
+    TPL_STATE = (data && data.templates) || {};
+    var sel = document.getElementById('tpl-club');
+    // Rebuild club options from the server's known-club list (keys are the
+    // server's canonical clubKey values — what TPL_STATE is keyed by).
+    sel.innerHTML = '<option value="default">Default (all clubs)</option>';
+    ((data && data.knownClubs) || []).forEach(function(k) {
+      var opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = TPL_CLUB_LABELS[k] || k;
+      sel.appendChild(opt);
+    });
+    renderTplForm();
+  }).catch(function() { /* templates UI stays at defaults; preview still works */ });
+}
+
+function tplSelectedKey() { return document.getElementById('tpl-club').value || 'default'; }
+
+function renderTplForm() {
+  var t = TPL_STATE[tplSelectedKey()] || {};
+  TPL_FIELDS.forEach(function(f) {
+    document.getElementById('tpl-' + f).checked = t[f] !== false;
+  });
+  var n = (typeof t.nameMaxPt === 'number' && t.nameMaxPt >= 18 && t.nameMaxPt <= 48) ? t.nameMaxPt : 48;
+  document.getElementById('tpl-nameMaxPt').value = n;
+  document.getElementById('tpl-name-max-val').textContent = n;
+  tplPreview();
+}
+
+// Harvest the form into TPL_STATE as overrides-only (a fully-default form
+// deletes the club's entry — same normalization the server applies).
+function readTplForm() {
+  var t = {};
+  TPL_FIELDS.forEach(function(f) {
+    if (!document.getElementById('tpl-' + f).checked) t[f] = false;
+  });
+  var n = Number(document.getElementById('tpl-nameMaxPt').value);
+  document.getElementById('tpl-name-max-val').textContent = String(n);
+  if (n >= 18 && n < 48) t.nameMaxPt = n;
+  if (Object.keys(t).length) TPL_STATE[tplSelectedKey()] = t;
+  else delete TPL_STATE[tplSelectedKey()];
+}
+
+function tplPreview() {
+  var key = tplSelectedKey();
+  var first = document.getElementById('preview-first').value.trim() || 'Preview';
+  var last = document.getElementById('preview-last').value.trim();
+  // For 'default', preview with whatever club the top form names (may be none);
+  // for a club entry, preview that club so the font/monogram match.
+  var club = key === 'default' ? document.getElementById('preview-club').value.trim() : key;
+  var t = TPL_STATE[key] || {};
+  var url = BASE + '/preview?firstName=' + encodeURIComponent(first)
+    + '&lastName=' + encodeURIComponent(last)
+    + '&template=' + encodeURIComponent(JSON.stringify(t));
+  if (club) url += '&clubName=' + encodeURIComponent(club);
+  if (document.getElementById('tpl-preview-visitor').checked) url += '&visitor=1';
+  var img = document.getElementById('tpl-preview-image');
+  img.src = url;
+  img.style.display = 'block';
+}
+
+document.getElementById('tpl-club').addEventListener('change', renderTplForm);
+document.getElementById('tpl-preview-visitor').addEventListener('change', tplPreview);
+TPL_FIELDS.forEach(function(f) {
+  document.getElementById('tpl-' + f).addEventListener('change', function() { readTplForm(); tplPreview(); });
+});
+document.getElementById('tpl-nameMaxPt').addEventListener('input', function() { readTplForm(); tplPreview(); });
+
+function resetTemplate() {
+  delete TPL_STATE[tplSelectedKey()];
+  renderTplForm();
+}
+
+function saveTemplates() {
+  fetch(BASE + '/config/label-templates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ templates: TPL_STATE })
+  }).then(function(r) {
+    if (!r.ok) throw new Error('save failed');
+    return r.json();
+  }).then(function(d) {
+    TPL_STATE = (d && d.templates) || {};
+    renderTplForm();
+    var el = document.getElementById('tpl-status');
+    el.style.display = 'block';
+    setTimeout(function() { el.style.display = 'none'; }, 3000);
+  }).catch(function() {
+    alert('Saving templates failed — this only works from the dashboard on the server PC.');
+  });
 }
 
 // Settings
@@ -688,8 +854,11 @@ function loadSettings() {
     document.getElementById('settings-pusher-secret').value = config.pusherSecret || '';
     document.getElementById('settings-phone-pin').value = config.phonePin || '';
     document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
+    document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
+    document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
+    document.getElementById('settings-connect-greeting').value = config.connectCardGreeting || '';
     document.getElementById('settings-driven-checkin').checked = config.enableDrivenCheckin !== false;
     document.getElementById('settings-lan-access').checked = config.lanAccess === true;
     // GET /config redacts displayKey like the Pusher secret, so we render its
@@ -801,8 +970,11 @@ function saveSettings() {
       pusherSecret: pusherSecret,
       phonePin: document.getElementById('settings-phone-pin').value.trim(),
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
+      labelFooter: document.getElementById('settings-label-footer').value.trim(),
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
+      connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,
+      connectCardGreeting: document.getElementById('settings-connect-greeting').value.trim(),
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
       lanAccess: document.getElementById('settings-lan-access').checked,
       displayKey: document.getElementById('settings-display-key').value.trim()
@@ -1001,6 +1173,7 @@ loadRoster();
 loadHistory();
 loadTonightStats();
 loadSettings();
+loadTemplates();
 // After loadSettings() so the key state is already painted when we scroll to it.
 applyHashRoute();
 

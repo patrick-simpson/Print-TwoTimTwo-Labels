@@ -170,8 +170,21 @@ const CASES = [
   { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
+  { name: 'footer',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm' } },
+  // The connect card's shape: first-class greeting (34 chars — pins that the
+  // handbookGroup 30-char cap does NOT apply to it), visitor pill, schedule
+  // line, footer.
+  { name: 'connect-card',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true, greeting: "We're so glad you're here tonight!", footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: '6:15 · Main Hall · Rm 4' } } },
+  // Footer stacked under a routing line — pins the bottom-left draw order
+  // (footer at the very bottom, goTo above it).
+  { name: 'footer-with-go-to', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
   { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  // Per-club templates: switches OFF what the stock label shows. no-icon pins
+  // the full-width text reflow; minimal pins that every templatable slot can
+  // go dark (name + allergy safety icons survive — those are not templatable).
+  { name: 'template-no-icon', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', template: { showIconPanel: false } } },
+  { name: 'template-minimal', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', allergyTokens: ['NUTS'], footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', template: { showIconPanel: false, showLastName: false, showClubLine: false, showGroupLine: false, showFooter: false, nameMaxPt: 30 } } },
   // The thermal-logo pipeline. light-cyan is the real Puggles incident; padded
   // proves the ink crop; ghost and white-on-dark pin the fallback boundaries.
   { name: 'logo-light-cyan',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo() } },
@@ -193,6 +206,7 @@ const CASES = [
       allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'],
       handbookGroup: 'Flight 3:16',
       isBirthday: true, isVisitor: true, awanaShares: 99, noPhoto: true,
+      footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm',
       extras: { goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 50th club night tonight!' },
     },
   },

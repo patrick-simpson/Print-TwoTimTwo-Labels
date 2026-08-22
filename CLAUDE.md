@@ -58,8 +58,17 @@ That workflow creates and pushes the `vX.Y.Z` tag using its own `GITHUB_TOKEN` (
 ## Architecture
 
 **Label Generation:**
-- Standalone: Canvas PNG (4x2 Landscape via PowerShell)
-- Electron: HTML/CSS in hidden BrowserWindow → PNG
+- ONE renderer: `generateLabel()` in `print-server/server.js` draws a
+  1200×600 canvas PNG (4x2 @ 300dpi), printed via PowerShell
+  `System.Drawing`. Electron does NOT render labels — its only hidden
+  BrowserWindow is for printer enumeration; it require()s the print server
+  in-process. (The extension's offline fallback label in `content.js` is a
+  deliberately degraded safety artifact, not a second layout to keep in sync.)
+- Per-club layout: `config.labelTemplates` (overrides-only, keyed by
+  `clubKey()`), resolved by `labelTemplateFor()` in the HANDLERS and passed
+  in as `input.template` — the renderer never reads config (golden-suite
+  purity). Fail open: any broken template renders the stock label. Safety
+  content (allergy icons, no-photo camera, birthday) is not templatable.
 
 **Realtime privacy:** the Pusher channel is PUBLIC and Pusher public channels
 have no server-side authorization primitive, so `checkin`, `recap` and

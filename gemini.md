@@ -26,8 +26,9 @@ Every functional change requires:
 ## Architecture
 
 **Label Generation:**
-- Standalone: Canvas PNG (4x2 Landscape via PowerShell)
-- Electron: HTML/CSS in hidden BrowserWindow → PNG
+- ONE renderer: `generateLabel()` in `print-server/server.js` draws a canvas
+  PNG (4x2 @ 300dpi), printed via PowerShell. Electron does not render
+  labels — it require()s the print server in-process.
 
 **Data Flow:**
 - Bookmarklet fetches CSV → POST /update-csv
