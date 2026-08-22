@@ -1,4 +1,13 @@
-﻿## [5.14.0] - 2026-08-22
+﻿## [5.15.0] - 2026-08-22
+New-kid sparkle: a kid's label carries a small ✨ in the bottom-right icon row for their first two club weeks, so leaders learn the new names fast. Feature 3 of the round-3 build (#15).
+
+### First two weeks, first-ever night
+The window is day-based — tonight within 14 days of the kid's first-ever night on the attendance ledger — which covers their first two typical weekly club nights and doesn't stretch when a make-up event lands in the same fortnight. Computed in `recordAttendance()` (the ledger is already open there for milestones, the auto connect card, and the streak) and passed to the renderer as a first-class `isNewKid` boolean. Attendance-derived, so real check-in prints only — no sparkle on previews, reprints, or demo labels. Pairs naturally with the auto connect card: night one gets the welcome card AND the sparkle; nights two gets just the sparkle.
+
+### Tests
+Ledger units pin the boundary exactly (first night 13 days ago still sparkles, 14 days ago doesn't), plus first-ever-tonight and long-timer cases; a new `new-kid-sparkle` golden baseline pins the render and the torture case now sparkles too (its baseline the only regenerated one).
+
+## [5.14.0] - 2026-08-22
 Attendance streak flame: from six consecutive club nights on, a kid's label carries a "🔥 N" badge in the bottom-right icon row — the same coin-badge pattern Store Night shares use. Feature 2 of the round-3 build (#14).
 
 ### Club nights, not calendar weeks

@@ -1253,7 +1253,7 @@ async function generateLabel(input) {
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
-    streakCount = null, extras = {},
+    streakCount = null, isNewKid = false, extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1297,6 +1297,7 @@ async function generateLabel(input) {
     const n = Number(streakCount);
     streakCount = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
   }
+  isNewKid = !!isNewKid;
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -1471,7 +1472,7 @@ async function generateLabel(input) {
   // goTo/milestone lines used to skip this reservation as "rare and short", but
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
-  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null;
+  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid;
   const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
     + (hasFooter ? 1 : 0);
@@ -1574,7 +1575,8 @@ async function generateLabel(input) {
     // group is what sends a child to the right table, so it must stay readable.
     // Reserve the icon row's width on the right and centre what's left.
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
-      (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0);
+      (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0) +
+      (isNewKid ? 1 : 0);
     const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
@@ -1632,6 +1634,11 @@ async function generateLabel(input) {
     if (streakCount != null) {
       // Flame + attendance streak (#14) - same coin-badge pattern.
       glyphs.push({ ch: '\uD83D\uDD25 ' + streakCount, size: EMOJI_SIZE });
+    }
+    if (isNewKid) {
+      // Sparkle (#15): the kid's first two club weeks, so leaders learn the
+      // new names fast. Subtle by design - no text, small glyph.
+      glyphs.push({ ch: '\u2728', size: EMOJI_SIZE });
     }
     if (isBirthday) {
       glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
@@ -1901,12 +1908,24 @@ function recordAttendance(firstName, lastName, clubberId = null) {
     else break;
   }
 
+  // New-kid window (#15): tonight is within 14 days of the kid's first-ever
+  // night on this ledger — their first two typical club weeks. Day-based, not
+  // night-based, so a make-up event in the same fortnight doesn't extend it.
+  let isNewKid = false;
+  const firstNight = entry.dates.reduce((a, b) => (a && a < b ? a : b), null);
+  if (firstNight) {
+    const first = new Date(firstNight + 'T00:00:00');
+    const now = new Date(today + 'T00:00:00');
+    isNewKid = (now - first) / 86400000 < 14;
+  }
+
   const start = seasonStartISO();
   return {
     seasonCount: entry.dates.filter(d => d >= start).length,
     firstEver: entry.dates.length === 1,
     priorNightExists,
     streak,
+    isNewKid,
   };
 }
 
@@ -2522,12 +2541,15 @@ app.post('/print', async (req, res) => {
     let milestoneLine = '';
     let autoFirstTimer = false;
     let streakCount = null;
+    let newKid = false;
     if (!isDemo) {
       try {
         const att = recordAttendance(firstName, lastName, clubberId);
         milestoneLine = milestoneLineFor(att.seasonCount);
         // Streak flame (#14): earns its ink at six consecutive club nights.
         if (att.streak >= 6) streakCount = att.streak;
+        // New-kid sparkle (#15): the first two club weeks.
+        if (att.isNewKid) newKid = true;
         // Auto connect card (#10): a new face at a club that has met before.
         // Both halves matter — firstEver alone fires for EVERY kid on opening
         // night (and on a fresh install), because everyone's ledger starts at
@@ -2548,7 +2570,7 @@ app.post('/print', async (req, res) => {
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
-      stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount,
+      stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount, isNewKid: newKid,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
       template: labelTemplateFor(effectiveClubName),
