@@ -1,4 +1,11 @@
-﻿## [5.29.0] - 2026-08-22
+﻿## [5.29.1] - 2026-08-22
+Quality sweep, part 1 (with all 29 round-3 features now shipped):
+
+- **Removed a duplicate `parseBirthdate` definition** in server.js — two identical function declarations existed and the later one silently shadowed the first. Behavior-neutral (they were identical), but a future edit to the wrong copy would have been a no-op trap.
+- **Test suites can no longer pass by crashing.** server.js registers a production `uncaughtException` handler ("Never Crash"), which also swallowed test-time crashes: the event loop drained and the suite exited 0 without ever printing a summary — found the hard way when a ReferenceError mid-suite passed. Every suite now carries an exit guard: reaching `exit` with code 0 before the suite declared itself finished forces a failure.
+- **Ideas page**: a "Round 3: built" banner records the 29-idea August 2026 wave (printer v5.13.0–v5.29.0 + the display releases) so the scratchpad reflects reality.
+
+## [5.29.0] - 2026-08-22
 Version-skew banner, dashboard half (#7). The widget half has existed since the managed-extension work: when the app has already synced a newer extension to disk, the widget says "restart Chrome to load it". But that banner lives in Chrome — the one place the operator ISN'T looking when they wonder why the fix they just installed isn't behaving. Now the dashboard says it too ("widget + dashboard", operator's pick):
 
 - Every `/selftest` and `/contract-canary` post already carries the RUNNING extension's version; the server now records it (`extensionRunning` on `/health`).

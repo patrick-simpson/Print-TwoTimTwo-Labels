@@ -719,18 +719,8 @@ function effectiveHandbookGroup(rawGroup, clubName) {
   return g;
 }
 
-function parseBirthdate(s) {
-  if (!s || String(s).trim() === '' || s === 'N/A') return null;
-  try {
-    let t = String(s).trim();
-    const slash = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (slash) {
-      t = `${slash[3]}-${slash[1].padStart(2, '0')}-${slash[2].padStart(2, '0')}`;
-    }
-    const d = new Date(t);
-    return isNaN(d.getTime()) ? null : d;
-  } catch { return null; }
-}
+// (parseBirthdate lives with the birthday-week helpers further down — this
+// spot briefly held a duplicate declaration that the later one shadowed.)
 
 function parseGrade(s) {
   if (s === null || s === undefined) return null;

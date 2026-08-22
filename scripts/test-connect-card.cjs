@@ -17,6 +17,20 @@
 
 'use strict';
 
+// A crashed suite must FAIL, not pass: server.js's uncaughtException handler
+// (a production never-crash feature) can swallow a test-time crash, letting
+// the event loop drain and the process exit 0 without a summary ever printing.
+// If we reach 'exit' with code 0 and the suite never declared itself finished,
+// force red. (Found the hard way: a ReferenceError mid-suite passed CI.)
+let __suiteFinished = false;
+process.on('exit', (code) => {
+  if (code === 0 && !__suiteFinished) {
+    console.error('\u2717 Test suite terminated before completing (crash swallowed?) \u2014 failing.');
+    process.exitCode = 1;
+  }
+});
+
+
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
@@ -308,6 +322,7 @@ async function main() {
   }
   // Unconditional: server.js arms module-level publish intervals, so without
   // an explicit exit the process hangs the npm test chain forever.
+  __suiteFinished = true;
   process.exit(failed > 0 ? 1 : 0);
 }
 
