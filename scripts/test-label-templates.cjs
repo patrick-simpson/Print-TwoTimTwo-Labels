@@ -174,6 +174,36 @@ async function main() {
     check('preview also survives garbage templates', preview.status === 200);
   }
 
+  // ── 5. Musical printer endpoint (#11/#12): gates before hardware ──────────
+  {
+    console.log('musical printer: /play-tune gates');
+    const off = await post('/play-tune', {});
+    check('toggle off: 409, nothing sent to the printer', off.status === 409, `status ${off.status}`);
+
+    await post('/config', { musicalPrinter: true });
+    const evil = await post('/play-tune', {}, { Origin: 'http://evil.example:' + PORT });
+    check('foreign Origin cannot make the printer sing', evil.status === 403, `status ${evil.status}`);
+
+    const bad = await post('/play-tune', { printerName: 'x"; rm -rf /' });
+    check('an unsafe printerName is refused', bad.status === 400, `status ${bad.status}`);
+
+    // With the toggle on, a loopback caller, and the stubbed powershell on
+    // PATH, the raw sender's happy path runs end to end.
+    const play = await post('/play-tune', {});
+    check('with a working printer path the tune reports ok',
+      play.status === 200 && play.json && play.json.ok === true, JSON.stringify(play.json));
+    check('the response names a real tune', play.json && ['arpeggio', 'charge', 'westminster'].includes(play.json.tune));
+
+    // Remove the stub so the raw path throws — the response must still be a
+    // clean 200 with ok:false, never a 500: the tune is garnish.
+    fs.unlinkSync(stub);
+    const dead = await post('/play-tune', {});
+    check('a raw-path failure is swallowed (ok:false, not a 500)',
+      dead.status === 200 && dead.json && dead.json.ok === false, JSON.stringify(dead.json));
+
+    await post('/config', { musicalPrinter: false });
+  }
+
   listener.close();
 
   console.log(`\n${passed} passed, ${failed} failed`);

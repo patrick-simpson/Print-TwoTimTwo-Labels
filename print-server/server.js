@@ -2179,6 +2179,130 @@ $pd.Dispose()
   }
 }
 
+// ── Musical printer (#11/#12) ─────────────────────────────────────────────────
+// A thermal label printer is a stepper motor with a paper supply, and stepper
+// pitch tracks step rate: vary the feed SPEED and the motor sings. TSPL-family
+// printers (the club's Phomemo/Omezizy D450-class speaks it over USB) accept
+// per-command SPEED changes, so a "tune" is a sequence of SPEED+FEED pairs sent
+// as RAW bytes past the Windows driver, ending in one fast BACKFEED that
+// returns the media to (near) its start — a final swoop note that also keeps
+// stock use at zero-ish.
+//
+// Hard rules: the raw path NEVER touches normal label printing (its own temp
+// file, its own PowerShell script, failures logged and swallowed), and the
+// whole feature sits behind config.musicalPrinter — off by default, because
+// raw bytes at an unknown printer model are a party trick, not a guarantee.
+const TUNES = {
+  // [speed ips, seconds] per note. Pitch tracks speed; duration is
+  // feed-length/speed. Speeds stay in the D450-class's 1–6 range.
+  arpeggio:    [[2, 0.18], [3, 0.18], [4, 0.18], [6, 0.28]],
+  charge:      [[3, 0.14], [4, 0.14], [5, 0.14], [6, 0.22], [5, 0.14], [6, 0.30]],
+  westminster: [[5, 0.22], [3, 0.22], [4, 0.22], [2, 0.34], [2, 0.22], [4, 0.22], [5, 0.22], [3, 0.34]],
+};
+const TUNE_NAMES = Object.keys(TUNES);
+const TSPL_DPI = 203;                 // D450-class print head
+const TUNE_MAX_FEED_DOTS = 400;       // hard cap ≈ 2in of forward feed
+
+// Rotate through the three tunes by day, so club nights alternate.
+function currentTuneName(now = new Date()) {
+  const days = Math.floor(now.getTime() / 86400000);
+  return TUNE_NAMES[days % TUNE_NAMES.length];
+}
+
+// Compile a tune to a TSPL program. Pure and exported: the byte stream is the
+// unit-testable artifact, since nobody wants CI to need a singing printer.
+function buildTuneTspl(tuneName) {
+  const notes = TUNES[tuneName] || TUNES.arpeggio;
+  const lines = [];
+  let totalDots = 0;
+  for (const [speed, seconds] of notes) {
+    let dots = Math.max(8, Math.round(speed * TSPL_DPI * seconds));
+    if (totalDots + dots > TUNE_MAX_FEED_DOTS) dots = TUNE_MAX_FEED_DOTS - totalDots;
+    if (dots <= 0) break;
+    lines.push(`SPEED ${speed}`);
+    lines.push(`FEED ${dots}`);
+    totalDots += dots;
+  }
+  // The return swoop: fast backfeed of everything we fed, so the label stock
+  // ends (near) where it started. Printers that refuse long backfeeds just
+  // creep forward a little — the operator's cue to turn the toggle off.
+  lines.push('SPEED 6');
+  lines.push(`BACKFEED ${totalDots}`);
+  return lines.join('\r\n') + '\r\n';
+}
+
+// Send raw bytes to a named printer via winspool's RAW datatype — the escape
+// hatch past the GDI driver. Same execSync/temp-file discipline as
+// printImage(); the printer name is validated (isSafePrinterName) at the
+// endpoint, single quotes escaped here.
+function sendRawToPrinter(bytes, printerName) {
+  const binPath = tmpFilePath('awana-tune', 'bin');
+  fs.writeFileSync(binPath, bytes);
+  const safeBin = binPath.replace(/'/g, "''");
+  const safePrinter = (printerName || '').replace(/'/g, "''");
+  const ps = `
+$ErrorActionPreference = 'Stop'
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class RawPrint {
+  [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+  public static extern bool OpenPrinter(string printer, out IntPtr h, IntPtr pd);
+  [DllImport("winspool.Drv")] public static extern bool ClosePrinter(IntPtr h);
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+  public struct DOCINFOA {
+    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+  }
+  [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+  public static extern bool StartDocPrinter(IntPtr h, int level, ref DOCINFOA di);
+  [DllImport("winspool.Drv")] public static extern bool EndDocPrinter(IntPtr h);
+  [DllImport("winspool.Drv")] public static extern bool StartPagePrinter(IntPtr h);
+  [DllImport("winspool.Drv")] public static extern bool EndPagePrinter(IntPtr h);
+  [DllImport("winspool.Drv")] public static extern bool WritePrinter(IntPtr h, byte[] bytes, int count, out int written);
+}
+"@
+$bytes = [System.IO.File]::ReadAllBytes('${safeBin}')
+$h = [IntPtr]::Zero
+if (-not [RawPrint]::OpenPrinter('${safePrinter}', [ref]$h, [IntPtr]::Zero)) { throw 'OpenPrinter failed' }
+try {
+  $di = New-Object RawPrint+DOCINFOA
+  $di.pDocName = 'Club Label Printer tune'
+  $di.pDataType = 'RAW'
+  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw 'StartDocPrinter failed' }
+  [RawPrint]::StartPagePrinter($h) | Out-Null
+  $written = 0
+  if (-not [RawPrint]::WritePrinter($h, $bytes, $bytes.Length, [ref]$written)) { throw 'WritePrinter failed' }
+  [RawPrint]::EndPagePrinter($h) | Out-Null
+  [RawPrint]::EndDocPrinter($h) | Out-Null
+} finally { [RawPrint]::ClosePrinter($h) | Out-Null }
+`.trim();
+  const psPath = tmpFilePath('awana-tune', 'ps1');
+  try {
+    fs.writeFileSync(psPath, ps, 'utf8');
+    execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, { timeout: 15000, windowsHide: true });
+  } finally {
+    fs.unlink(psPath, () => {});
+    fs.unlink(binPath, () => {});
+  }
+}
+
+// Play a tune if (and only if) the toggle is on. Never throws: the chirp is
+// garnish, and garnish must never delay or fail a label.
+function playTuneIfEnabled(printerName, tuneName) {
+  if (config.musicalPrinter !== true) return false;
+  try {
+    const name = TUNE_NAMES.includes(tuneName) ? tuneName : currentTuneName();
+    sendRawToPrinter(Buffer.from(buildTuneTspl(name), 'ascii'), printerName);
+    console.log(`[tune] Played '${name}' on ${printerName || 'default printer'}`);
+    return true;
+  } catch (e) {
+    console.warn('[tune] Tune failed (non-critical):', e.message);
+    return false;
+  }
+}
+
 // ── Attendance ledger (#30) ───────────────────────────────────────────────────
 // Print history rolls over every ~2 nights (MAX_HISTORY=200), so milestones
 // need their own compact ledger: one dates[] per kid, one entry per day,
@@ -4017,6 +4141,10 @@ app.post('/canary', async (req, res) => {
     });
     pngPath = result.pngPath;
     const printerName = (req.body && req.body.printerName && String(req.body.printerName).trim()) || PRINTER_NAME;
+    // Startup chirp (#12): the morning test print announces itself with a
+    // two-second motor melody. Failure is swallowed inside — the canary's
+    // job is the label and the pipe, never the music.
+    playTuneIfEnabled(printerName);
     printImage(pngPath, printerName);
     stages.push({ stage: 'print', passed: true, detail: `TEST label sent to ${printerName || 'default printer'}` });
   } catch (err) {
@@ -4377,6 +4505,7 @@ app.post('/config', (req, res) => {
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
+    musicalPrinter,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -4470,6 +4599,9 @@ app.post('/config', (req, res) => {
     }
     // Collectible of the week (#20): on by default; false turns it off.
     if (collectibleIcons !== undefined) next.collectibleIcons = !!collectibleIcons;
+    // Musical printer (#11/#12): OFF by default - raw TSPL bytes at an unknown
+    // printer model are a party trick, not a guarantee.
+    if (musicalPrinter !== undefined) next.musicalPrinter = !!musicalPrinter;
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
@@ -4520,6 +4652,25 @@ app.post('/config/schedule', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Musical printer (#11/#12) — endpoint ──────────────────────────────────────
+// Loopback/trusted-origin only: feeding paper is a physical act, and a phone
+// on the venue Wi-Fi has no business making the printer sing mid-club.
+app.post('/play-tune', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The tune button only works from the dashboard on this computer' });
+  }
+  if (config.musicalPrinter !== true) {
+    return res.status(409).json({ error: 'Musical printer is off — enable it in Settings first' });
+  }
+  const wanted = String((req.body || {}).printerName || '').trim();
+  if (wanted && !isSafePrinterName(wanted)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
+  const tune = String((req.body || {}).tune || '') || undefined;
+  const ok = playTuneIfEnabled(wanted || PRINTER_NAME, tune);
+  res.json({ ok, tune: TUNE_NAMES.includes(tune) ? tune : currentTuneName() });
 });
 
 // ── Per-club label templates (#1) — endpoints ─────────────────────────────────
@@ -4827,6 +4978,8 @@ module.exports = {
   easterSunday, seasonForDate, SEASON_KEYS,
   // Collectible of the week (#20) — the rotation math.
   collectibleIndexForDate, COLLECTIBLE_SERIES,
+  // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
+  buildTuneTspl, currentTuneName, TUNE_NAMES,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going
