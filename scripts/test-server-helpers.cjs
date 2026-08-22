@@ -443,6 +443,19 @@ console.log('feeds.submitUnverified — batch self-verify report (#2): validatio
   feeds._resetForTests();
 }
 
+console.log('parseLatestChangeEntry (#6) — the what\'s-new panel reads changes.md');
+{
+  const { parseLatestChangeEntry: parse } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  const md = '\uFEFF## [5.28.0] - 2026-08-22\nTop entry line one.\n\nMore detail.\n\n## [5.27.0] - 2026-08-22\nOlder entry.\n';
+  const e = parse(md);
+  check('parses the top entry version and date', e && e.version === '5.28.0' && e.date === '2026-08-22', JSON.stringify(e));
+  check('body stops before the next entry', e && e.body === 'Top entry line one.\n\nMore detail.', JSON.stringify(e && e.body));
+  check('BOM tolerated (changes.md ships with one)', parse('## [1.0.0] - 2020-01-01\nx\n') !== null && e !== null);
+  check('no heading → null, never a throw', parse('just prose') === null && parse('') === null && parse(null) === null);
+  const single = parse('## [2.0.0] - 2021-01-01\nOnly entry.');
+  check('a single-entry file parses to the end', single && single.body === 'Only entry.');
+}
+
 console.log('shouldSendUpdateBeacon (#5) — fires once per version change, opt-in only');
 {
   const { shouldSendUpdateBeacon: f } = require(path.join(__dirname, '..', 'print-server', 'server.js'));

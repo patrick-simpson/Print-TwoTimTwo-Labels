@@ -1,4 +1,10 @@
-﻿## [5.27.0] - 2026-08-22
+﻿## [5.28.0] - 2026-08-22
+What-changed panel (#6): the release notes are already written — this file — so the app now surfaces them instead of asking the operator to find GitHub. Two halves ("tray balloon + dashboard", operator's pick):
+
+- **Dashboard**: a collapsed "What's new in vX.Y.Z" card (new `GET /whats-new`) shows this file's top entry, parsed by a pure `parseLatestChangeEntry()` (BOM-tolerant, stops at the next `## [` heading). changes.md now ships in the packaged app via `extraResources`, and the same `../changes.md` relative path resolves in dev (repo root) and packaged (resources/) alike. No notes available → the card hides itself.
+- **Tray**: on the FIRST boot of a new version, the Electron shell raises a local system notification ("Club Label Printer updated to vX.Y.Z" + the entry's first line) through the same `setOpsAlertHandler` hook the contract canary uses. Once per version by construction (keyed on the same `last-boot-version.json` the update beacon records), and fully independent of the opt-in public beacon — this one never leaves the machine.
+
+## [5.27.0] - 2026-08-22
 Update health beacon (#5, opt-in): after an auto-update, the operator has no confirmation the new build came back cleanly until they walk to the laptop. With the new "Update health beacon" setting on (dashboard Settings, off by default), the FIRST boot of a new version publishes `ops {type: 'update-ok', version}` on the event bus — the version string and the ok implicit in the event existing at all, nothing else ("version + ok flag only", operator's pick; "Pusher ops event", operator's pick).
 
 Mechanics that keep it honest:

@@ -5033,6 +5033,43 @@ const LISTEN_MAX_ATTEMPTS = 5;
 // after a few visits to Settings the event bus fired tally/recap/birthday
 // publishes N times a tick — and re-ran the prewarm blank print each time.
 let startupTasksDone = false;
+// ── What changed (#6) ─────────────────────────────────────────────────────────
+// The release notes already exist — changes.md is written for every version —
+// so the "what's new" panel parses that file rather than inventing a second
+// changelog. changes.md ships in the packaged app (extraResources), and the
+// same relative path resolves in dev (repo root) and packaged (resources/)
+// because the server dir sits one level below both.
+const CHANGES_FILE = path.join(__dirname, '..', 'changes.md');
+
+// Pure: first `## [X.Y.Z] - date` heading and its body up to the next `## `.
+function parseLatestChangeEntry(markdown) {
+  if (typeof markdown !== 'string' || !markdown) return null;
+  const text = markdown.replace(/^\uFEFF/, '');
+  const m = text.match(/^## \[(\d+\.\d+\.\d+)\] - (\S+)\s*\n/m);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  const next = text.indexOf('\n## [', start);
+  const body = text.slice(start, next === -1 ? undefined : next).trim();
+  return { version: m[1], date: m[2], body };
+}
+
+let cachedChangeEntry;
+function latestChangeEntry() {
+  if (cachedChangeEntry !== undefined) return cachedChangeEntry;
+  try {
+    cachedChangeEntry = parseLatestChangeEntry(fs.readFileSync(CHANGES_FILE, 'utf8'));
+  } catch {
+    cachedChangeEntry = null; // changes.md not shipped/readable — panel hides itself
+  }
+  return cachedChangeEntry;
+}
+
+app.get('/whats-new', (req, res) => {
+  const entry = latestChangeEntry();
+  if (!entry) return res.status(404).json({ error: 'no release notes available' });
+  res.json(entry);
+});
+
 // ── Update health beacon (#5, opt-in) ────────────────────────────────────────
 // After an auto-update, the operator has no confirmation the new build came
 // back cleanly until they walk to the laptop. When config.updateBeacon is on,
@@ -5056,6 +5093,16 @@ function recordBootVersionAndMaybeBeacon() {
   try {
     fs.writeFileSync(LAST_BOOT_VERSION_FILE, JSON.stringify({ version: SERVER_VERSION, at: new Date().toISOString() }));
   } catch (e) { console.warn('[update-beacon] Could not record boot version:', e.message); }
+  // What changed (#6): the tray half. A LOCAL notification on the first boot
+  // of a new version — independent of the opt-in beacon above, which gates
+  // only the PUBLIC event. Once per version by construction (prev is
+  // rewritten before this runs).
+  if (prev && typeof prev === 'string' && prev !== SERVER_VERSION) {
+    const entry = latestChangeEntry();
+    const firstLine = entry ? String(entry.body).split('\n', 1)[0].slice(0, 180) : '';
+    fireOpsAlert('Club Label Printer updated to v' + SERVER_VERSION,
+      firstLine || 'See the dashboard\u2019s "What\u2019s new" panel for details.');
+  }
   if (shouldSendUpdateBeacon(prev, SERVER_VERSION, config.updateBeacon === true)) {
     console.log(`[update-beacon] Updated ${prev} → ${SERVER_VERSION} and came back cleanly — publishing ops update-ok`);
     try {
@@ -5135,7 +5182,7 @@ module.exports = {
   parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
-  shouldSendUpdateBeacon,
+  shouldSendUpdateBeacon, parseLatestChangeEntry,
   // Attendance ledger — exported so the id-migration and the auto-connect-card
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
