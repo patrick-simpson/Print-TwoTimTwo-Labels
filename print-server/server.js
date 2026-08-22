@@ -4110,6 +4110,55 @@ app.post('/feed/unverified-checkins', (req, res) => {
   res.json({ ok: true, count: result.payload.entries.length });
 });
 
+// Reset tonight (operator request): one button on the widget zeroes the
+// night — every active check-in row today is marked undone (history is a
+// log, rows are never deleted), tonight's date comes OUT of the attendance
+// ledger (so a test night never pollutes streaks, milestones, or first-ever
+// detection), the recap buffer empties (a reconnecting display must not
+// replay celebrations for a night that was reset), and a fresh tally goes
+// out immediately so every screen drops to zero within seconds.
+app.post('/reset-tonight', (req, res) => {
+  if ((req.body || {}).confirm !== true) {
+    return res.status(400).json({ error: 'confirm: true required — this zeroes tonight on every surface' });
+  }
+  const today = localDayISO();
+  const nowIso = new Date().toISOString();
+
+  const history = loadHistory();
+  let undone = 0;
+  const next = history.map((row) => {
+    if (!row || row.success === false || isNonCheckinRow(row)) return row;
+    if (!isOnLocalDay(row.timestamp, today)) return row;
+    if (row.undone === true) return row;
+    undone++;
+    return { ...row, undone: true, undoneAt: nowIso };
+  });
+  if (undone) saveHistory(next);
+
+  // Tonight never happened, as far as the season ledger is concerned.
+  const ledger = loadAttendance();
+  let ledgerTouched = false;
+  for (const key of Object.keys(ledger)) {
+    const dates = ledger[key] && Array.isArray(ledger[key].dates) ? ledger[key].dates : null;
+    if (dates && dates.includes(today)) {
+      ledger[key].dates = dates.filter((d) => d !== today);
+      ledgerTouched = true;
+    }
+  }
+  if (ledgerTouched) saveAttendance(ledger);
+
+  eventBuffer = [];
+  try {
+    const tmp = EVENT_BUFFER_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(eventBuffer), 'utf8');
+    fs.renameSync(tmp, EVENT_BUFFER_FILE);
+  } catch (e) { console.warn('[reset] Could not persist emptied event buffer:', e.message); }
+
+  publishTally();
+  console.log(`[reset] Tonight reset by operator: ${undone} check-in(s) marked undone, ledger ${ledgerTouched ? 'cleared for today' : 'untouched'}`);
+  res.json({ ok: true, undone });
+});
+
 // ── Event-bus publishers ──────────────────────────────────────────────────────
 // Interval publishers are gated by the church-config club-night window so the
 // channel stays quiet the other ~165 hours a week. Every publisher is wrapped:

@@ -96,6 +96,10 @@ const post = (pathname, body) => j(pathname, {
 const sealedFrames = (event) => wire.filter((w) => w.event === event);
 const isSealed = (b) => Boolean(b && b.v === events.ENVELOPE_VERSION && typeof b.ct === 'string');
 
+function isNonCheckinRowLike(r) {
+  return !!(r && (r.isAward || r.isConnectCard));
+}
+
 async function main() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'awana-realtime-'));
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'awana-realtime-bin-'));
@@ -548,6 +552,41 @@ async function main() {
     check('the warning clears once the extension reports the synced version',
       !warningTexts(h.body.warnings).some((w) => /Restart Chrome/i.test(w)), JSON.stringify(h.body.warnings));
     server.setExtensionInfo(null);
+  }
+
+  // ── 12. Reset tonight: the operator's zero button ─────────────────────────
+  console.log('\nrealtime: POST /reset-tonight zeroes every surface');
+  {
+    const before = (await j('/stats/tonight')).body.checkedIn;
+    check('several kids are checked in before the reset', before >= 2, `checkedIn=${before}`);
+
+    const noConfirm = await post('/reset-tonight', {});
+    check('reset without confirm:true is refused', noConfirm.status === 400);
+
+    const tallyCountBefore = wire.filter((w) => w.event === 'tally').length;
+    const res = await post('/reset-tonight', { confirm: true });
+    check('reset succeeds and reports how many it undid',
+      res.status === 200 && res.body && res.body.ok === true && res.body.undone >= before,
+      JSON.stringify(res.body));
+
+    const stats = (await j('/stats/tonight')).body;
+    check('tonight drops to zero', stats.checkedIn === 0, JSON.stringify(stats));
+
+    const tallies = wire.filter((w) => w.event === 'tally');
+    const last = tallies[tallies.length - 1] && tallies[tallies.length - 1].payload;
+    check('a fresh zero tally goes out immediately', tallies.length > tallyCountBefore && last && last.total === 0,
+      JSON.stringify(last));
+
+    const hist = (await j('/history')).body || [];
+    check('history rows are marked undone, never deleted (history is a log)',
+      hist.length > 0 && hist.filter((r) => !isNonCheckinRowLike(r)).every((r) => r.undone === true || r.success === false),
+      JSON.stringify(hist.map((r) => [r.firstName, r.undone])));
+
+    const todayLocal = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    const ledger = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
+    check('tonight comes out of the season ledger (streaks/milestones stay honest)',
+      Object.values(ledger).every((k) => !(k.dates || []).includes(todayLocal)),
+      JSON.stringify(ledger));
   }
 
   listener.close();

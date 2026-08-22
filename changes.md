@@ -1,4 +1,17 @@
-﻿## [5.31.0] - 2026-08-22
+﻿## [5.32.0] - 2026-08-22
+Tonight count: honest, and resettable (operator request).
+
+**The bug**: the widget's "N printed" counted raw `/history/today` rows — and history is a LOG, so an undone check-in's row stays forever. Undo a kid on TwoTimTwo and the widget number never went back down. The count (and the reprint list) now includes only LIVE check-ins: undone rows, failed prints, award slips and connect cards no longer count. (The displays' tally already handled undo correctly — it re-broadcasts within seconds of the reconcile pass spotting one.)
+
+**The Reset button**: next to the Tonight refresh arrow, a red Reset (with a confirm dialog) zeroes the night everywhere at once:
+- every active check-in row today is marked `undone` on the server — history rows are never deleted;
+- tonight's date comes OUT of the season attendance ledger, so a test/rehearsal night never pollutes streaks, milestones, or first-ever detection;
+- the recap buffer empties (a reconnecting display must not replay celebrations for a night that was reset) and a fresh zero tally broadcasts immediately — every screen drops within seconds;
+- the extension clears its own print dedup and RE-BASELINES reconcile from the live report, so kids still checked in on TwoTimTwo are quietly re-seeded (no paper explosion) while fresh check-ins print again.
+
+New `POST /reset-tonight` requires `confirm: true`. Six new end-to-end checks pin the whole path (refusal without confirm, stats to zero, immediate zero tally on the wire, rows marked-not-deleted, ledger cleared for today).
+
+## [5.31.0] - 2026-08-22
 Musical printing, made real (operator report: "it just prints normal"). Root cause: the tune was only ever wired to the canary test print and the dashboard demo button — regular check-ins never played anything. Now, with the toggle on:
 
 - **Every label announces itself** — check-ins, reprints, and award slips all play a tune just BEFORE the label (so the backfeed returns the media to its start and the label prints aligned). Demo/rehearsal prints included.
