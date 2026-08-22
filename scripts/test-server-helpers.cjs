@@ -969,6 +969,41 @@ console.log('twin-safe labels (#13) — disambiguate same-name kids');
   })());
 }
 
+console.log('seasonal art (#16) — the calendar tiling and the computus');
+{
+  const { easterSunday, seasonForDate, SEASON_KEYS } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // The movable feast, pinned against published Easter dates.
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  check('Easter 2024 is March 31', iso(easterSunday(2024)) === '2024-03-31');
+  check('Easter 2025 is April 20', iso(easterSunday(2025)) === '2025-04-20');
+  check('Easter 2026 is April 5',  iso(easterSunday(2026)) === '2026-04-05');
+
+  const at = (y, m, d) => seasonForDate(new Date(y, m - 1, d));
+  check('Sep 1 is back-to-school', at(2026, 9, 1) === 'back-to-school');
+  check('Oct 10 is fall',          at(2026, 10, 10) === 'fall');
+  check('Nov 20 is thanksgiving',  at(2026, 11, 20) === 'thanksgiving');
+  check('Dec 25 is christmas',     at(2026, 12, 25) === 'christmas');
+  check('Jan 15 is winter',        at(2026, 1, 15) === 'winter');
+  check('Feb 29 (leap) is winter', at(2024, 2, 29) === 'winter');
+  check('May 10 is spring',        at(2026, 5, 10) === 'spring');
+  check('Jul 4 is vbs-summer',     at(2026, 7, 4) === 'vbs-summer');
+  // Easter 2026 is Apr 5: the window (Mar 22 – Apr 12) outranks spring…
+  check('Mar 25 2026 is easter',   at(2026, 3, 25) === 'easter');
+  check('Apr 11 2026 is easter',   at(2026, 4, 11) === 'easter');
+  // …and hands back to spring outside it.
+  check('Mar 20 2026 is spring',   at(2026, 3, 20) === 'spring');
+  check('Apr 14 2026 is spring',   at(2026, 4, 14) === 'spring');
+
+  // Every day of a full year maps to exactly one season — no gaps, no throws.
+  let holes = 0;
+  for (let d = new Date(2026, 0, 1); d.getFullYear() === 2026; d.setDate(d.getDate() + 1)) {
+    if (!SEASON_KEYS.includes(seasonForDate(new Date(d)))) holes++;
+  }
+  check('the calendar tiling has no holes across 2026', holes === 0, `${holes} uncovered days`);
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

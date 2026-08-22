@@ -1,4 +1,16 @@
-﻿## [5.16.0] - 2026-08-22
+﻿## [5.17.0] - 2026-08-22
+Seasonal border art: labels now wear the season — a dash-patterned badge outline in one of eight distinct rhythms plus a small top-center motif (holly, snowflake, sun, wheat, leaf, tulip, egg, pencil), all pure 1-bit-safe line work. Feature 5 of the round-3 build (#16), and the label half of the unified theming (#18) still to come.
+
+### Auto by calendar, pinnable from the dashboard
+A new `seasonTheme` setting ('auto' default, 'off', or any of the eight seasons) with a dashboard dropdown. Auto tiles the whole year with no gaps — back-to-school, fall, Thanksgiving, Christmas, winter, spring, VBS/summer — and Easter is computed properly (anonymous Gregorian computus, pinned against published dates for 2024–2026): its window, two weeks before Easter Sunday through the week after, outranks spring. Resolved by the callers (`currentLabelSeason()`) and passed in as `input.season` — the renderer stays config-free; an unknown value renders no art at all.
+
+### Thermal discipline, learned the v3.7.x way
+No color, no gray fills, nothing to dither: the border is a 1.3pt dashed stroke (eight distinct dash rhythms) and each motif is ~12pt of stroke paths. The motif draws only when the centered name block leaves real headroom — a crowded label keeps its ink for the name. The golden suite's pairwise-distinctness check is what proves all eight seasons render differently from each other and from the plain label.
+
+### Tests
+Computus pinned for three published Easters; season samples for every window including the Easter-outranks-spring boundary on both sides; a full-year sweep proving the tiling has no holes; eight new golden baselines (existing ones untouched — no season means byte-identical output).
+
+## [5.16.0] - 2026-08-22
 Twin-safe labels: when two active roster kids share the exact same first and last name, their labels now tell them apart — a middle initial on the first-name line when the roster ever carries one, else a small "b. Mar" whisper under the last name. Feature 4 of the round-3 build (#13).
 
 ### Middle initial preferred, birth month in practice

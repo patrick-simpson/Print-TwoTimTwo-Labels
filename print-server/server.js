@@ -748,6 +748,165 @@ function isSteppingUp(record, clubName) {
   return grade === STEP_UP_GRADUATING_GRADE[k];
 }
 
+// ── Seasonal border art (#16) ─────────────────────────────────────────────────
+// Eight seasons, resolved automatically from the calendar with a dashboard
+// override (config.seasonTheme: 'auto' | 'off' | a season key). The art is
+// pure 1-bit-safe LINE WORK — a dash-patterned stroke of the badge outline
+// plus a small top-center motif — because the v3.7.x per-club themes proved
+// that color and gray fills dither to mush on thermal output.
+const SEASON_KEYS = [
+  'back-to-school', 'fall', 'thanksgiving', 'christmas',
+  'winter', 'spring', 'easter', 'vbs-summer',
+];
+
+// Easter moves (anonymous Gregorian computus). Pinned by test: 2026-04-05.
+function easterSunday(year) {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+// The calendar's season for a date. Easter (two weeks before Easter Sunday
+// through the week after) outranks the underlying spring window; the fixed
+// windows tile the rest of the year with no gaps.
+function seasonForDate(now = new Date()) {
+  const easter = easterSunday(now.getFullYear());
+  const eStart = new Date(easter); eStart.setDate(eStart.getDate() - 14);
+  const eEnd = new Date(easter); eEnd.setDate(eEnd.getDate() + 7);
+  if (now >= eStart && now < eEnd) return 'easter';
+  const md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+  if (md >= '08-15' && md <= '09-30') return 'back-to-school';
+  if (md >= '10-01' && md <= '11-14') return 'fall';
+  if (md >= '11-15' && md <= '11-30') return 'thanksgiving';
+  if (md >= '12-01') return 'christmas';
+  if (md <= '02-29') return 'winter';
+  if (md <= '05-31') return 'spring';
+  return 'vbs-summer';   // 06-01 .. 08-14
+}
+
+// What the label should wear tonight: '' (no art) when off, the operator's
+// pinned season, or the calendar's. Resolved by CALLERS and passed into
+// generateLabel as input.season — the renderer never reads config.
+function currentLabelSeason(now = new Date()) {
+  const cfg = String(config.seasonTheme || 'auto');
+  if (cfg === 'off') return '';
+  if (SEASON_KEYS.includes(cfg)) return cfg;
+  return seasonForDate(now);
+}
+
+// Per-season dash pattern for the badge outline — eight visually distinct
+// rhythms, all solid strokes (no grays, nothing to dither).
+const SEASON_DASH = {
+  'back-to-school': [7, 3],
+  'fall':           [2, 2, 7, 2],
+  'thanksgiving':   [9, 2, 2, 2],
+  'christmas':      [5, 4],
+  'winter':         [1.5, 3],
+  'spring':         [4, 3],
+  'easter':         [1.5, 2, 5, 2],
+  'vbs-summer':     [11, 2],
+};
+
+// Stroke the badge outline in the season's rhythm. Drawn right after the
+// background so every content layer sits on top of it.
+function drawSeasonBorder(ctx, season, color, BX, BY, BW, BH, CORNER) {
+  ctx.save();
+  roundedRect(ctx, BX + 1.5, BY + 1.5, BW - 3, BH - 3, Math.max(4, CORNER - 1));
+  ctx.setLineDash(SEASON_DASH[season] || []);
+  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// A small top-center motif, pure path work at ~12pt. Drawn only when the
+// centered name block leaves headroom — a crowded label keeps its ink for
+// the name. (cx, top) is the motif box's top-center.
+function drawSeasonMotif(ctx, season, cx, top, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  const cy = top + 6;   // motif center line
+  switch (season) {
+    case 'back-to-school': {   // pencil
+      ctx.strokeRect(cx - 8, cy - 2.5, 12, 5);
+      ctx.beginPath(); ctx.moveTo(cx + 4, cy - 2.5); ctx.lineTo(cx + 8, cy); ctx.lineTo(cx + 4, cy + 2.5); ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 2.5); ctx.lineTo(cx - 4, cy + 2.5); ctx.stroke();
+      break;
+    }
+    case 'fall': {             // leaf
+      ctx.beginPath(); ctx.moveTo(cx - 7, cy); ctx.quadraticCurveTo(cx, cy - 6, cx + 7, cy);
+      ctx.quadraticCurveTo(cx, cy + 6, cx - 7, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy); ctx.stroke();
+      break;
+    }
+    case 'thanksgiving': {     // wheat sprig
+      ctx.beginPath(); ctx.moveTo(cx, cy + 5); ctx.lineTo(cx, cy - 5); ctx.stroke();
+      for (let j = 0; j < 3; j++) {
+        const yy = cy - 4 + j * 3;
+        ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx - 3.5, yy + 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx + 3.5, yy + 2); ctx.stroke();
+      }
+      break;
+    }
+    case 'christmas': {        // holly: two leaves + berries
+      ctx.beginPath(); ctx.moveTo(cx - 1, cy); ctx.quadraticCurveTo(cx - 5, cy - 5, cx - 9, cy - 1);
+      ctx.quadraticCurveTo(cx - 5, cy + 2, cx - 1, cy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 1, cy); ctx.quadraticCurveTo(cx + 5, cy - 5, cx + 9, cy - 1);
+      ctx.quadraticCurveTo(cx + 5, cy + 2, cx + 1, cy); ctx.stroke();
+      for (const dx of [-2, 0, 2]) {
+        ctx.beginPath(); ctx.arc(cx + dx, cy + 3, 1.2, 0, Math.PI * 2); ctx.fill();
+      }
+      break;
+    }
+    case 'winter': {           // snowflake asterisk
+      for (let j = 0; j < 3; j++) {
+        const a = (Math.PI / 3) * j;
+        ctx.beginPath();
+        ctx.moveTo(cx - Math.cos(a) * 6, cy - Math.sin(a) * 6);
+        ctx.lineTo(cx + Math.cos(a) * 6, cy + Math.sin(a) * 6);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'spring': {           // tulip
+      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 4); ctx.quadraticCurveTo(cx - 4, cy + 1, cx, cy + 1);
+      ctx.quadraticCurveTo(cx + 4, cy + 1, cx + 4, cy - 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx - 2, cy - 1.5); ctx.lineTo(cx, cy - 4);
+      ctx.lineTo(cx + 2, cy - 1.5); ctx.lineTo(cx + 4, cy - 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy + 1); ctx.lineTo(cx, cy + 6); ctx.stroke();
+      break;
+    }
+    case 'easter': {           // egg with a zigzag band
+      ctx.beginPath(); ctx.ellipse(cx, cy, 4.5, 6, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 4, cy);
+      ctx.lineTo(cx - 2, cy - 2); ctx.lineTo(cx, cy); ctx.lineTo(cx + 2, cy - 2); ctx.lineTo(cx + 4, cy);
+      ctx.stroke();
+      break;
+    }
+    case 'vbs-summer': {       // sun
+      ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.stroke();
+      for (let j = 0; j < 8; j++) {
+        const a = (Math.PI / 4) * j;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5);
+        ctx.lineTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
+        ctx.stroke();
+      }
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 // ── Twin-safe labels (#13) ────────────────────────────────────────────────────
 // When two ACTIVE roster kids share a normalized first+last name, their labels
 // need something a volunteer can tell apart at arm's length. Preference order:
@@ -1287,7 +1446,7 @@ async function generateLabel(input) {
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
-    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', extras = {},
+    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '', extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1336,6 +1495,8 @@ async function generateLabel(input) {
   // here so a malformed caller can't reshape the name block.
   middleInitial = String(middleInitial == null ? '' : middleInitial).trim().slice(0, 1).toUpperCase();
   nameHint      = String(nameHint == null ? '' : nameHint).trim().slice(0, 16);
+  // Season art (#16): unknown values render as no art at all - fail open.
+  season        = SEASON_KEYS.includes(season) ? season : '';
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -1397,6 +1558,10 @@ async function generateLabel(input) {
 
   // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
+
+  // ── Seasonal border (#16) ─────────────────────────────────────────────────
+  // Drawn first so every content layer sits on top; pure line work.
+  if (season) drawSeasonBorder(ctx, season, COLOR.sep, BX, BY, BW, BH, CORNER);
 
   // ── Left icon panel ───────────────────────────────────────────────────────
   // Tracked OUTSIDE the panel block: the text area below prints the club name
@@ -1559,6 +1724,12 @@ async function generateLabel(input) {
 
   const centerY = BY + usableH / 2;
   let y = Math.max(BY + 2, centerY - blockH / 2);
+
+  // Seasonal motif (#16): a small top-center flourish, only when the name
+  // block leaves real headroom - a crowded label keeps its ink for the name.
+  if (season && y >= BY + 17) {
+    drawSeasonMotif(ctx, season, textX + textW / 2, BY + 3, COLOR.club);
+  }
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
@@ -2455,6 +2626,7 @@ app.post('/label', async (req, res) => {
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
+      season: currentLabelSeason(),
       template: labelTemplateFor(effectiveClubName),
       extras: labelExtras,
     });
@@ -2634,6 +2806,7 @@ app.post('/print', async (req, res) => {
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
+      season: currentLabelSeason(),
       template: labelTemplateFor(effectiveClubName),
       extras,
     });
@@ -2674,6 +2847,7 @@ app.post('/print', async (req, res) => {
           isVisitor: true,
           testBanner: isDemo,   // a demo card must be as visibly fake as its label
           footerText: labelFooterText(),
+          season: currentLabelSeason(),
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
@@ -3100,6 +3274,7 @@ app.get('/preview', async (req, res) => {
       isVisitor: previewVisitor,
       middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
+      season: currentLabelSeason(),
       template,
     });
     res.set('Content-Type', 'image/png');
@@ -3165,6 +3340,7 @@ app.post('/reprint', async (req, res) => {
       clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
       middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
       footerText: labelFooterText(),
+      season: currentLabelSeason(),
       template: labelTemplateFor(entry.clubName),
     });
     pngPath = result.pngPath;
@@ -3269,6 +3445,7 @@ app.post('/print-award', async (req, res) => {
       allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
       middleInitial: twinA.middleInitial, nameHint: twinA.nameHint,
       footerText: labelFooterText(),
+      season: currentLabelSeason(),
       extras: { inverted: true },
     });
     pngPath = result.pngPath;
@@ -4051,7 +4228,7 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
-    labelFooter, connectCardAutoFirstTimer, connectCardGreeting,
+    labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -4133,6 +4310,15 @@ app.post('/config', (req, res) => {
       const cg = printableConfigLine(connectCardGreeting, 60);
       if (cg === '') delete next.connectCardGreeting;
       else next.connectCardGreeting = cg;
+    }
+    // Season theme (#16): 'auto' is the default (and deletes the key), 'off'
+    // disables the art, a known season pins it. Anything else is refused so a
+    // typo can't silently mean 'auto'.
+    if (seasonTheme !== undefined) {
+      const st = String(seasonTheme || 'auto');
+      if (st === 'auto') delete next.seasonTheme;
+      else if (st === 'off' || SEASON_KEYS.includes(st)) next.seasonTheme = st;
+      else return res.status(400).json({ error: 'unknown seasonTheme' });
     }
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
@@ -4486,6 +4672,9 @@ module.exports = {
   parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,
   // Twin-safe labels (#13) — collision detection + hint preference order.
   twinDisambiguation,
+  // Seasonal art (#16) — the computus and the calendar tiling are date math
+  // worth pinning; SEASON_KEYS doubles as the dashboard's option list.
+  easterSunday, seasonForDate, SEASON_KEYS,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going
