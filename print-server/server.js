@@ -748,6 +748,40 @@ function isSteppingUp(record, clubName) {
   return grade === STEP_UP_GRADUATING_GRADE[k];
 }
 
+// ── Twin-safe labels (#13) ────────────────────────────────────────────────────
+// When two ACTIVE roster kids share a normalized first+last name, their labels
+// need something a volunteer can tell apart at arm's length. Preference order:
+//   1. a middle initial, if the roster ever carries one — TwoTimTwo's real
+//      /clubber/csv export (verbatim 66-column header pinned in
+//      test-server-helpers.cjs and docs/TWOTIMTWO.md) has NO middle-name
+//      column today, so this is opportunistic future-proofing, checked
+//      against the unmapped raw columns parseCSV preserves;
+//   2. the birth month ("b. Mar") — always present in practice, meaningless
+//      to strangers, stable across years (unlike a grade hint).
+// Returns {middleInitial, nameHint} — both '' when the name is unique, so
+// the common case renders byte-identically to today.
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function twinDisambiguation(record, rows) {
+  const out = { middleInitial: '', nameHint: '' };
+  if (!record || !Array.isArray(rows)) return out;
+  const norm = (r) => (String(r.FirstName || '').trim() + ' ' + String(r.LastName || '').trim())
+    .toLowerCase().replace(/\s+/g, ' ');
+  const me = norm(record);
+  if (me === ' ' || me === '') return out;
+  const twins = rows.filter(r => r && !String(r.Inactive || '').trim() && norm(r) === me);
+  if (twins.length < 2) return out;
+
+  const middle = String(record['Middle Name'] || record.Middle || record.MiddleName || '').trim();
+  if (middle) {
+    out.middleInitial = middle[0].toUpperCase();
+    return out;
+  }
+  const bd = parseBirthdate(record.Birthdate);
+  if (bd) out.nameHint = 'b. ' + MONTH_ABBR[bd.getMonth()];
+  return out;
+}
+
 // ── Birthday-week check ───────────────────────────────────────────────────────
 // Returns true if the child's next birthday falls within the next 7 days
 // (inclusive of today). Handles year-wrapping correctly: if today is Dec 30
@@ -1253,7 +1287,7 @@ async function generateLabel(input) {
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
-    streakCount = null, isNewKid = false, extras = {},
+    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1298,6 +1332,10 @@ async function generateLabel(input) {
     streakCount = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
   }
   isNewKid = !!isNewKid;
+  // Twin-safe fields (#13): a single initial and one short hint line, bounded
+  // here so a malformed caller can't reshape the name block.
+  middleInitial = String(middleInitial == null ? '' : middleInitial).trim().slice(0, 1).toUpperCase();
+  nameHint      = String(nameHint == null ? '' : nameHint).trim().slice(0, 16);
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -1484,8 +1522,14 @@ async function generateLabel(input) {
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
 
+  // Twin-safe (#13): the middle initial rides the first-name line so the
+  // width fit below accounts for it; the birth-month hint is its own small
+  // line under the last name.
+  const displayFirst = middleInitial ? `${firstName} ${middleInitial}.` : firstName;
+  const hasHint = nameHint.length > 0;
+
   // Font sizes (in pt)
-  let fs1 = fitFontSize(ctx, firstName, 'bold', textW, tplNameMax, 18, fontFamily);
+  let fs1 = fitFontSize(ctx, displayFirst, 'bold', textW, tplNameMax, 18, fontFamily);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
@@ -1495,6 +1539,7 @@ async function generateLabel(input) {
 
   let blockH = fs1;
   if (hasLast)     blockH += GAP + fs2;
+  if (hasHint)     blockH += 2 + fs5;
   if (hasClub)     blockH += SEP + fs3;
   if (hasGroup)    blockH += GAP + fs4;
   // Birthday no longer consumes vertical space in the centered text block —
@@ -1522,7 +1567,7 @@ async function generateLabel(input) {
   // ── First name ────────────────────────────────────────────────────────────
   const firstFont = `bold ${fs1}px ${fontFamily}`;
   ctx.font = firstFont;
-  const safeFirst = truncateTextCanvas(ctx, firstName, firstFont, textW);
+  const safeFirst = truncateTextCanvas(ctx, displayFirst, firstFont, textW);
   ctx.fillStyle = COLOR.name;
   ctx.fillText(safeFirst, textCenterX, y);
   y += fs1;
@@ -1536,6 +1581,18 @@ async function generateLabel(input) {
     ctx.fillStyle = COLOR.last;
     ctx.fillText(safeLast, textCenterX, y);
     y += fs2;
+  }
+
+  // ── Twin hint (#13) ───────────────────────────────────────────────────────
+  // A whisper under the name — "b. Mar" — only present when two active roster
+  // kids share this exact name and no middle initial could split them.
+  if (hasHint) {
+    y += 2;
+    const hintFont = `italic ${fs5}px ${fontFamily}`;
+    ctx.font = hintFont;
+    ctx.fillStyle = COLOR.club;
+    ctx.fillText(truncateTextCanvas(ctx, nameHint, hintFont, textW), textCenterX, y);
+    y += fs5;
   }
 
   // ── Club name with separator ──────────────────────────────────────────────
@@ -2391,10 +2448,12 @@ app.post('/label', async (req, res) => {
     if (labelGoTo) labelExtras.goToLine = labelGoTo;
     if (visitor && config.firstTimerInverted !== false) labelExtras.inverted = true;
 
+    const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
+      middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
       template: labelTemplateFor(effectiveClubName),
       extras: labelExtras,
@@ -2567,10 +2626,12 @@ app.post('/print', async (req, res) => {
     // welcome the wrong child.
     const isFirstTimerTonight = !!visitor || autoFirstTimer;
 
+    const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount, isNewKid: newKid,
+      middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
       template: labelTemplateFor(effectiveClubName),
@@ -3032,10 +3093,12 @@ app.get('/preview', async (req, res) => {
   const previewVisitor = req.query.visitor === '1';
 
   try {
+    const twinP = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName,
       allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
       isVisitor: previewVisitor,
+      middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
       template,
     });
@@ -3096,9 +3159,11 @@ app.post('/reprint', async (req, res) => {
     // absent here because print history never stored them, so a reprint has
     // quietly differed from the original label. Naming the fields makes that
     // omission visible rather than hidden in a run of positional `false`s.
+    const twinR = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
       clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
       footerText: labelFooterText(),
       template: labelTemplateFor(entry.clubName),
     });
@@ -3198,9 +3263,11 @@ app.post('/print-award', async (req, res) => {
   let pngPath = null;
   try {
     const clubImageBuffer = await resolveImageBuffer(clubImageData);
+    const twinA = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
       allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      middleInitial: twinA.middleInitial, nameHint: twinA.nameHint,
       footerText: labelFooterText(),
       extras: { inverted: true },
     });
@@ -4417,6 +4484,8 @@ module.exports = {
   // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
   // pinning (June–August gate, day clamping, ISO-week reuse).
   parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,
+  // Twin-safe labels (#13) — collision detection + hint preference order.
+  twinDisambiguation,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

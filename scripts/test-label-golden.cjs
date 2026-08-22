@@ -169,6 +169,10 @@ const CASES = [
   { name: 'shares',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', awanaShares: 12 } },
   { name: 'streak-flame',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', streakCount: 7 } },
   { name: 'new-kid-sparkle',  model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isNewKid: true } },
+  // Twin-safe (#13): the birth-month whisper under the name, and the
+  // middle-initial variant riding the first-name line.
+  { name: 'twin-hint',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', nameHint: 'b. Mar' } },
+  { name: 'twin-initial',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', middleInitial: 'G' } },
   { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
@@ -208,6 +212,7 @@ const CASES = [
       allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'],
       handbookGroup: 'Flight 3:16',
       isBirthday: true, isVisitor: true, awanaShares: 99, noPhoto: true, streakCount: 12, isNewKid: true,
+      nameHint: 'b. Mar',
       footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm',
       extras: { goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 50th club night tonight!' },
     },

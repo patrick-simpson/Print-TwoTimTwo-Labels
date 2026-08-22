@@ -1,4 +1,16 @@
-﻿## [5.15.0] - 2026-08-22
+﻿## [5.16.0] - 2026-08-22
+Twin-safe labels: when two active roster kids share the exact same first and last name, their labels now tell them apart — a middle initial on the first-name line when the roster ever carries one, else a small "b. Mar" whisper under the last name. Feature 4 of the round-3 build (#13).
+
+### Middle initial preferred, birth month in practice
+TwoTimTwo's real `/clubber/csv` export (the verbatim 66-column header pinned in `test-server-helpers.cjs` and `docs/TWOTIMTWO.md`) has **no middle-name column**, so the middle-initial path is opportunistic future-proofing — `twinDisambiguation()` checks the unmapped raw columns `parseCSV` preserves, and falls back to the birth month, which is always present in practice, meaningless to strangers, and stable across years (unlike a grade hint). Inactive roster rows never count as twins — they aren't in the building. Matching uses the same case/whitespace normalization as `findClubber`, so the twins the hint splits are exactly the twins lookup confuses.
+
+### Rendering
+Two new first-class renderer inputs: `middleInitial` rides the first-name line (inside the width fit) and `nameHint` renders as a 9pt italic whisper under the last name, participating in the block-height math and the height-fit. Both empty for a unique name, so the common label renders byte-identically — zero regenerated baselines besides the torture case (which now carries a hint, per its every-field mandate). Applied at all five render sites, award slips included — an award slip is identity-critical too.
+
+### Tests
+Six helper units (unique-name no-op, birth-month fallback, middle-initial preference, inactive-rows-don't-count, normalization, no-data no-crash) plus `twin-hint` and `twin-initial` golden baselines.
+
+## [5.15.0] - 2026-08-22
 New-kid sparkle: a kid's label carries a small ✨ in the bottom-right icon row for their first two club weeks, so leaders learn the new names fast. Feature 3 of the round-3 build (#15).
 
 ### First two weeks, first-ever night
