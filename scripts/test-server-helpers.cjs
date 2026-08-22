@@ -857,6 +857,69 @@ console.log('effectiveHandbookGroup — no line unless it routes somewhere');
     !/rawGroup\.trim\(\)\.toLowerCase\(\) === 'all'/.test(serverSrc));
 }
 
+console.log('half-birthday cake (#8) — June–August birthdays, label only');
+{
+  const { parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // Garbage in, false out — same contract as isBirthdayWeek.
+  check('blank/N-A/garbage never half-cake',
+    isHalfBirthdayWeek('') === false && isHalfBirthdayWeek('N/A') === false
+    && isHalfBirthdayWeek('not a date') === false && isHalfBirthdayWeek(null) === false);
+
+  // The June–August gate is absolute: a spring birthday never half-cakes, on
+  // any day of any year this test runs.
+  check('a March birthday never half-cakes', isHalfBirthdayWeek('2018-03-10') === false);
+  check('a December birthday never half-cakes', isHalfBirthdayWeek('2017-12-25') === false);
+
+  // Dynamic, valid whichever day the suite runs:
+  // a kid born on today's month/day is always in their birthday week…
+  const today = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const bornToday = `2018-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  check('born-today is a birthday week', isBirthdayWeek(bornToday) === true);
+  check('born-today is a cake week', isCakeWeek(bornToday) === true);
+
+  // …and a kid born six months from today half-cakes THIS week if and only if
+  // that birth month is June–August (the gate), since their half-birthday
+  // lands on today.
+  const srcMonth = (today.getMonth() + 6) % 12;   // 0-indexed birth month
+  const lastDay = new Date(2018, srcMonth + 1, 0).getDate();
+  const bornOpposite = `2018-${pad(srcMonth + 1)}-${pad(Math.min(today.getDate(), lastDay))}`;
+  const expected = srcMonth >= 5 && srcMonth <= 7;
+  check(`born six months out (${bornOpposite}) half-cakes today iff summer-born (${expected})`,
+    isHalfBirthdayWeek(bornOpposite) === expected,
+    `got ${isHalfBirthdayWeek(bornOpposite)}`);
+
+  // Day clamping: Aug 29–31 birthdays target the END of February, never
+  // roll into March. parseBirthdate must read the slash form too.
+  check('parseBirthdate reads MM/DD/YYYY', (() => {
+    const d = parseBirthdate('8/31/2018');
+    return d && d.getMonth() === 7 && d.getDate() === 31;
+  })());
+  check('an Aug-31 half-birthday never throws and stays boolean',
+    typeof isHalfBirthdayWeek('2018-08-31') === 'boolean');
+
+  // isCakeWeek is exactly the OR of the two parts.
+  for (const bd of ['2018-06-15', '2018-01-05', bornToday, bornOpposite]) {
+    check(`isCakeWeek(${bd}) is the OR of its parts`,
+      isCakeWeek(bd) === (isBirthdayWeek(bd) || isHalfBirthdayWeek(bd)));
+  }
+
+  // Wiring: the display-facing sites must stay REAL birthdays. The checkin
+  // event and publishBirthdays/birthday-roster sites keep isBirthdayWeek;
+  // the five label-render sites use isCakeWeek.
+  const fs2 = require('fs');
+  const src = fs2.readFileSync(path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  const cakeCalls = (src.match(/= isCakeWeek\(record\.Birthdate\)/g) || []).length;
+  const realCalls = (src.match(/isBirthdayWeek\(record\.Birthdate\)/g) || []).length;
+  check('five label sites key the cake on isCakeWeek', cakeCalls === 5, `found ${cakeCalls}`);
+  check('the /print event split and the stats roster key on real birthdays',
+    realCalls === 2, `found ${realCalls}`);
+  check('publishBirthdays (the weekly display list) keys on real birthdays',
+    /isBirthdayWeek\(r\.Birthdate\)/.test(src));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
