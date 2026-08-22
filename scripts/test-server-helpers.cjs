@@ -920,6 +920,55 @@ console.log('half-birthday cake (#8) — June–August birthdays, label only');
     /isBirthdayWeek\(r\.Birthdate\)/.test(src));
 }
 
+console.log('twin-safe labels (#13) — disambiguate same-name kids');
+{
+  const { twinDisambiguation } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  const kid = (over) => Object.assign(
+    { FirstName: 'Emma', LastName: 'Stone', Birthdate: '2018-03-10', Inactive: '' }, over);
+
+  // Unique name: both fields empty, so the common label is byte-identical.
+  check('a unique name gets no hint', (() => {
+    const t = twinDisambiguation(kid({}), [kid({}), kid({ FirstName: 'Liam' })]);
+    return t.middleInitial === '' && t.nameHint === '';
+  })());
+
+  // Two active same-name kids, no middle column: birth-month hint.
+  check('a collision falls back to the birth month', (() => {
+    const rows = [kid({}), kid({ Birthdate: '2019-07-04' })];
+    const t = twinDisambiguation(rows[0], rows);
+    return t.middleInitial === '' && t.nameHint === 'b. Mar';
+  })());
+
+  // A middle name (should TwoTimTwo ever export one) wins over the month.
+  check('a middle initial is preferred when a middle column exists', (() => {
+    const rows = [kid({ 'Middle Name': 'grace' }), kid({ Birthdate: '2019-07-04' })];
+    const t = twinDisambiguation(rows[0], rows);
+    return t.middleInitial === 'G' && t.nameHint === '';
+  })());
+
+  // An INACTIVE same-name kid must not force a hint onto an active one —
+  // they aren't both in the building.
+  check('inactive rows never count as twins', (() => {
+    const rows = [kid({}), kid({ Inactive: 'y', Birthdate: '2019-07-04' })];
+    const t = twinDisambiguation(rows[0], rows);
+    return t.middleInitial === '' && t.nameHint === '';
+  })());
+
+  // Name matching is case/whitespace-normalized — the same rule findClubber
+  // uses, so the twins the hint splits are the twins lookup confuses.
+  check('collision matching normalizes case and whitespace', (() => {
+    const rows = [kid({}), kid({ FirstName: '  emma ', LastName: 'STONE', Birthdate: '2019-07-04' })];
+    return twinDisambiguation(rows[0], rows).nameHint === 'b. Mar';
+  })());
+
+  // No birthdate and no middle name: nothing to print, no crash.
+  check('no birthdate and no middle → empty hint, no throw', (() => {
+    const rows = [kid({ Birthdate: '' }), kid({ Birthdate: 'N/A' })];
+    const t = twinDisambiguation(rows[0], rows);
+    return t.middleInitial === '' && t.nameHint === '';
+  })());
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
