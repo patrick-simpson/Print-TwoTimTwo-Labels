@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "5.27.0",
+  "version": "5.28.0",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
@@ -59,6 +59,10 @@
           "public/**",
           "node_modules/**"
         ]
+      },
+      {
+        "from": "../changes.md",
+        "to": "changes.md"
       },
       {
         "from": "../chrome-extension",

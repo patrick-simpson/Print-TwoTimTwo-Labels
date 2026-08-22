@@ -201,6 +201,18 @@
     </div>
   </div>
 
+  <!-- What's new (#6): the latest changes.md entry, straight from the shipped
+       file — the release notes are already written per version, so the panel
+       never needs its own copywriting. -->
+  <div id="whatsnew-card" class="card" style="display:none">
+    <div class="card-body" style="padding:8px 16px">
+      <details>
+        <summary id="whatsnew-summary" style="cursor:pointer;font-weight:600;color:#334155;font-size:13px">What's new</summary>
+        <div id="whatsnew-body" style="white-space:pre-wrap;font-size:12px;color:#475569;margin-top:8px;max-height:260px;overflow-y:auto"></div>
+      </details>
+    </div>
+  </div>
+
   <!-- Tabbed section -->
   <div>
     <div class="tabs">
@@ -556,6 +568,21 @@ var WARNING_DESCRIPTIONS = {
 };
 
 // Load health status
+// What's new (#6): one fetch at page load — the file can't change while the
+// server is running, so there is nothing to poll.
+function loadWhatsNew() {
+  fetch(BASE + '/whats-new')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(entry) {
+      if (!entry || !entry.version) return;
+      document.getElementById('whatsnew-summary').textContent =
+        "What's new in v" + entry.version + ' (' + entry.date + ')';
+      document.getElementById('whatsnew-body').textContent = entry.body || '';
+      document.getElementById('whatsnew-card').style.display = 'block';
+    })
+    .catch(function() { /* server offline or old build — card stays hidden */ });
+}
+
 function loadHealth() {
   fetch(BASE + '/health').then(function(r) { return r.json(); }).then(function(data) {
     document.getElementById('version-text').textContent = 'v' + data.version + ' | ' + data.printer;
@@ -1260,6 +1287,7 @@ function runDiagnostics() {
 }
 
 // Init
+loadWhatsNew();
 loadHealth();
 loadRoster();
 loadHistory();

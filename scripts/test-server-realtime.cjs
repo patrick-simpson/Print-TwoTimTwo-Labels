@@ -479,6 +479,14 @@ async function main() {
       JSON.stringify(h.body.warnings));
   }
 
+  // ── 10. What's new (#6): the route serves the real top changes.md entry ──
+  console.log('\nrealtime: /whats-new serves the shipped release notes');
+  {
+    const res = await j('/whats-new');
+    check('/whats-new returns the top entry', res.status === 200 && res.body && /^\d+\.\d+\.\d+$/.test(res.body.version), JSON.stringify(res.body && res.body.version));
+    check('the entry has a body', typeof res.body.body === 'string' && res.body.body.length > 10);
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });
