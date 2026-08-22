@@ -1020,6 +1020,41 @@ console.log('collectible of the week (#20) — rotation math');
   check('twelve weeks on, the series wraps', at(12 * 7 * DAY) === idx);
 }
 
+console.log('musical printer (#11/#12) — the TSPL compiler');
+{
+  const { buildTuneTspl, currentTuneName, TUNE_NAMES } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  check('three tunes in rotation', TUNE_NAMES.length === 3);
+  check('today has a valid tune', TUNE_NAMES.includes(currentTuneName()));
+  const DAY = 86400000;
+  check('tomorrow plays a different tune',
+    currentTuneName(new Date(Date.now() + DAY)) !== currentTuneName());
+
+  for (const name of TUNE_NAMES) {
+    const prog = buildTuneTspl(name);
+    const feeds = [...prog.matchAll(/^FEED (\d+)$/gm)].map(m => Number(m[1]));
+    const backs = [...prog.matchAll(/^BACKFEED (\d+)$/gm)].map(m => Number(m[1]));
+    const speeds = [...prog.matchAll(/^SPEED (\d+(?:\.\d+)?)$/gm)].map(m => Number(m[1]));
+    check(`${name}: alternates SPEED/FEED and ends in one BACKFEED`,
+      feeds.length >= 3 && backs.length === 1 && speeds.length === feeds.length + 1);
+    check(`${name}: net media movement is zero (backfeed returns every dot fed)`,
+      feeds.reduce((a, b) => a + b, 0) === backs[0], prog);
+    check(`${name}: total forward feed stays under the 2in cap`,
+      feeds.reduce((a, b) => a + b, 0) <= 400);
+    check(`${name}: every speed is in the D450-safe 1-6 range`,
+      speeds.every(v => v >= 1 && v <= 6));
+    check(`${name}: CRLF line endings (TSPL is picky)`,
+      prog.includes('\r\n') && !/[^\r]\n/.test(prog));
+  }
+  // The three programs must actually differ — otherwise the rotation is fake.
+  const progs = TUNE_NAMES.map(buildTuneTspl);
+  check('the three tunes compile to three distinct programs',
+    new Set(progs).size === 3);
+  check('an unknown tune falls back to the arpeggio, never throws',
+    buildTuneTspl('freebird') === buildTuneTspl('arpeggio'));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

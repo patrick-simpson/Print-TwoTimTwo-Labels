@@ -1,4 +1,16 @@
-﻿## [5.18.0] - 2026-08-22
+﻿## [5.19.0] - 2026-08-22
+The printer sings: an opt-in musical mode makes the label printer's stepper motor "play" a two-second melody with test prints — a rising arpeggio, the "Charge!" fanfare, or the Westminster chime, rotating daily — plus a "Play test tune" button in Diagnostics. Features 7–8 of the round-3 build (#11, #12).
+
+### How a printer becomes an instrument
+Stepper pitch tracks step rate, and TSPL-family printers (the club's Phomemo/Omezizy D450-class) accept per-command SPEED changes. A tune compiles to a sequence of `SPEED`+`FEED` pairs — pitch from speed, note length from feed-distance÷speed — sent as RAW bytes past the GDI driver via winspool (`StartDocPrinter` with the RAW datatype, the standard escape hatch). Every program ends in one fast `BACKFEED` of exactly the dots fed, so the media returns to its start — a final swoop note that also keeps stock use at zero. Forward feed is hard-capped at ~2 inches, speeds stay in the D450-safe 1–6 range.
+
+### Guardrails
+Off by default (`musicalPrinter`), with a labeled dashboard checkbox that warns what to do if a printer creeps instead of returning. The raw path never touches normal label printing: its own temp files, its own PowerShell script, and `playTuneIfEnabled()` swallows every failure — the chirp rides the `/canary` test print but can never fail or delay it. `POST /play-tune` is gated on the trusted loopback origin (a phone on the venue Wi-Fi has no business feeding paper), refuses unsafe printer names, and answers a raw-path failure with a clean `ok:false`, never a 500.
+
+### Tests
+The TSPL compiler is the testable artifact: per-tune assertions for SPEED/FEED alternation, exact net-zero media movement, the feed cap, the safe speed range, CRLF endings, three-way program distinctness, daily rotation, and the unknown-tune fallback. Endpoint tests cover the off-toggle 409, the foreign-origin 403, unsafe-name 400, the stubbed-printer happy path, and the swallowed-failure 200.
+
+## [5.18.0] - 2026-08-22
 Collectible of the week: every label now carries one tiny path-drawn icon from a twelve-icon series — star, rocket, crown, butterfly, kite, acorn, music note, lightning, fish, sailboat, balloon, snail — that changes each calendar week, so a season's worth of labels becomes a collection. Feature 6 of the round-3 build (#20), closing the label-delight batch.
 
 ### Mechanics
