@@ -1,4 +1,10 @@
-﻿## [5.19.0] - 2026-08-22
+﻿## [5.20.0] - 2026-08-22
+Unified theming, printer half (#18): every `tally` broadcast now carries the printer's current season as an optional plaintext `season` field, so the check-in display can wear the same season the labels do — pinned, calendar-computed (Easter included), or absent when seasonal art is off. A display that boots mid-night picks it up on the next tally, no handshake. The contract also gains an optional `rehearsal` flag on `tally`, pre-staged for rehearsal mode (#19) so the cross-repo contract bumps once, not twice.
+
+### Contract discipline
+`contract-vectors.json` (canonical, this repo) adds `optionalFields: ["season","rehearsal"]` to the tally spec plus valid/dirty vectors — the display repo mirrors it byte-identically before consuming the fields, per the drift-check rule. Both fields are optional forever: a no-extras `buildTally()` keeps the exact legacy shape (pinned by test), old displays drop unknown fields, and deploy order between the repos never matters. The season value is a validated lowercase slug (a `<script>` smuggled in is dropped, never rejected); `rehearsal` is literal-`true`-only. Zero PII rides either field. CONTRACT.md updated.
+
+## [5.19.0] - 2026-08-22
 The printer sings: an opt-in musical mode makes the label printer's stepper motor "play" a two-second melody with test prints — a rising arpeggio, the "Charge!" fanfare, or the Westminster chime, rotating daily — plus a "Play test tune" button in Diagnostics. Features 7–8 of the round-3 build (#11, #12).
 
 ### How a printer becomes an instrument

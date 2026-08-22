@@ -4044,7 +4044,13 @@ app.post('/feed/checkin-report', (req, res) => {
 function publishTally() {
   try {
     const st = computeTonightStats();
-    events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn));
+    // Unified theming (#18): every tally carries the printer's current season
+    // (already resolved: pinned, calendar, or '' when art is off), so screens
+    // follow the labels within a minute of any change - and a display that
+    // boots mid-night picks it up on the next tally without any handshake.
+    events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn, {
+      season: currentLabelSeason(),
+    }));
   } catch (e) { console.warn('[events] tally publish skipped:', e.message); }
 }
 
