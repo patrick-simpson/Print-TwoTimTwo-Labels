@@ -1221,7 +1221,7 @@ async function generateLabel(input) {
     firstName, lastName, clubName, clubImageBuffer,
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
-    testBanner = false, footerText = '', greeting = '', extras = {},
+    testBanner = false, footerText = '', greeting = '', template = null, extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1238,6 +1238,18 @@ async function generateLabel(input) {
   // the cap exists because a group name past 30 chars is roster noise, whereas
   // a greeting is deliberate operator copy that just needs to fit the width.
   greeting      = String(greeting == null ? '' : greeting).trim();
+  // Per-club template (#1): a constrained set of layout switches, resolved by
+  // the CALLER (labelTemplateFor) and passed in — the renderer never reads
+  // config. Every switch defaults to "on" and the name ceiling to 48, so a
+  // missing, partial, or malformed template renders byte-identically to no
+  // template at all: a broken saved template degrades to the stock label,
+  // it never blocks a child's print.
+  const tpl = (template && typeof template === 'object' && !Array.isArray(template)) ? template : {};
+  const tplOn = (key) => tpl[key] !== false;
+  const tplNameMax = (() => {
+    const n = Math.round(Number(tpl.nameMaxPt));
+    return (Number.isFinite(n) && n >= 18 && n <= 48) ? n : 48;
+  })();
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
   noPhoto       = !!noPhoto;
@@ -1300,8 +1312,8 @@ async function generateLabel(input) {
   // The icon panel shows the real club logo when the client supplied one,
   // and falls back to a monogram badge for any recognized club so the icon
   // zone never silently disappears.
-  const hasLogo     = !stepUp && !!clubImageBuffer;
-  const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)];
+  const hasLogo     = !stepUp && !!clubImageBuffer && tplOn('showIconPanel');
+  const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)] && tplOn('showIconPanel');
   const hasIcon     = hasLogo || hasMonogram;
   const textX   = hasIcon ? TEXT_X : BX + 10;
   const textW   = hasIcon ? TEXT_W : BW - 20;
@@ -1401,16 +1413,19 @@ async function generateLabel(input) {
   // On step-up labels, the handbook group line is replaced with the
   // "Stepping up to <next club>" callout — always show that line.
   const stepUpGroupText = stepUp ? ('Stepping up to ' + (stepUpNextClub || 'next club')) : '';
-  const hasLast  = lastName.trim().length > 0;
+  const hasLast  = lastName.trim().length > 0 && tplOn('showLastName');
   // A real logo self-identifies the club, so the text line is redundant;
   // a monogram badge is only initials, so keep the club name printed too.
   // logoDrawn, not hasLogo: a supplied logo that was rejected (too small to
   // print cleanly, failed to decode) fell back to the monogram badge, and the
   // label must then carry the club name in text like any other monogram label.
-  const hasClub  = clubName.trim().length > 0 && !logoDrawn;
-  const hasGroup = stepUp ? !!stepUpGroupText : (greeting.length > 0 || handbookGroup.length > 0);
+  const hasClub  = clubName.trim().length > 0 && !logoDrawn && tplOn('showClubLine');
+  // The step-up callout and a connect-card greeting always show — a template
+  // only suppresses the roster-derived handbook-group line.
+  const hasGroup = stepUp ? !!stepUpGroupText
+    : (greeting.length > 0 || (handbookGroup.length > 0 && tplOn('showGroupLine')));
   const hasAllergy = allergyTokens.length > 0;
-  const hasFooter = footerText.length > 0;
+  const hasFooter = footerText.length > 0 && tplOn('showFooter');
 
   // Reserve room for the bottom band: right side is the coin/cake/allergy icon
   // row, left side is the goTo/milestone/footer stack. 20pt covers the icon row
@@ -1431,7 +1446,7 @@ async function generateLabel(input) {
   const fontFamily = getClubFontFamily(clubName);
 
   // Font sizes (in pt)
-  let fs1 = fitFontSize(ctx, firstName, 'bold', textW, 48, 18, fontFamily);
+  let fs1 = fitFontSize(ctx, firstName, 'bold', textW, tplNameMax, 18, fontFamily);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
@@ -1532,7 +1547,7 @@ async function generateLabel(input) {
   }
 
   // ── Visitor badge ─────────────────────────────────────────────────────────
-  if (isVisitor) {
+  if (isVisitor && tplOn('showVisitorPill')) {
     const visitorFont = `bold ${fs5}px ${fontFamily}`;
     ctx.font = visitorFont;
     const vText = 'VISITOR';
@@ -1880,6 +1895,64 @@ function labelFooterText() {
 const DEFAULT_CONNECT_GREETING = "We're so glad you're here!";
 function connectCardGreeting() {
   return String(config.connectCardGreeting || '').trim() || DEFAULT_CONNECT_GREETING;
+}
+
+// ── Per-club label templates (#1) ─────────────────────────────────────────────
+// config.labelTemplates is a map of clubKey (or 'default') → a small object of
+// layout OVERRIDES. Only deviations from the stock label are stored — a switch
+// that's on and a name ceiling of 48 are the defaults, not data — which keeps
+// config.json tiny and lets the default layout evolve without stale copies of
+// it frozen in every install's config.
+const LABEL_TEMPLATE_BOOLEANS = [
+  'showIconPanel', 'showLastName', 'showClubLine',
+  'showGroupLine', 'showVisitorPill', 'showFooter',
+];
+const LABEL_TEMPLATE_MAX_CLUBS = 12;
+
+// One template: returns the overrides-only form, or null for a non-object.
+function sanitizeLabelTemplate(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = { version: 1 };
+  for (const k of LABEL_TEMPLATE_BOOLEANS) {
+    if (raw[k] === false) out[k] = false;
+  }
+  if (raw.nameMaxPt !== undefined) {
+    const n = Math.round(Number(raw.nameMaxPt));
+    if (Number.isFinite(n) && n >= 18 && n < 48) out.nameMaxPt = n;
+  }
+  return out;
+}
+
+// The whole map. Club keys are normalized through clubKey() so 'T&T', 't & t'
+// and 'tnt' can't become three diverging templates. clubKey() returns null for
+// a club it doesn't recognize, so an unrecognized key is dropped here — a
+// custom-named club is served by the 'default' entry instead, which is also
+// how labelTemplateFor resolves it at print time.
+// Returns {ok, value} or {ok:false, error}.
+function sanitizeLabelTemplates(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'templates must be an object keyed by club name (or "default")' };
+  }
+  const out = {};
+  for (const rawKey of Object.keys(raw).slice(0, LABEL_TEMPLATE_MAX_CLUBS)) {
+    const key = rawKey === 'default' ? 'default' : clubKey(rawKey);
+    if (!key) continue;
+    const t = sanitizeLabelTemplate(raw[rawKey]);
+    if (!t || Object.keys(t).length <= 1) continue;   // no overrides → nothing to store
+    out[key] = t;
+  }
+  return { ok: true, value: out };
+}
+
+// Resolve the template for one club: exact club entry, else 'default', else
+// null (stock label). Type-guarded at every step — this reads persisted
+// config, and a hand-edited config.json must degrade, not throw, mid-event.
+function labelTemplateFor(clubName) {
+  const all = config.labelTemplates;
+  if (!all || typeof all !== 'object' || Array.isArray(all)) return null;
+  const key = clubKey(clubName);
+  const chosen = (key && all[key]) || all.default || null;
+  return (chosen && typeof chosen === 'object' && !Array.isArray(chosen)) ? chosen : null;
 }
 
 // ── Phone check-in queue (#17b) ───────────────────────────────────────────────
@@ -2244,6 +2317,7 @@ app.post('/label', async (req, res) => {
       allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       footerText: labelFooterText(),
+      template: labelTemplateFor(effectiveClubName),
       extras: labelExtras,
     });
     fs.unlink(result.pngPath, () => {});
@@ -2412,6 +2486,7 @@ app.post('/print', async (req, res) => {
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
+      template: labelTemplateFor(effectiveClubName),
       extras,
     });
     pngPath = result.pngPath;
@@ -2856,11 +2931,26 @@ app.get('/preview', async (req, res) => {
     handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, effectiveClubName);
   }
 
+  // Editor live preview: an unsaved template rides in ?template=<json>. It is
+  // sanitized exactly like a saved one and is never persisted; a parse failure
+  // falls back to the saved template, so a typo can't 500 the preview. The
+  // ?visitor=1 flag exists so the editor can see the VISITOR pill toggle.
+  let template = labelTemplateFor(effectiveClubName);
+  if (typeof req.query.template === 'string' && req.query.template) {
+    try {
+      const t = sanitizeLabelTemplate(JSON.parse(req.query.template));
+      if (t) template = t;
+    } catch { /* keep the saved template */ }
+  }
+  const previewVisitor = req.query.visitor === '1';
+
   try {
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName,
       allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      isVisitor: previewVisitor,
       footerText: labelFooterText(),
+      template,
     });
     res.set('Content-Type', 'image/png');
     res.send(result.buffer);
@@ -2923,6 +3013,7 @@ app.post('/reprint', async (req, res) => {
       firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
       clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
       footerText: labelFooterText(),
+      template: labelTemplateFor(entry.clubName),
     });
     pngPath = result.pngPath;
 
@@ -3936,6 +4027,40 @@ app.post('/config/schedule', (req, res) => {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
     applySavedConfig(next);
     res.json({ ok: true, schedule: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Per-club label templates (#1) — endpoints ─────────────────────────────────
+app.get('/config/label-templates', (req, res) => {
+  res.json({
+    templates: (config.labelTemplates && typeof config.labelTemplates === 'object' && !Array.isArray(config.labelTemplates))
+      ? config.labelTemplates : {},
+    knownClubs: Object.keys(CLUB_MONOGRAM),
+    fields: LABEL_TEMPLATE_BOOLEANS,
+  });
+});
+
+// Writes are gated on isTrustedConfigOrigin — stricter than the other
+// non-secret keys, deliberately: a template changes what gets PRINTED for a
+// whole club, and the phone PIN is a LAN-trust credential, not authorization
+// to restyle every label. The dashboard and extension options page (both
+// loopback) are the only writers.
+app.post('/config/label-templates', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'Label templates can only be changed from the dashboard on this computer' });
+  }
+  const cleaned = sanitizeLabelTemplates((req.body || {}).templates);
+  if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
+  try {
+    const next = fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {};
+    if (Object.keys(cleaned.value).length === 0) delete next.labelTemplates;
+    else next.labelTemplates = cleaned.value;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+    applySavedConfig(next);
+    console.log('[config] Label templates saved:', Object.keys(cleaned.value).join(', ') || '(none)');
+    res.json({ ok: true, templates: cleaned.value });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

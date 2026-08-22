@@ -1,4 +1,21 @@
-﻿## [5.11.0] - 2026-08-22
+﻿## [5.12.0] - 2026-08-22
+Per-club label templates: the dashboard's Label Preview tab is now an editor where each club (or the default for all of them) can switch parts of the label on or off and cap the name size, with a live server-rendered preview. Third and last of the ideas-triage picks (#1).
+
+### A constrained template, not a free canvas
+A template is a small set of switches — club logo/monogram panel, last name, club-name line, handbook-group line, VISITOR pill, footer — plus a first-name size cap (18–48pt). Deliberately NOT a drag-anything designer, for two graveyard-tested reasons: the v3.7.x per-club visual themes were removed because color and pattern dither to mush on 1-bit thermal output (per-club variation survives as font + icon, and templates don't reopen that door), and every pixel of freedom is a way to break the one artifact that must never fail at the door. Safety content is not templatable at all: allergy icons, the no-photo camera, and the birthday cake always print; the step-up callout and a connect card's greeting ignore the group-line switch.
+
+**Fail open, always.** Templates are resolved by the caller (`labelTemplateFor()`: exact club → `default` → stock) and passed into `generateLabel()` as part of its input — the renderer still never reads config, so the golden suite stays honest. Every switch defaults to on; a missing, partial, or hand-mangled template renders the stock label byte-identically. `test-label-templates.cjs` proves a config.json with arrays-for-templates garbage still prints.
+
+### Storage and the write gate
+`config.labelTemplates` stores overrides only, keyed by `clubKey()` (so `T&T`, `t & t` and `tnt` can't diverge into three templates; an unrecognized club name is served by `default`). It saves through its own `POST /config/label-templates` with a strict sanitizer — unknown fields dropped, out-of-range name caps dropped, at most 12 club entries — rather than more keys on the flat `/config` body, following the schedule endpoint's pattern. Writes are gated on `isTrustedConfigOrigin` — stricter than the other non-secret keys, deliberately: a template changes what gets printed for a whole club, and the phone PIN is a LAN-trust credential, not authorization to restyle every label. Reads are open like the rest of `/config`.
+
+### The editor
+Lives in the Label Preview tab: pick Default or a club, tick switches, drag the name-size slider, and the preview re-renders through the real `GET /preview` — which now accepts an unsaved `?template=<json>` override (sanitized identically, never persisted, malformed JSON falls back to the saved template) and `?visitor=1` so the pill switch is visible. Nothing prints differently until Save posts the whole map.
+
+### Tests
+New `test-label-templates.cjs` (20 checks, in `npm test`): sanitizer normalization and clamps, the origin gate, saved-template resolution changing real render bytes, the preview override, default-serves-unknown-clubs, and the garbage-in-config fail-open. Two new golden baselines: `template-no-icon` (full-width reflow) and `template-minimal` (everything templatable off — the name and the allergy icon survive).
+
+## [5.11.0] - 2026-08-22
 The connect card now prints itself for first-time visitors — no checkbox required — and lost its three known warts along the way. Second of the three ideas-triage picks (#10); the per-club template editor (#1) is next.
 
 ### Auto-detection: a new face at a club that has met before

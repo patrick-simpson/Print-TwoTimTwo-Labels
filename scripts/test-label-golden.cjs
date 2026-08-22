@@ -180,6 +180,11 @@ const CASES = [
   { name: 'footer-with-go-to', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
   { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  // Per-club templates: switches OFF what the stock label shows. no-icon pins
+  // the full-width text reflow; minimal pins that every templatable slot can
+  // go dark (name + allergy safety icons survive — those are not templatable).
+  { name: 'template-no-icon', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', template: { showIconPanel: false } } },
+  { name: 'template-minimal', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', allergyTokens: ['NUTS'], footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', template: { showIconPanel: false, showLastName: false, showClubLine: false, showGroupLine: false, showFooter: false, nameMaxPt: 30 } } },
   // The thermal-logo pipeline. light-cyan is the real Puggles incident; padded
   // proves the ink crop; ghost and white-on-dark pin the fallback boundaries.
   { name: 'logo-light-cyan',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo() } },

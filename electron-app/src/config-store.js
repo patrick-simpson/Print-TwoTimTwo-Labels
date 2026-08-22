@@ -8,7 +8,8 @@
 // allowedOrigins, pusherAppId/Key/Secret/Cluster), the operator schedule, and
 // assorted preferences (historyRetentionDays, connectCard,
 // connectCardAutoFirstTimer, connectCardGreeting, worksheetPrinter,
-// firstTimerInverted, labelFooter). The Electron setup wizard owns exactly three:
+// firstTimerInverted, labelFooter, labelTemplates). The Electron setup wizard
+// owns exactly three:
 // printerName, checkinUrl, launchOnBoot.
 //
 // The Electron writer used to do a bare whole-file `writeFileSync(path,
