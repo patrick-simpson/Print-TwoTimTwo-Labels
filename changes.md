@@ -1,4 +1,13 @@
-﻿## [5.32.0] - 2026-08-22
+﻿## [5.32.1] - 2026-08-22
+Update self-repair (operator field report: "server failed to start — Cannot find module 'parseurl'"). The released installers were fine — every release passes a fresh-install smoke test that boots the full server — but the operator's laptop took two auto-updates within a couple of hours and ended up with a half-copied `resources/print-server/node_modules`: the signature of an interrupted or interleaved in-place update.
+
+Two defenses:
+- **Installs can no longer interleave.** `performQuitAndInstall` is now re-entrant-proof: once an install is handed to NSIS, every further trigger (the push event, the 24h poll, a manual click, a second release landing mid-install) is ignored. Two installers racing over the same directory is exactly how a node_modules ends up half-copied.
+- **A broken install explains and repairs itself.** When the server fails to start with `Cannot find module`, the error dialog now says what actually happened ("the last update looks interrupted") and offers **Repair now** — it downloads the latest full installer (Electron's redirect-following net client) to temp, launches it visibly, and quits so NSIS can replace the app files. Settings, roster and history live in userData and survive. A download failure falls back to the direct release URL for a manual fix.
+
+Immediate recovery for an already-broken install: quit the app and run `Club-Label-Printer-Setup.exe` from the latest GitHub release — config is untouched.
+
+## [5.32.0] - 2026-08-22
 Tonight count: honest, and resettable (operator request).
 
 **The bug**: the widget's "N printed" counted raw `/history/today` rows — and history is a LOG, so an undone check-in's row stays forever. Undo a kid on TwoTimTwo and the widget number never went back down. The count (and the reprint list) now includes only LIVE check-ins: undone rows, failed prints, award slips and connect cards no longer count. (The displays' tally already handled undo correctly — it re-broadcasts within seconds of the reconcile pass spotting one.)

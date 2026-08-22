@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, Notification, net: electronNet } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -168,8 +168,18 @@ const AUTO_INSTALL_GRACE_MS = 5000;
 const AUTO_INSTALL_BUSY_CAP_MS = 60000;
 const AUTO_INSTALL_POLL_MS = 1000;
 
+let installInFlight = false;
 function performQuitAndInstall(reason) {
   if (!autoUpdater) return;
+  // Once an install has been handed to NSIS, every further trigger (the
+  // push event, the 24h poll, a manual click, a second release landing
+  // mid-install) must be ignored: two installers interleaving over the same
+  // directory is exactly how an install ends up with half a node_modules.
+  if (installInFlight) {
+    console.log(`[update] Ignoring "${reason}" — an install is already in flight`);
+    return;
+  }
+  installInFlight = true;
   console.log(`[update] ${reason}`);
   app.isQuitting = true;
   // isSilent=true: this is an unattended kiosk box, nobody is at the
@@ -613,13 +623,74 @@ function startServer(config) {
   } catch (e) {
     serverState = { status: 'failed', error: `${e.message}\n${e.stack || ''}` };
     console.error('[server] Print server failed to start:', e);
-    dialog.showErrorBox(
-      'Club Label Printer — server failed to start',
-      'Labels canNOT print until this is fixed.\n\n' + e.message +
-      '\n\nPlease send a screenshot of this message to your administrator.'
-    );
+    // A missing module inside resources/ is the signature of an interrupted
+    // or interleaved update (a half-copied node_modules) — not a bug the
+    // operator can screenshot their way out of. Offer the actual fix: pull
+    // the full installer from the latest release and run it. Settings,
+    // roster and history live in userData and survive the reinstall.
+    if (/cannot find module/i.test(e.message || '')) {
+      offerRepairInstall(e.message);
+    } else {
+      dialog.showErrorBox(
+        'Club Label Printer — server failed to start',
+        'Labels canNOT print until this is fixed.\n\n' + e.message +
+        '\n\nPlease send a screenshot of this message to your administrator.'
+      );
+    }
   }
   if (currentConfig) buildTray(currentConfig);
+}
+
+// ─── Self-repair for a broken install ────────────────────────────────────────
+const REPAIR_INSTALLER_URL =
+  'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Club-Label-Printer-Setup.exe';
+
+function offerRepairInstall(errMessage) {
+  dialog.showMessageBox({
+    type: 'error',
+    title: 'Club Label Printer — update needs repair',
+    message: 'The last update looks interrupted — part of the app is missing, and labels canNOT print until it is repaired.',
+    detail: 'Fix: reinstall from the latest full installer. Your settings, roster and history are kept.\n\nTechnical detail: ' + errMessage,
+    buttons: ['Repair now (download installer)', 'Open releases page', 'Close'],
+    defaultId: 0,
+    cancelId: 2,
+  }).then(({ response }) => {
+    if (response === 0) downloadAndRunRepairInstaller();
+    else if (response === 1) shell.openExternal('https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest');
+  }).catch(() => { /* dialog dismissed */ });
+}
+
+// Downloads the full installer (Electron's net follows GitHub's redirects,
+// plain https.get does not) to temp and launches it VISIBLY — the operator
+// clicks through it, so nothing installs behind their back — then quits so
+// NSIS can replace the app files.
+function downloadAndRunRepairInstaller() {
+  const dest = path.join(os.tmpdir(), 'Club-Label-Printer-Setup.exe');
+  const file = fs.createWriteStream(dest);
+  const request = electronNet.request(REPAIR_INSTALLER_URL);
+  const fail = (why) => {
+    try { file.close(); } catch { /* ignore */ }
+    dialog.showErrorBox(
+      'Repair download failed',
+      why + '\n\nDownload it manually instead:\n' + REPAIR_INSTALLER_URL
+    );
+  };
+  request.on('response', (response) => {
+    if (response.statusCode !== 200) { fail('HTTP ' + response.statusCode); return; }
+    response.on('data', (chunk) => file.write(chunk));
+    response.on('end', () => {
+      file.end(() => {
+        shell.openPath(dest).then((openErr) => {
+          if (openErr) { fail(openErr); return; }
+          app.isQuitting = true;
+          app.quit();
+        });
+      });
+    });
+    response.on('error', () => fail('download interrupted'));
+  });
+  request.on('error', (err) => fail(err.message || 'network error'));
+  request.end();
 }
 
 // True when something is actually answering on the server port — the ground
