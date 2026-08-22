@@ -407,7 +407,7 @@
                   <input type="checkbox" id="settings-collectible" checked> Collectible icon of the week on labels (12-icon series)
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
-                  <input type="checkbox" id="settings-musical"> Musical printer: motor melody with test prints (TSPL printers, e.g. D450)
+                  <input type="checkbox" id="settings-musical"> Musical printer: a tune with every label — cycling three songs, Happy Birthday for birthday kids (TSPL printers, e.g. D450)
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-update-beacon"> Update health beacon: after an auto-update, announce "vX.Y.Z came back cleanly" on the event bus (version number only)
@@ -1206,6 +1206,17 @@ function renderNightStatus(h) {
   } else {
     var failedChecks = (st.results || []).filter(function(r) { return !r.passed; }).map(function(r) { return r.check; });
     rows += statusRow('❌', 'Check-in page selectors', 'FAILING: ' + (failedChecks.join(', ') || 'unknown') + ' at ' + formatTime(st.at));
+  }
+
+  var mt = h.musicalTune;
+  if (mt && mt.enabled) {
+    if (!mt.last) {
+      rows += statusRow('🟡', 'Musical printer', 'on — no tune attempted yet this session');
+    } else if (mt.last.ok) {
+      rows += statusRow('🎵', 'Musical printer', "last tune '" + mt.last.tune + "' played " + formatTime(mt.last.at));
+    } else {
+      rows += statusRow('❌', 'Musical printer', "tune '" + mt.last.tune + "' FAILED: " + (mt.last.error || 'unknown') + ' at ' + formatTime(mt.last.at));
+    }
   }
 
   var cc = h.contractCanary;

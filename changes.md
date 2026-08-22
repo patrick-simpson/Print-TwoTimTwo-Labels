@@ -1,4 +1,13 @@
-﻿## [5.30.0] - 2026-08-22
+﻿## [5.31.0] - 2026-08-22
+Musical printing, made real (operator report: "it just prints normal"). Root cause: the tune was only ever wired to the canary test print and the dashboard demo button — regular check-ins never played anything. Now, with the toggle on:
+
+- **Every label announces itself** — check-ins, reprints, and award slips all play a tune just BEFORE the label (so the backfeed returns the media to its start and the label prints aligned). Demo/rehearsal prints included.
+- **Tunes cycle per label** (was per day): arpeggio → charge → westminster → repeat, so a batch of siblings plays a little medley. A **birthday kid's label plays "Happy Birthday to You"** (the G-G-A-G-C-B opening phrase mapped onto the motor's low speeds so all six notes fit the feed cap) — and that tune is deliberately excluded from the rotation, so hearing it MEANS something.
+- **Reliability & observability for the D450-class**: the raw winspool path now uses the Unicode entry points (a printer name with any non-ASCII character used to fail the ANSI OpenPrinterA silently), every failure carries the exact Win32 error code, WritePrinter verifies the byte count, and a transient spooler hiccup gets one quick retry. The last tune attempt's outcome — success or the precise error — is now on `/health` and as a 🎵 row in the dashboard's Night Status card, so "why isn't it singing" is answerable from the dashboard instead of invisible.
+
+The hard rules stand: the tune path never touches label printing, failures are logged and swallowed, and a kid at the door gets a label even if the music never plays.
+
+## [5.30.0] - 2026-08-22
 Removed the dashed seasonal border that traced the whole label (operator request). The per-season top-center motif stays — the seasonal art is now the motif alone, and every label edge is clean. Golden baselines regenerated (42).
 
 ## [5.29.4] - 2026-08-22

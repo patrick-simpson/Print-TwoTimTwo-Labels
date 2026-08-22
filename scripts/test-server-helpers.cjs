@@ -1133,14 +1133,19 @@ console.log('collectible of the week (#20) — rotation math');
 
 console.log('musical printer (#11/#12) — the TSPL compiler');
 {
-  const { buildTuneTspl, currentTuneName, TUNE_NAMES } =
+  const { buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION } =
     require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
-  check('three tunes in rotation', TUNE_NAMES.length === 3);
-  check('today has a valid tune', TUNE_NAMES.includes(currentTuneName()));
-  const DAY = 86400000;
-  check('tomorrow plays a different tune',
-    currentTuneName(new Date(Date.now() + DAY)) !== currentTuneName());
+  check('four tunes exist (three in rotation + Happy Birthday)',
+    TUNE_NAMES.length === 4 && TUNE_NAMES.includes('birthday'));
+  check('the rotation excludes birthday — hearing it MEANS a birthday kid',
+    TUNE_ROTATION.length === 3 && !TUNE_ROTATION.includes('birthday'));
+  // Per-LABEL cycling (operator request — was per day): consecutive prints
+  // get consecutive tunes, wrapping after three.
+  const a = nextTuneName(), b = nextTuneName(), c = nextTuneName(), d = nextTuneName();
+  check('consecutive labels play different tunes', a !== b && b !== c && a !== c);
+  check('the rotation wraps after three', d === a);
+  check('rotation only serves rotation tunes', [a, b, c].every((n) => TUNE_ROTATION.includes(n)));
 
   for (const name of TUNE_NAMES) {
     const prog = buildTuneTspl(name);
@@ -1158,10 +1163,10 @@ console.log('musical printer (#11/#12) — the TSPL compiler');
     check(`${name}: CRLF line endings (TSPL is picky)`,
       prog.includes('\r\n') && !/[^\r]\n/.test(prog));
   }
-  // The three programs must actually differ — otherwise the rotation is fake.
+  // Every program must actually differ — otherwise the rotation is fake.
   const progs = TUNE_NAMES.map(buildTuneTspl);
-  check('the three tunes compile to three distinct programs',
-    new Set(progs).size === 3);
+  check('all four tunes compile to distinct programs',
+    new Set(progs).size === TUNE_NAMES.length);
   check('an unknown tune falls back to the arpeggio, never throws',
     buildTuneTspl('freebird') === buildTuneTspl('arpeggio'));
 }

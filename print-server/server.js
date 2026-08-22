@@ -2217,15 +2217,25 @@ const TUNES = {
   arpeggio:    [[2, 0.18], [3, 0.18], [4, 0.18], [6, 0.28]],
   charge:      [[3, 0.14], [4, 0.14], [5, 0.14], [6, 0.22], [5, 0.14], [6, 0.30]],
   westminster: [[5, 0.22], [3, 0.22], [4, 0.22], [2, 0.34], [2, 0.22], [4, 0.22], [5, 0.22], [3, 0.34]],
+  // "Hap-py birth-day to you" — G G A G C B mapped onto the motor's low
+  // speeds (1 1 2 1 3 2) so the whole phrase fits the feed cap: low speed =
+  // fewer dots per second of sound, which is what buys six notes.
+  birthday:    [[1, 0.15], [1, 0.15], [2, 0.22], [1, 0.22], [3, 0.17], [2, 0.22]],
 };
 const TUNE_NAMES = Object.keys(TUNES);
+// The per-label rotation deliberately excludes 'birthday' — that one is
+// reserved for a birthday kid's label, so hearing it MEANS something.
+const TUNE_ROTATION = ['arpeggio', 'charge', 'westminster'];
 const TSPL_DPI = 203;                 // D450-class print head
 const TUNE_MAX_FEED_DOTS = 400;       // hard cap ≈ 2in of forward feed
 
-// Rotate through the three tunes by day, so club nights alternate.
-function currentTuneName(now = new Date()) {
-  const days = Math.floor(now.getTime() / 86400000);
-  return TUNE_NAMES[days % TUNE_NAMES.length];
+// Cycle tunes per LABEL (operator request — was per day): every print gets
+// the next tune in rotation, so a batch of siblings plays a little medley.
+let tuneCursor = 0;
+function nextTuneName() {
+  const name = TUNE_ROTATION[tuneCursor % TUNE_ROTATION.length];
+  tuneCursor++;
+  return name;
 }
 
 // Compile a tune to a TSPL program. Pure and exported: the byte stream is the
@@ -2265,16 +2275,16 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class RawPrint {
-  [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+  [DllImport("winspool.Drv", EntryPoint="OpenPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
   public static extern bool OpenPrinter(string printer, out IntPtr h, IntPtr pd);
   [DllImport("winspool.Drv")] public static extern bool ClosePrinter(IntPtr h);
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
   public struct DOCINFOA {
-    [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
-    [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
-    [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDocName;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pOutputFile;
+    [MarshalAs(UnmanagedType.LPWStr)] public string pDataType;
   }
-  [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi)]
+  [DllImport("winspool.Drv", EntryPoint="StartDocPrinterW", SetLastError=true, CharSet=CharSet.Unicode)]
   public static extern bool StartDocPrinter(IntPtr h, int level, ref DOCINFOA di);
   [DllImport("winspool.Drv")] public static extern bool EndDocPrinter(IntPtr h);
   [DllImport("winspool.Drv")] public static extern bool StartPagePrinter(IntPtr h);
@@ -2284,15 +2294,16 @@ public class RawPrint {
 "@
 $bytes = [System.IO.File]::ReadAllBytes('${safeBin}')
 $h = [IntPtr]::Zero
-if (-not [RawPrint]::OpenPrinter('${safePrinter}', [ref]$h, [IntPtr]::Zero)) { throw 'OpenPrinter failed' }
+if (-not [RawPrint]::OpenPrinter('${safePrinter}', [ref]$h, [IntPtr]::Zero)) { throw ('OpenPrinter failed for ''${safePrinter}'', Win32 error ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }
 try {
   $di = New-Object RawPrint+DOCINFOA
   $di.pDocName = 'Club Label Printer tune'
   $di.pDataType = 'RAW'
-  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw 'StartDocPrinter failed' }
+  if (-not [RawPrint]::StartDocPrinter($h, 1, [ref]$di)) { throw ('StartDocPrinter (RAW) failed, Win32 error ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }
   [RawPrint]::StartPagePrinter($h) | Out-Null
   $written = 0
-  if (-not [RawPrint]::WritePrinter($h, $bytes, $bytes.Length, [ref]$written)) { throw 'WritePrinter failed' }
+  if (-not [RawPrint]::WritePrinter($h, $bytes, $bytes.Length, [ref]$written)) { throw ('WritePrinter failed, Win32 error ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }
+  if ($written -ne $bytes.Length) { throw ('WritePrinter wrote ' + $written + ' of ' + $bytes.Length + ' bytes') }
   [RawPrint]::EndPagePrinter($h) | Out-Null
   [RawPrint]::EndDocPrinter($h) | Out-Null
 } finally { [RawPrint]::ClosePrinter($h) | Out-Null }
@@ -2308,18 +2319,36 @@ try {
 }
 
 // Play a tune if (and only if) the toggle is on. Never throws: the chirp is
-// garnish, and garnish must never delay or fail a label.
+// garnish, and garnish must never delay or fail a label. One quick retry
+// (spooler hiccups are transient), and the outcome — success or the exact
+// Win32 error — is kept for /health so "it just prints normal" is
+// diagnosable from the dashboard instead of invisible.
+let lastTune = null; // { ok, tune, printer, error?, at }
 function playTuneIfEnabled(printerName, tuneName) {
   if (config.musicalPrinter !== true) return false;
-  try {
-    const name = TUNE_NAMES.includes(tuneName) ? tuneName : currentTuneName();
-    sendRawToPrinter(Buffer.from(buildTuneTspl(name), 'ascii'), printerName);
-    console.log(`[tune] Played '${name}' on ${printerName || 'default printer'}`);
-    return true;
-  } catch (e) {
-    console.warn('[tune] Tune failed (non-critical):', e.message);
-    return false;
+  const name = TUNE_NAMES.includes(tuneName) ? tuneName : nextTuneName();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      sendRawToPrinter(Buffer.from(buildTuneTspl(name), 'ascii'), printerName);
+      lastTune = { ok: true, tune: name, printer: String(printerName || ''), at: new Date().toISOString() };
+      console.log(`[tune] Played '${name}' on ${printerName || 'default printer'}`);
+      return true;
+    } catch (e) {
+      if (attempt === 1) {
+        // Synchronous breather before the one retry — this path runs just
+        // before printImage's own execSync, so async waiting buys nothing.
+        try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400); } catch { /* ok */ }
+        continue;
+      }
+      lastTune = {
+        ok: false, tune: name, printer: String(printerName || ''),
+        error: String(e.message || e).slice(0, 200), at: new Date().toISOString(),
+      };
+      console.warn('[tune] Tune failed after retry (non-critical):', e.message);
+      return false;
+    }
   }
+  return false;
 }
 
 // ── Attendance ledger (#30) ───────────────────────────────────────────────────
@@ -3108,6 +3137,11 @@ app.post('/print', async (req, res) => {
     });
     pngPath = result.pngPath;
 
+    // Musical printer: EVERY label announces itself (operator request — was
+    // test prints only, which is why real check-ins printed silently). Tunes
+    // cycle per label; a birthday kid's label plays Happy Birthday. Played
+    // BEFORE the label so the backfeed returns the media to its start.
+    playTuneIfEnabled(effectivePrinter, cakeWeek ? 'birthday' : undefined);
     printImage(pngPath, effectivePrinter);
     if (!isDemo) recordPrint(dupKey);
 
@@ -3645,6 +3679,7 @@ app.post('/reprint', async (req, res) => {
     });
     pngPath = result.pngPath;
 
+    playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
     printImage(pngPath, effectivePrinter);
 
     addHistoryEntry({
@@ -3750,6 +3785,7 @@ app.post('/print-award', async (req, res) => {
     });
     pngPath = result.pngPath;
 
+    playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
     printImage(pngPath, effectivePrinter);
     recordPrint(dupKey);
 
@@ -4503,6 +4539,10 @@ app.get('/health', async (req, res) => {
       : { version: extensionInfo.version, action: extensionInfo.action }),
     selectorSelfTest: lastSelfTest,
     contractCanary: lastContractCanary,
+    // Musical printer observability: the last tune attempt's outcome, with
+    // the exact Win32 error when the RAW path fails — "it just prints
+    // normal" must be diagnosable from the dashboard.
+    musicalTune: { enabled: config.musicalPrinter === true, last: lastTune },
     extensionRunning: lastExtensionReport,
     lastCanary,
     printFailures: printFailures.length,
@@ -4853,7 +4893,7 @@ app.post('/play-tune', (req, res) => {
   }
   const tune = String((req.body || {}).tune || '') || undefined;
   const ok = playTuneIfEnabled(wanted || PRINTER_NAME, tune);
-  res.json({ ok, tune: TUNE_NAMES.includes(tune) ? tune : currentTuneName() });
+  res.json({ ok, tune: lastTune ? lastTune.tune : null, error: !ok && lastTune ? lastTune.error : undefined });
 });
 
 // ── Per-club label templates (#1) — endpoints ─────────────────────────────────
@@ -5244,7 +5284,7 @@ module.exports = {
   // Collectible of the week (#20) — the rotation math.
   collectibleIndexForDate, COLLECTIBLE_SERIES,
   // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
-  buildTuneTspl, currentTuneName, TUNE_NAMES,
+  buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going
