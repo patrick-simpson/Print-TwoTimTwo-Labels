@@ -3041,6 +3041,8 @@ app.post('/print', async (req, res) => {
     let autoFirstTimer = false;
     let streakCount = null;
     let newKid = false;
+    let welcomeBack = false;
+    let milestoneCount = null;
     if (!isDemo) {
       try {
         const att = recordAttendance(firstName, lastName, clubberId);
@@ -3055,6 +3057,12 @@ app.post('/print', async (req, res) => {
         // one. This is deliberately "first time on this machine's ledger", not
         // "first time ever at church" — the ledger is the only memory we have.
         autoFirstTimer = !!config.connectCardAutoFirstTimer && att.firstEver && att.priorNightExists;
+        // Welcome back (#9): a RETURNING kid's first night of the season -
+        // firstEver kids get the first-timer treatment instead, never both.
+        welcomeBack = !att.firstEver && att.seasonCount === 1;
+        // Milestone wall (#10): the display celebrates the same nights the
+        // label's milestone line marks (5/10/25/50).
+        if (milestoneLine) milestoneCount = att.seasonCount;
       } catch { /* ledger trouble must not stop the print */ }
     }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
@@ -3147,6 +3155,7 @@ app.post('/print', async (req, res) => {
       // plus a fresh tally so displays update within seconds of the check-in.
       const checkinEvent = events.buildCheckin({
         firstName, club: effectiveClubName, isBirthday: !!birthday, isFirstTimer: isFirstTimerTonight,
+        welcomeBack, milestone: milestoneCount,
       });
       events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
       pushEventToBuffer(checkinEvent);

@@ -84,6 +84,25 @@ console.log('buildCheckin');
   check('allergies structurally impossible', !('allergies' in c2) && !JSON.stringify(c2).includes('nuts'));
   check('long names truncated to 40', events.buildCheckin({ firstName: 'x'.repeat(100) }).firstName.length === 40);
   check('null input safe', typeof events.buildCheckin(null) === 'object');
+
+  // Celebration flags (#9/#10): optional means optional — the plain call above
+  // already proved the legacy shape; here the extended shape and the junk paths.
+  const cf = events.buildCheckin({ firstName: 'Noah', club: 'T&T', welcomeBack: true, milestone: 25 });
+  check('flags → exact extended field set',
+    keysOf(cf).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','), keysOf(cf).join(','));
+  check('welcomeBack only ever literal true',
+    !('welcomeBack' in events.buildCheckin({ firstName: 'N', welcomeBack: 'yes' })));
+  check('milestone must be a small positive integer',
+    !('milestone' in events.buildCheckin({ firstName: 'N', milestone: 'Alice Smith' }))
+    && !('milestone' in events.buildCheckin({ firstName: 'N', milestone: -5 }))
+    && !('milestone' in events.buildCheckin({ firstName: 'N', milestone: 2.5 }))
+    && events.buildCheckin({ firstName: 'N', milestone: 50 }).milestone === 50);
+  check('recap entries carry the flags through',
+    events.buildRecap([{ ...cf }]).entries[0].welcomeBack === true
+    && events.buildRecap([{ ...cf }]).entries[0].milestone === 25);
+  check('recap entries without flags keep the exact legacy entry shape',
+    Object.keys(events.buildRecap([events.buildCheckin({ firstName: 'A' })]).entries[0]).sort().join(',')
+      === [...vectors.events.recap.entryFields].sort().join(','));
 }
 
 console.log('buildRecap');

@@ -52,6 +52,16 @@
           "club": "T&T",
           "isBirthday": true,
           "isFirstTimer": true
+        },
+        {
+          "id": "6f9619ff-8b86-4011-b42d-00c04fc964aa",
+          "at": "2026-09-16T22:06:00.000Z",
+          "firstName": "Noah",
+          "club": "T&T",
+          "isBirthday": false,
+          "isFirstTimer": false,
+          "welcomeBack": true,
+          "milestone": 25
         }
       ],
       "dirty": [
@@ -87,6 +97,22 @@
             "phone",
             "555-0100"
           ]
+        },
+        {
+          "reason": "celebration flags must be literal true / a small int - junk is dropped, never rejected",
+          "payload": {
+            "id": "6f9619ff-8b86-4011-b42d-00c04fc964bb",
+            "at": "2026-09-16T22:06:00.000Z",
+            "firstName": "Noah",
+            "club": "T&T",
+            "isBirthday": false,
+            "isFirstTimer": false,
+            "welcomeBack": "yes",
+            "milestone": "Alice Smith"
+          },
+          "mustNotContain": [
+            "Alice Smith"
+          ]
         }
       ],
       "reject": [
@@ -106,6 +132,10 @@
           "reason": "null",
           "payload": null
         }
+      ],
+      "optionalFields": [
+        "welcomeBack",
+        "milestone"
       ]
     },
     "recap": {
@@ -191,6 +221,10 @@
           "reason": "null",
           "payload": null
         }
+      ],
+      "entryOptionalFields": [
+        "welcomeBack",
+        "milestone"
       ]
     },
     "checkout": {

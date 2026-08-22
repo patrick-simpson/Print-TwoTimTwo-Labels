@@ -58,7 +58,7 @@ function plainText(s, max) {
 // optional so deploy order between producer and consumers doesn't matter.
 function buildCheckin(input) {
   const src = input || {};
-  return {
+  const out = {
     id: crypto.randomUUID(),
     at: nowIso(),
     firstName: cleanName(src.firstName),
@@ -66,6 +66,20 @@ function buildCheckin(input) {
     isBirthday: !!src.isBirthday,
     isFirstTimer: !!src.isFirstTimer,
   };
+  // OPTIONAL celebration flags (contract optionalFields), sealed with the
+  // rest of the payload so a name-bearing celebration never rides plaintext:
+  //   welcomeBack — a RETURNING kid's first night of the season (#9).
+  //   milestone   — the season night-count on the night a label milestone
+  //                 is hit (5/10/25/50), for the display's milestone wall
+  //                 (#10). A count alone is low-risk, but it rides the
+  //                 sealed envelope regardless because it's per-child data.
+  // Optional forever: old displays drop unknown fields, deploy order never
+  // matters, and the fixed 512-byte checkin pad has ~100 bytes of headroom
+  // these short fields fit inside (test:envelope proves length uniformity).
+  if (src.welcomeBack === true) out.welcomeBack = true;
+  const ms = Number(src.milestone);
+  if (Number.isInteger(ms) && ms > 0 && ms <= 999) out.milestone = ms;
+  return out;
 }
 
 // ── recap ─────────────────────────────────────────────────────────────────────
@@ -76,14 +90,22 @@ function buildRecap(checkins) {
   const entries = (Array.isArray(checkins) ? checkins : [])
     .filter(c => c && typeof c.id === 'string' && typeof c.at === 'string')
     .slice(-RECAP_MAX)
-    .map(c => ({
-      id: c.id,
-      at: c.at,
-      firstName: cleanName(c.firstName),
-      club: cleanName(c.club),
-      isBirthday: !!c.isBirthday,
-      isFirstTimer: !!c.isFirstTimer,
-    }));
+    .map(c => {
+      const e = {
+        id: c.id,
+        at: c.at,
+        firstName: cleanName(c.firstName),
+        club: cleanName(c.club),
+        isBirthday: !!c.isBirthday,
+        isFirstTimer: !!c.isFirstTimer,
+      };
+      // Replayed entries keep the celebration flags (#9/#10) so a display
+      // that reconnects mid-night still knows — quietly — who was new-season
+      // and who hit a milestone.
+      if (c.welcomeBack === true) e.welcomeBack = true;
+      if (Number.isInteger(c.milestone) && c.milestone > 0) e.milestone = c.milestone;
+      return e;
+    });
   return { entries, at: nowIso() };
 }
 
