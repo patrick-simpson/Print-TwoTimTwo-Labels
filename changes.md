@@ -1,4 +1,13 @@
-﻿## [5.28.0] - 2026-08-22
+﻿## [5.29.0] - 2026-08-22
+Version-skew banner, dashboard half (#7). The widget half has existed since the managed-extension work: when the app has already synced a newer extension to disk, the widget says "restart Chrome to load it". But that banner lives in Chrome — the one place the operator ISN'T looking when they wonder why the fix they just installed isn't behaving. Now the dashboard says it too ("widget + dashboard", operator's pick):
+
+- Every `/selftest` and `/contract-canary` post already carries the RUNNING extension's version; the server now records it (`extensionRunning` on `/health`).
+- When that running version disagrees with the version the app synced to disk, `/health` raises an `extensionSkew` warning naming both versions and the fix ("Restart Chrome").
+- Freshness-gated (30 min): the extension reports every 10 minutes while a check-in page is open, so a report from before a Chrome restart — or from last week's session — can never shout at an operator whose browser is already up to date. Pure decision function `extensionSkew()` exported and unit-tested.
+
+This closes the contract & updates batch (#3–#7) and, with it, all 29 features from the round-3 build list.
+
+## [5.28.0] - 2026-08-22
 What-changed panel (#6): the release notes are already written — this file — so the app now surfaces them instead of asking the operator to find GitHub. Two halves ("tray balloon + dashboard", operator's pick):
 
 - **Dashboard**: a collapsed "What's new in vX.Y.Z" card (new `GET /whats-new`) shows this file's top entry, parsed by a pure `parseLatestChangeEntry()` (BOM-tolerant, stops at the next `## [` heading). changes.md now ships in the packaged app via `extraResources`, and the same `../changes.md` relative path resolves in dev (repo root) and packaged (resources/) alike. No notes available → the card hides itself.

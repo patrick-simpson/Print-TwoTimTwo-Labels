@@ -443,6 +443,20 @@ console.log('feeds.submitUnverified — batch self-verify report (#2): validatio
   feeds._resetForTests();
 }
 
+console.log('extensionSkew (#7) — dashboard half of the restart-Chrome banner');
+{
+  const { extensionSkew: skew } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+  const now = 1_700_000_000_000;
+  const fresh = { version: '5.28.0', at: now - 60_000 };
+  check('skew detected when the running version lags the synced folder',
+    JSON.stringify(skew('5.29.0', fresh, now)) === JSON.stringify({ running: '5.28.0', synced: '5.29.0' }));
+  check('no skew when versions match', skew('5.28.0', fresh, now) === null);
+  check('a stale report never warns (Chrome may have restarted since)',
+    skew('5.29.0', { version: '5.28.0', at: now - 31 * 60 * 1000 }, now) === null);
+  check('no synced version → no warning (extension not app-managed)', skew(null, fresh, now) === null);
+  check('no report yet → no warning', skew('5.29.0', null, now) === null);
+}
+
 console.log('parseLatestChangeEntry (#6) — the what\'s-new panel reads changes.md');
 {
   const { parseLatestChangeEntry: parse } = require(path.join(__dirname, '..', 'print-server', 'server.js'));

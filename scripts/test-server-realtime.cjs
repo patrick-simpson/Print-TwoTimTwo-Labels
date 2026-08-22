@@ -487,6 +487,25 @@ async function main() {
     check('the entry has a body', typeof res.body.body === 'string' && res.body.body.length > 10);
   }
 
+  // ── 11. Version skew (#7): synced-but-not-reloaded extension warning ─────
+  console.log('\nrealtime: extension version skew → /health warning');
+  {
+    server.setExtensionInfo({ targetDir: '/tmp/ext', version: '9.9.9' });
+    await post('/selftest', { ok: true, results: [], extensionVersion: '9.9.8' });
+    let h = await j('/health');
+    check('/health warns when Chrome runs an older extension than the synced folder',
+      warningTexts(h.body.warnings).some((w) => /Restart Chrome/i.test(w) && /9\.9\.8/.test(w) && /9\.9\.9/.test(w)),
+      JSON.stringify(h.body.warnings));
+    check('/health exposes the running version for the dashboard',
+      h.body.extensionRunning && h.body.extensionRunning.version === '9.9.8', JSON.stringify(h.body.extensionRunning));
+
+    await post('/selftest', { ok: true, results: [], extensionVersion: '9.9.9' });
+    h = await j('/health');
+    check('the warning clears once the extension reports the synced version',
+      !warningTexts(h.body.warnings).some((w) => /Restart Chrome/i.test(w)), JSON.stringify(h.body.warnings));
+    server.setExtensionInfo(null);
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });
