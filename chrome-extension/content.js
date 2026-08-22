@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.24.0';
+  const EXTENSION_VERSION = '5.25.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1696,6 +1696,40 @@
     });
     verifyRow.append(verifyStatus, verifyBtn);
 
+    // ── #3: contract-drift canary — manual trigger + last result ──
+    var contractRow = document.createElement('div');
+    Object.assign(contractRow.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+    var contractStatus = document.createElement('span');
+    contractStatus.id = 'awana-contract-status';
+    Object.assign(contractStatus.style, { fontSize: '10px', color: '#94a3b8', flex: '1' });
+    contractStatus.textContent = 'Site contract: checked daily';
+    var contractBtn = document.createElement('button');
+    contractBtn.textContent = 'Check site';
+    contractBtn.title = 'Verify every TwoTimTwo selector and endpoint this extension depends on (read-only)';
+    Object.assign(contractBtn.style, {
+      fontSize: '10px', padding: '2px 8px', borderRadius: '6px',
+      border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569', cursor: 'pointer'
+    });
+    contractBtn.addEventListener('click', function() {
+      contractBtn.disabled = true;
+      contractStatus.textContent = 'Site contract: checking\u2026';
+      runContractCanary(true).then(function(r) {
+        contractBtn.disabled = false;
+        if (!r) { contractStatus.textContent = 'Site contract: check failed to run'; return; }
+        if (r.ok) {
+          contractStatus.textContent = 'Site contract: \u2713 all ' + r.results.length + ' checks pass';
+          contractStatus.style.color = '#94a3b8';
+          contractStatus.title = '';
+        } else {
+          var bad = r.results.filter(function(x) { return !x.passed; }).map(function(x) { return x.check; });
+          contractStatus.textContent = '\u26A0 Site contract: ' + bad.length + ' check(s) failing';
+          contractStatus.style.color = '#f59e0b';
+          contractStatus.title = bad.join(', ');
+        }
+      });
+    });
+    contractRow.append(contractStatus, contractBtn);
+
     // ── Quick Mode toggle ──
     var quickModeRow = document.createElement('div');
     Object.assign(quickModeRow.style, {
@@ -2166,7 +2200,7 @@
       divider(), sectionLabel('Printing'), controls, printerRow,
       divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields,
       divider(), tonightHeader, tonightList,
-      queueBadge, reconcileRow, verifyRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
+      queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
     );
     // A scrollbar the operator can actually SEE. A body that scrolls but shows
@@ -3560,6 +3594,96 @@
     }
   }
 
+  // ── Contract-drift canary (#3) ───────────────────────────────────────────────
+  // The 10-minute self-test above probes the three passive DOM selectors. This
+  // is the FULL sweep of everything docs/TWOTIMTWO.md documents as load-bearing
+  // — roster attributes, the check-in form contract, the authoritative
+  // checkin_report parse, and the roster CSV export — so a TwoTimTwo redesign
+  // is caught the first time the page is opened that day (i.e. BEFORE club
+  // night), not mid-event when a modal click silently stops working. Runs
+  // automatically once per calendar day plus on demand from the widget button;
+  // results go to the server (dashboard Night Status card + tray alert).
+  // Read-only by design: it never clicks, posts a check-in, or prints.
+  var CONTRACT_CANARY_STAMP_KEY = 'awana_contractCanaryLastDay';
+  var contractCanaryRunning = false;
+
+  function runContractCanary(manual) {
+    if (contractCanaryRunning) return Promise.resolve(null);
+    contractCanaryRunning = true;
+    var results = [];
+    var push = function(check, passed, detail) {
+      results.push({ check: check, passed: !!passed, detail: detail || '' });
+    };
+
+    // A: roster DOM contract (superset of the passive self-test).
+    var clubberEls = document.querySelectorAll('.clubber');
+    var pageHasContent = document.body && document.body.children.length > 3;
+    var rosterPresent = clubberEls.length > 0;
+    push('.clubber roster rows', rosterPresent || !pageHasContent, clubberEls.length + ' row(s)');
+    if (rosterPresent) {
+      var first = clubberEls[0];
+      push('.clubber .name', !!first.querySelector('.name'));
+      push('.clubber .club img[alt]', !!first.querySelector('.club img[alt]'), 'club name + icon source');
+      push('.clubber[recid] identity attr', first.hasAttribute('recid'), 'exact-identity match + direct check-in');
+      push('.clubber[club_id] attr', first.hasAttribute('club_id'), 'events[] club applicability');
+    }
+    push('#lastCheckin', !!document.querySelector('#lastCheckin'), 'local check-in detection');
+
+    // B: check-in form contract (read statically — never clicks anything).
+    var calInput = document.getElementById('calendar_id');
+    push('#calendar_id has a meeting id', !!(calInput && calInput.value), 'direct check-in needs it');
+    push('YII_CSRF_TOKEN findable', !!findCsrfToken(), 'direct check-in needs it');
+    push('input.event[name="events[]"] rows', document.querySelectorAll('input.event[name="events[]"]').length > 0,
+      'check-in items (Attendance etc.)');
+
+    // C: the two HTTP contracts, both read-only.
+    var reportCheck = fetchCheckinReport().then(function(entries) {
+      push('/clubber/checkin_report parses', entries !== null,
+        entries === null ? 'no tables / login bounce' : entries.length + ' checked-in kid(s) parsed');
+    });
+    var csvCheck = fetch('/clubber/csv', { credentials: 'same-origin', signal: AbortSignal.timeout(15000) })
+      .then(function(r) { return r.ok ? r.text() : null; })
+      .then(function(text) {
+        var header = text ? String(text).split(/\r?\n/, 1)[0] : '';
+        push('/clubber/csv roster export', !!text && header.indexOf('Clubber ID') !== -1,
+          text ? ('header: ' + header.slice(0, 80)) : 'fetch failed');
+      })
+      .catch(function(e) {
+        push('/clubber/csv roster export', false, e.message);
+      });
+
+    return Promise.all([reportCheck, csvCheck]).then(function() {
+      contractCanaryRunning = false;
+      var ok = results.every(function(r) { return r.passed; });
+      console.log('[Awana] Contract canary (' + (manual ? 'manual' : 'auto') + '): ' +
+        (ok ? 'all checks passed' : 'DRIFT DETECTED') + ' — ' + results.length + ' check(s)');
+      fetch(PRINT_SERVER + '/contract-canary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: ok, results: results, extensionVersion: EXTENSION_VERSION, manual: manual === true }),
+        signal: AbortSignal.timeout(5000)
+      }).catch(function() { /* server offline — the widget still shows it */ });
+      return { ok: ok, results: results };
+    }).catch(function(e) {
+      contractCanaryRunning = false;
+      console.log('[Awana] Contract canary error:', e);
+      return null; // a broken probe must not cry wolf
+    });
+  }
+
+  function maybeRunDailyContractCanary() {
+    var today = todayIsoDate();
+    try {
+      if (localStorage.getItem(CONTRACT_CANARY_STAMP_KEY) === today) return;
+    } catch (e) { /* storage blocked — run anyway */ }
+    // An empty page (login bounce, slow load) must not burn the day's run.
+    if (!document.body || document.body.children.length <= 3) return;
+    runContractCanary(false).then(function(r) {
+      if (!r) return;
+      try { localStorage.setItem(CONTRACT_CANARY_STAMP_KEY, today); } catch (e) { /* ignore */ }
+    });
+  }
+
   // ── Quick Mode: one-click check-in interceptor ──────────────────────────────
   // When Quick Mode is ON, intercept clicks on .clubber elements. Let the native
   // click flow through (TwoTimTwo opens its modal), then auto-dismiss the modal.
@@ -3704,6 +3828,8 @@
   // Selector self-test: first probe after the page settles, then every 10 min
   setTimeout(runSelectorSelfTest, 15000);
   setInterval(runSelectorSelfTest, SELFTEST_INTERVAL_MS);
+  // Contract canary (#3): once per day, shortly after the page settles.
+  setTimeout(maybeRunDailyContractCanary, 45000);
   // R-1: first reconcile pass ~60s after load, then self-reschedules based on
   // isInClubWindow() (every 60s in-window, every 10 min otherwise).
   setTimeout(function() {
