@@ -1,4 +1,7 @@
-﻿## [5.29.2] - 2026-08-22
+﻿## [5.29.3] - 2026-08-22
+Release-pipeline fix: the v5.29.2 Windows installer crashed on launch (0xC0000005 in the NSIS stub, reproduced on two clean runners), so its smoke test failed and nothing was published — no broken build reached anyone. The only packaging input that changed since the last green build (same electron 28.3.3, same electron-builder 24.13.3) was v5.28.0's `extraResources` entry shipping `changes.md` in the FILE form (`from: "../changes.md"`), a shape nothing else in this config uses. It now uses the directory + `filter` FileSet form every other entry has always used (`from: "../", filter: ["changes.md"]`), which lands the file at the same `resources/changes.md` path the what's-new panel reads. No application behavior changes.
+
+## [5.29.2] - 2026-08-22
 Quality sweep, part 2 — eight confirmed findings from the comprehensive post-wave code review (the display's five landed in its repo):
 
 **Timezone family — "today" now always means the operator's LOCAL day.** The UTC day flips at 7pm EST / 6pm CST, the middle of a winter club night, and several "today" computations used `toISOString()`:
