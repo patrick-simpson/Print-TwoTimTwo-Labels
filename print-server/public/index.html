@@ -350,6 +350,22 @@
                 </div>
               </div>
               <div style="margin-top:8px">
+                <label>Season theme</label>
+                <select id="settings-season-theme">
+                  <option value="auto">Auto (follow the calendar)</option>
+                  <option value="off">Off — no seasonal art</option>
+                  <option value="back-to-school">Back to school</option>
+                  <option value="fall">Fall</option>
+                  <option value="thanksgiving">Thanksgiving</option>
+                  <option value="christmas">Christmas</option>
+                  <option value="winter">Winter</option>
+                  <option value="spring">Spring</option>
+                  <option value="easter">Easter</option>
+                  <option value="vbs-summer">VBS / Summer</option>
+                </select>
+                <p style="font-size:10px;color:#94a3b8">Seasonal border + motif on labels (thermal-safe line art). Auto follows the calendar, Easter included; pick a season to pin it. Check the Label Preview tab.</p>
+              </div>
+              <div style="margin-top:8px">
                 <label>Label footer</label>
                 <input type="text" id="settings-label-footer" maxlength="60" placeholder="e.g. KVBC Awana &middot; Wednesdays 6:15&ndash;8:00pm">
                 <p style="font-size:10px;color:#94a3b8">One short line printed along the bottom of every label &mdash; church name, a verse, or service times. Blank = no footer. Check the Label Preview tab after saving.</p>
@@ -855,6 +871,7 @@ function loadSettings() {
     document.getElementById('settings-phone-pin').value = config.phonePin || '';
     document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
     document.getElementById('settings-label-footer').value = config.labelFooter || '';
+    document.getElementById('settings-season-theme').value = config.seasonTheme || 'auto';
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
@@ -971,6 +988,7 @@ function saveSettings() {
       phonePin: document.getElementById('settings-phone-pin').value.trim(),
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
       labelFooter: document.getElementById('settings-label-footer').value.trim(),
+      seasonTheme: document.getElementById('settings-season-theme').value,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,

@@ -173,6 +173,17 @@ const CASES = [
   // middle-initial variant riding the first-name line.
   { name: 'twin-hint',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', nameHint: 'b. Mar' } },
   { name: 'twin-initial',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', middleInitial: 'G' } },
+  // Seasonal art (#16): all eight, short name so the motif headroom exists.
+  // The pairwise-distinctness check below is what proves each season's art
+  // actually differs from every other's.
+  { name: 'season-back-to-school', model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'back-to-school' } },
+  { name: 'season-fall',           model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'fall' } },
+  { name: 'season-thanksgiving',   model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'thanksgiving' } },
+  { name: 'season-christmas',      model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'christmas' } },
+  { name: 'season-winter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'winter' } },
+  { name: 'season-spring',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'spring' } },
+  { name: 'season-easter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'easter' } },
+  { name: 'season-vbs-summer',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'vbs-summer' } },
   { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
