@@ -1,4 +1,9 @@
-﻿## [5.21.0] - 2026-08-22
+﻿## [5.22.0] - 2026-08-22
+Auto-focus for the widget's roster search (#1): the search box is ready to type into on page load and again about half a second after every check-in resolves (printed, queued, or dialog fallback), cleared first so a leftover query never prefixes the next kid's name. Back-to-back arrivals become type -> Enter -> type -> Enter with no mouse.
+
+The guard that makes it safe: focus is NEVER stolen. If the cursor is in any other field — the guest register form, TwoTimTwo's own inputs, a modal — or the operator is mid-search in the box itself, nothing moves. Restoring the panel from the pill refocuses too; a minimized widget never grabs focus at all. The whole path is wrapped so a focus failure can never break printing.
+
+## [5.21.0] - 2026-08-22
 Sealed celebration flags, printer half (#9/#10): the `checkin` event gains two OPTIONAL fields — `welcomeBack` (literal `true` on a returning kid's first night of the season; first-ever kids keep the first-timer treatment instead, never both) and `milestone` (the season night-count on the nights the label's milestone line fires, 5/10/25/50). The display's welcome-back banner and milestone wall consume them next.
 
 ### Privacy math, done before the feature

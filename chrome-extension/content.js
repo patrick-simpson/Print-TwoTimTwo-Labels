@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '5.21.0';
+  const EXTENSION_VERSION = '5.22.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -2023,6 +2023,27 @@
       }
     });
 
+    // Auto-focus rules (#1), each decided by the operator:
+    //   • ready on load and again after every check-in ("load + after
+    //     check-in") — so back-to-back arrivals are type→Enter→type→Enter;
+    //   • the box is CLEARED first, so a leftover query never prefixes the
+    //     next kid's name;
+    //   • NEVER steals focus: if the cursor is in any other field (the guest
+    //     register form, TwoTimTwo's own inputs, a modal) or the operator is
+    //     mid-search here, nothing moves.
+    REFOCUS_SEARCH = function() {
+      if (isMinimized) return;
+      var ae = document.activeElement;
+      if (ae && ae !== searchInput && ae !== document.body) {
+        var tag = (ae.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || ae.isContentEditable) return;
+      }
+      if (ae === searchInput && searchInput.value) return;
+      searchInput.value = '';
+      searchResults.style.display = 'none';
+      try { searchInput.focus({ preventScroll: true }); } catch (e) { searchInput.focus(); }
+    };
+
     searchContainer.append(searchIcon, searchInput, searchResults);
 
     // ── CSV warning banner ──
@@ -2189,9 +2210,11 @@
       localStorage.setItem(MINIMIZE_KEY, min ? 'true' : 'false');
     }
 
-    pill.addEventListener('click', function() { applyMinimized(false); loadTonight(); });
+    pill.addEventListener('click', function() { applyMinimized(false); loadTonight(); refocusSearch(); });
     closeBtn.addEventListener('click', function() { applyMinimized(true); });
     applyMinimized(isMinimized);
+    // Ready to type the first name the moment the page settles.
+    setTimeout(refocusSearch, 400);
 
     console.log('[Awana] Widget injected');
   }
@@ -2330,6 +2353,19 @@
         select.appendChild(fallback);
         select.value = ''; selectedPrinterName = '';
       });
+  }
+
+  // Auto-focus (#1): the widget's search box is the fastest path from "kid at
+  // the door" to "label printing", so it should be ready to type into at all
+  // times the operator isn't deliberately somewhere else. injectWidget()
+  // installs the real implementation (it owns the input); this hook lets
+  // doPrint(), which lives outside that closure, ask for a refocus after
+  // every check-in.
+  var REFOCUS_SEARCH = null;
+  function refocusSearch() {
+    if (REFOCUS_SEARCH) {
+      try { REFOCUS_SEARCH(); } catch (e) { /* focus must never break printing */ }
+    }
   }
 
   function setStatus(text) {
@@ -2757,6 +2793,13 @@
     printPromise.then(function(sentToServer) {
       if (sentToServer || selectedMode === 'off') return;
       if (selectedMode === 'dialog') fallbackPrint(firstName, lastName, clubName, imageData);
+    });
+
+    // Auto-focus (#1): whatever the outcome (printed, queued, dialog), be
+    // ready for the next kid. Delayed so a closing TwoTimTwo modal's own
+    // focus churn settles first; the never-steal guard handles the rest.
+    printPromise.then(function() {
+      setTimeout(refocusSearch, 400);
     });
   }
 
