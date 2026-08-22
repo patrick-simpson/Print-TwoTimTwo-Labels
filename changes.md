@@ -1,4 +1,10 @@
-﻿## [5.20.0] - 2026-08-22
+﻿## [5.21.0] - 2026-08-22
+Sealed celebration flags, printer half (#9/#10): the `checkin` event gains two OPTIONAL fields — `welcomeBack` (literal `true` on a returning kid's first night of the season; first-ever kids keep the first-timer treatment instead, never both) and `milestone` (the season night-count on the nights the label's milestone line fires, 5/10/25/50). The display's welcome-back banner and milestone wall consume them next.
+
+### Privacy math, done before the feature
+Both fields ride INSIDE the sealed envelope — a name-bearing celebration never touches plaintext, and even the bare count is per-child data so it seals too. The fixed 512-byte checkin pad is untouched: the worst-case payload (40-char name and club, every flag on) measures 255 of the 508-byte budget, 253 bytes of headroom, so no `ENVELOPE_VERSION` bump, no fixture regeneration, and `npm run test:envelope`'s length-uniformity gate still proves two checkin frames are indistinguishable on the wire. Recap entries carry the flags through so a reconnecting display still knows, and entries without flags keep the exact legacy shape — deploy order between the repos never matters. `contract-vectors.json` (canonical) adds `optionalFields`, a valid vector, and a dirty vector proving junk values are dropped, never rejected.
+
+## [5.20.0] - 2026-08-22
 Unified theming, printer half (#18): every `tally` broadcast now carries the printer's current season as an optional plaintext `season` field, so the check-in display can wear the same season the labels do — pinned, calendar-computed (Easter included), or absent when seasonal art is off. A display that boots mid-night picks it up on the next tally, no handshake. The contract also gains an optional `rehearsal` flag on `tally`, pre-staged for rehearsal mode (#19) so the cross-repo contract bumps once, not twice.
 
 ### Contract discipline
