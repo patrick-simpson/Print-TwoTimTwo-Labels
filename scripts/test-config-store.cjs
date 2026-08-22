@@ -73,6 +73,7 @@ function serverOwnedConfig() {
     connectCardGreeting: "We're so glad you're here!",
     labelFooter: 'KVBC Awana · Wednesdays 6:15–8:00pm',
     seasonTheme: 'christmas',
+    collectibleIcons: false,
     labelTemplates: { default: { version: 1, showFooter: false }, spark: { version: 1, showIconPanel: false } },
     schedule: [
       { label: 'Large Group', startsAt: '18:05' },
@@ -88,7 +89,7 @@ const SERVER_OWNED_KEYS = [
   'pusherAppId', 'pusherKey', 'pusherSecret', 'pusherCluster',
   'historyRetentionDays', 'firstTimerInverted', 'worksheetPrinter',
   'connectCard', 'connectCardAutoFirstTimer', 'connectCardGreeting',
-  'labelFooter', 'labelTemplates', 'seasonTheme', 'schedule',
+  'labelFooter', 'labelTemplates', 'seasonTheme', 'collectibleIcons', 'schedule',
 ];
 
 console.log('\nconfig-store: merge semantics');

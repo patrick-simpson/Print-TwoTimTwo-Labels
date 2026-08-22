@@ -907,6 +907,130 @@ function drawSeasonMotif(ctx, season, cx, top, color) {
   ctx.restore();
 }
 
+// ── Collectible label icons (#20) ─────────────────────────────────────────────
+// A tiny path-drawn icon that changes every calendar week — same icon for
+// every kid that night, twelve in the series, so a season's worth of labels
+// becomes a collection. Pure line work (thermal-safe), leftmost in the
+// bottom-right icon row. On by default; config.collectibleIcons === false
+// turns it off.
+const COLLECTIBLE_SERIES = [
+  'star', 'rocket', 'crown', 'butterfly', 'kite', 'acorn',
+  'music', 'lightning', 'fish', 'sailboat', 'balloon', 'snail',
+];
+
+// Which icon this week: whole weeks since the epoch, mod the series length.
+// Stable for the whole calendar week (UTC), so a reprint later the same
+// night — or the same week — matches the original label.
+function collectibleIndexForDate(now = new Date()) {
+  const days = Math.floor(now.getTime() / 86400000);
+  return Math.floor(days / 7) % COLLECTIBLE_SERIES.length;
+}
+
+function currentCollectibleIndex(now = new Date()) {
+  if (config.collectibleIcons === false) return null;
+  return collectibleIndexForDate(now);
+}
+
+// Draw collectible `idx` with its center-bottom at (cx, baselineY). ~13pt of
+// stroke paths, no fills except dots — nothing to dither.
+function drawCollectible(ctx, idx, cx, baselineY, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const cy = baselineY - 6.5;   // icon center
+  switch (COLLECTIBLE_SERIES[idx]) {
+    case 'star': {
+      ctx.beginPath();
+      for (let j = 0; j < 10; j++) {
+        const r = j % 2 === 0 ? 6 : 2.6;
+        const a = -Math.PI / 2 + (Math.PI / 5) * j;
+        const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+        j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.stroke();
+      break;
+    }
+    case 'rocket': {
+      ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.quadraticCurveTo(cx + 3.5, cy - 1, cx + 2.2, cy + 4);
+      ctx.lineTo(cx - 2.2, cy + 4); ctx.quadraticCurveTo(cx - 3.5, cy - 1, cx, cy - 6);
+      ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 2.2, cy + 2); ctx.lineTo(cx - 4.5, cy + 5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 2.2, cy + 2); ctx.lineTo(cx + 4.5, cy + 5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy - 1.5, 1.1, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case 'crown': {
+      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy + 3.5); ctx.lineTo(cx - 5.5, cy - 3);
+      ctx.lineTo(cx - 2.5, cy); ctx.lineTo(cx, cy - 5); ctx.lineTo(cx + 2.5, cy);
+      ctx.lineTo(cx + 5.5, cy - 3); ctx.lineTo(cx + 5.5, cy + 3.5); ctx.closePath(); ctx.stroke();
+      break;
+    }
+    case 'butterfly': {
+      ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx, cy + 4); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx - 3.2, cy - 1.8, 2.8, 2.2, -0.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 3.2, cy - 1.8, 2.8, 2.2, 0.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx - 2.6, cy + 2.2, 2, 1.7, 0.4, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 2.6, cy + 2.2, 2, 1.7, -0.4, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case 'kite': {
+      ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx + 3.5, cy - 1.5); ctx.lineTo(cx, cy + 3);
+      ctx.lineTo(cx - 3.5, cy - 1.5); ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.quadraticCurveTo(cx - 2, cy + 5, cx - 1, cy + 6.5); ctx.stroke();
+      break;
+    }
+    case 'acorn': {
+      ctx.beginPath(); ctx.arc(cx, cy - 1.5, 3.6, Math.PI, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 3.6, cy - 1.5); ctx.quadraticCurveTo(cx, cy + 6, cx + 3.6, cy - 1.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy - 6.5); ctx.stroke();
+      break;
+    }
+    case 'music': {
+      ctx.beginPath(); ctx.moveTo(cx + 3, cy - 5.5); ctx.lineTo(cx + 3, cy + 2.5); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx + 1.2, cy + 3, 2.2, 1.6, -0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(cx + 3, cy - 5.5); ctx.quadraticCurveTo(cx + 6, cy - 4.5, cx + 6, cy - 2); ctx.stroke();
+      break;
+    }
+    case 'lightning': {
+      ctx.beginPath(); ctx.moveTo(cx + 1.5, cy - 6); ctx.lineTo(cx - 3, cy + 0.5); ctx.lineTo(cx - 0.5, cy + 0.5);
+      ctx.lineTo(cx - 1.5, cy + 6); ctx.lineTo(cx + 3, cy - 0.5); ctx.lineTo(cx + 0.5, cy - 0.5);
+      ctx.closePath(); ctx.stroke();
+      break;
+    }
+    case 'fish': {
+      ctx.beginPath(); ctx.ellipse(cx - 0.5, cy, 4, 2.6, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + 3.5, cy); ctx.lineTo(cx + 6, cy - 2.5); ctx.lineTo(cx + 6, cy + 2.5);
+      ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx - 2.5, cy - 0.6, 0.6, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'sailboat': {
+      ctx.beginPath(); ctx.moveTo(cx - 5, cy + 3); ctx.lineTo(cx + 5, cy + 3); ctx.lineTo(cx + 3.2, cy + 5.5);
+      ctx.lineTo(cx - 3.2, cy + 5.5); ctx.closePath(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.lineTo(cx, cy - 6); ctx.lineTo(cx + 4.5, cy + 1.5); ctx.closePath(); ctx.stroke();
+      break;
+    }
+    case 'balloon': {
+      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 3.2, 4, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy + 2); ctx.quadraticCurveTo(cx - 1.5, cy + 4.5, cx + 0.5, cy + 6.5); ctx.stroke();
+      break;
+    }
+    case 'snail': {
+      ctx.beginPath(); ctx.arc(cx + 1, cy, 3.4, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx + 1, cy, 1.6, 0.5, Math.PI * 1.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 2.4, cy + 2.4); ctx.quadraticCurveTo(cx - 5.5, cy + 3, cx - 5.5, cy - 1);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy - 1); ctx.lineTo(cx - 6.3, cy - 3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy - 1); ctx.lineTo(cx - 4.5, cy - 3); ctx.stroke();
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 // ── Twin-safe labels (#13) ────────────────────────────────────────────────────
 // When two ACTIVE roster kids share a normalized first+last name, their labels
 // need something a volunteer can tell apart at arm's length. Preference order:
@@ -1446,7 +1570,8 @@ async function generateLabel(input) {
     allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
-    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '', extras = {},
+    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
+    collectibleIndex = null, extras = {},
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1497,6 +1622,11 @@ async function generateLabel(input) {
   nameHint      = String(nameHint == null ? '' : nameHint).trim().slice(0, 16);
   // Season art (#16): unknown values render as no art at all - fail open.
   season        = SEASON_KEYS.includes(season) ? season : '';
+  // Collectible (#20): a valid series index or nothing.
+  if (collectibleIndex !== null && collectibleIndex !== undefined) {
+    const n = Number(collectibleIndex);
+    collectibleIndex = (Number.isInteger(n) && n >= 0 && n < COLLECTIBLE_SERIES.length) ? n : null;
+  }
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -1675,7 +1805,7 @@ async function generateLabel(input) {
   // goTo/milestone lines used to skip this reservation as "rare and short", but
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
-  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid;
+  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid || collectibleIndex != null;
   const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
     + (hasFooter ? 1 : 0);
@@ -1804,7 +1934,7 @@ async function generateLabel(input) {
     // Reserve the icon row's width on the right and centre what's left.
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
       (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0) +
-      (isNewKid ? 1 : 0);
+      (isNewKid ? 1 : 0) + (collectibleIndex != null ? 1 : 0);
     const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
@@ -1854,6 +1984,12 @@ async function generateLabel(input) {
     // Build ordered glyph list, leftmost first:
     //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy icons
     const glyphs = [];
+    if (collectibleIndex != null) {
+      // Collectible of the week (#20): path-drawn, leftmost so the safety
+      // icons keep their familiar right-edge positions.
+      const ci = collectibleIndex;
+      glyphs.push({ w: 15, draw: (x, baseY) => drawCollectible(ctx, ci, x + 7.5, baseY, COLOR.name) });
+    }
     if (awanaShares != null) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
@@ -1884,8 +2020,10 @@ async function generateLabel(input) {
     ctx.textBaseline = 'alphabetic';
     let totalW = 0;
     glyphs.forEach(function(g, i) {
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
-      g.w = ctx.measureText(g.ch).width;
+      if (!g.draw) {
+        ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+        g.w = ctx.measureText(g.ch).width;
+      }
       totalW += g.w;
       if (i < glyphs.length - 1) totalW += SPACING;
     });
@@ -1894,6 +2032,11 @@ async function generateLabel(input) {
     iconRowLeftX = ex;
     const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
     glyphs.forEach(function(g) {
+      if (g.draw) {
+        g.draw(ex, ey);
+        ex += g.w + SPACING;
+        return;
+      }
       ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
       ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
       ctx.fillText(g.ch, ex, ey);
@@ -2627,6 +2770,7 @@ app.post('/label', async (req, res) => {
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
+      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(effectiveClubName),
       extras: labelExtras,
     });
@@ -2807,6 +2951,7 @@ app.post('/print', async (req, res) => {
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
       season: currentLabelSeason(),
+      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(effectiveClubName),
       extras,
     });
@@ -2848,6 +2993,7 @@ app.post('/print', async (req, res) => {
           testBanner: isDemo,   // a demo card must be as visibly fake as its label
           footerText: labelFooterText(),
           season: currentLabelSeason(),
+          collectibleIndex: currentCollectibleIndex(),
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
@@ -3275,6 +3421,7 @@ app.get('/preview', async (req, res) => {
       middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
+      collectibleIndex: currentCollectibleIndex(),
       template,
     });
     res.set('Content-Type', 'image/png');
@@ -3341,6 +3488,7 @@ app.post('/reprint', async (req, res) => {
       middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
+      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(entry.clubName),
     });
     pngPath = result.pngPath;
@@ -4228,7 +4376,7 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
-    labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme,
+    labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -4320,6 +4468,8 @@ app.post('/config', (req, res) => {
       else if (st === 'off' || SEASON_KEYS.includes(st)) next.seasonTheme = st;
       else return res.status(400).json({ error: 'unknown seasonTheme' });
     }
+    // Collectible of the week (#20): on by default; false turns it off.
+    if (collectibleIcons !== undefined) next.collectibleIcons = !!collectibleIcons;
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
@@ -4675,6 +4825,8 @@ module.exports = {
   // Seasonal art (#16) — the computus and the calendar tiling are date math
   // worth pinning; SEASON_KEYS doubles as the dashboard's option list.
   easterSunday, seasonForDate, SEASON_KEYS,
+  // Collectible of the week (#20) — the rotation math.
+  collectibleIndexForDate, COLLECTIBLE_SERIES,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going
