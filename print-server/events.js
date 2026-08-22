@@ -126,7 +126,7 @@ function buildCheckout(rawEntries, printed) {
 // Per-club checked-in counts — pure numbers, zero PII. Keys are club display
 // names exactly as the check-in system reports them; each consumer normalizes
 // through its own alias map.
-function buildTally(byClub, total) {
+function buildTally(byClub, total, extras) {
   const counts = {};
   let sum = 0;
   const entries = Object.entries(byClub && typeof byClub === 'object' ? byClub : {})
@@ -140,11 +140,25 @@ function buildTally(byClub, total) {
     sum += counts[key];
   }
   const t = Number(total);
-  return {
+  const out = {
     counts,
     total: Number.isFinite(t) && t >= 0 ? Math.floor(t) : sum,
     at: nowIso(),
   };
+  // OPTIONAL, plaintext, zero-PII extras (contract optionalFields):
+  //   season    — unified theming (#18): the printer's season broadcast, a
+  //               lowercase slug like 'christmas', so screens and labels
+  //               switch together. Absent when the operator turned art off.
+  //   rehearsal — rehearsal mode (#19): true while a training run is armed,
+  //               so displays can watermark themselves. Absent otherwise.
+  // Both must stay optional forever: old displays drop unknown fields, and
+  // deploy order between the repos must never matter (CONTRACT.md).
+  if (extras && typeof extras === 'object') {
+    const s = String(extras.season || '').toLowerCase();
+    if (/^[a-z][a-z-]{1,19}$/.test(s)) out.season = s;
+    if (extras.rehearsal === true) out.rehearsal = true;
+  }
+  return out;
 }
 
 // ── birthdays ─────────────────────────────────────────────────────────────────

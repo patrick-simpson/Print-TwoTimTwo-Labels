@@ -1,7 +1,7 @@
 {
   "contractVersion": 4,
   "channel": "awana-channel",
-  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel \u2014 no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement \u2014 the only free-text field on the channel, bounded and plain-text-forced).",
+  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — the only free-text field on the channel, bounded and plain-text-forced).",
   "transport": {
     "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the three name-bearing events are sealed with AES-256-GCM before publish. This is a TRANSPORT change only: every payload vector below is unchanged, and both repos' sanitizers run on the OPENED payload exactly as before. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
     "encryptedEvents": [
@@ -19,7 +19,7 @@
       "ops",
       "canary"
     ],
-    "plaintextRationale": "Deliberate. Counts and church-authored copy carry no PII, and their readability is what lets a screen distinguish \"the pipe is down\" from \"I cannot read the names\" from \"quiet night\" \u2014 the last being the dangerous case, because nobody investigates a quiet night.",
+    "plaintextRationale": "Deliberate. Counts and church-authored copy carry no PII, and their readability is what lets a screen distinguish \"the pipe is down\" from \"I cannot read the names\" from \"quiet night\" — the last being the dangerous case, because nobody investigates a quiet night.",
     "fixture": "envelope-vectors.json"
   },
   "events": {
@@ -164,7 +164,7 @@
           ]
         },
         {
-          "reason": "entries without id/at cannot be deduped \u2014 dropped",
+          "reason": "entries without id/at cannot be deduped — dropped",
           "payload": {
             "entries": [
               {
@@ -329,11 +329,20 @@
           "counts": {},
           "total": 0,
           "at": "2026-09-16T22:07:00.000Z"
+        },
+        {
+          "counts": {
+            "Sparks": 3
+          },
+          "total": 3,
+          "at": "2026-09-16T22:07:00.000Z",
+          "season": "christmas",
+          "rehearsal": true
         }
       ],
       "dirty": [
         {
-          "reason": "counts must be numbers only \u2014 a name smuggled as a value is dropped",
+          "reason": "counts must be numbers only — a name smuggled as a value is dropped",
           "payload": {
             "counts": {
               "Sparks": 12,
@@ -344,6 +353,21 @@
           },
           "mustNotContain": [
             "Alice Smith"
+          ]
+        },
+        {
+          "reason": "season must be a plain lowercase slug - anything else is dropped, never rejected",
+          "payload": {
+            "counts": {
+              "Sparks": 1
+            },
+            "total": 1,
+            "at": "2026-09-16T22:07:00.000Z",
+            "season": "<script>alert(1)</script>",
+            "rehearsal": "yes"
+          },
+          "mustNotContain": [
+            "script"
           ]
         }
       ],
@@ -364,6 +388,10 @@
             "total": 1
           }
         }
+      ],
+      "optionalFields": [
+        "season",
+        "rehearsal"
       ]
     },
     "birthdays": {
@@ -403,7 +431,7 @@
       ],
       "dirty": [
         {
-          "reason": "no lastName, no birth year \u2014 ever",
+          "reason": "no lastName, no birth year — ever",
           "payload": {
             "entries": [
               {
@@ -480,7 +508,7 @@
       ],
       "dirty": [
         {
-          "reason": "ops events carry type/club/at ONLY \u2014 never a name",
+          "reason": "ops events carry type/club/at ONLY — never a name",
           "payload": {
             "type": "print-failure",
             "club": "Sparks",
@@ -562,7 +590,7 @@
       ],
       "dirty": [
         {
-          "reason": "counters are numbers only \u2014 a name smuggled into a counter must not survive",
+          "reason": "counters are numbers only — a name smuggled into a counter must not survive",
           "payload": {
             "checkedIn": "Alice Smith",
             "booksCompleted": 4,
@@ -638,7 +666,7 @@
       ],
       "dirty": [
         {
-          "reason": "point values are numbers only \u2014 a name smuggled as a value is dropped",
+          "reason": "point values are numbers only — a name smuggled as a value is dropped",
           "payload": {
             "groups": {
               "Red": 240,
@@ -750,11 +778,11 @@
         "critical"
       ],
       "maxMessage": 200,
-      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design \u2014 but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
+      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design — but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
       "valid": [
         {
           "level": "critical",
-          "message": "CLUB CANCELLED TONIGHT \u2014 snow",
+          "message": "CLUB CANCELLED TONIGHT — snow",
           "at": "2026-09-16T21:00:00.000Z"
         },
         {

@@ -116,6 +116,22 @@ console.log('buildTally');
   check('explicit total honored', events.buildTally({ Sparks: 1 }, 5).total === 5);
   check('at is ISO', ISO_RE.test(t.at));
   check('null input safe', events.buildTally(null).total === 0);
+
+  // Optional extras (#18/#19): season slug + rehearsal flag. Optional means
+  // optional — a plain call must keep the EXACT legacy shape so old
+  // consumers and deploy order never matter.
+  check('no extras → exact legacy field set', keysOf(t).join(',') === [...spec.fields].sort().join(','));
+  const ex = events.buildTally({ Sparks: 1 }, 1, { season: 'CHRISTMAS', rehearsal: true });
+  check('extras → exact extended field set',
+    keysOf(ex).join(',') === [...spec.fields, ...spec.optionalFields].sort().join(','));
+  check('season is normalized to a lowercase slug', ex.season === 'christmas');
+  check('rehearsal only ever true, never truthy junk',
+    events.buildTally({}, 0, { rehearsal: 'yes' }).rehearsal === undefined
+    && events.buildTally({}, 0, { rehearsal: true }).rehearsal === true);
+  check('a non-slug season is dropped, not rejected',
+    events.buildTally({}, 0, { season: '<script>alert(1)</script>' }).season === undefined);
+  check('empty season omitted (art turned off broadcasts nothing)',
+    events.buildTally({}, 0, { season: '' }).season === undefined);
 }
 
 console.log('buildBirthdays');

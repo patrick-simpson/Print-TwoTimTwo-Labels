@@ -59,6 +59,11 @@ system reports them; each consumer normalizes through its own alias map.
 | `counts` | object `{ "<club name>": int ≥ 0 }` (≤30 clubs) |
 | `total` | int ≥ 0 |
 | `at` | string (ISO 8601) |
+| `season` | OPTIONAL string, lowercase slug (e.g. `christmas`) — the printer's unified-theming broadcast (#18); absent when seasonal art is off. Zero PII. |
+| `rehearsal` | OPTIONAL literal `true` — present only while rehearsal mode (#19) is armed, so displays watermark themselves. Absent otherwise. |
+
+Both optional fields stay optional forever: consumers drop unknown fields, so
+deploy order between the repos never matters.
 
 ### `birthdays` — this week's birthday kids (startup + every ~10 min on club night)
 
