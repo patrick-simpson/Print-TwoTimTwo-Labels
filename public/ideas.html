@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>Feature Ideas — round 2</title>
-    <meta name="description" content="Private scratchpad of feature ideas for the label printer and check-in display. Round 1 shipped; round 2 has 100 fresh candidates to pick from." />
+    <title>Feature Ideas — round 3</title>
+    <meta name="description" content="Private scratchpad of feature ideas for the label printer and check-in display. 247 candidates across three rounds; round 1 shipped three picks in v5.10-5.12." />
     <link rel="icon" type="image/png" href="/icon128.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -42,14 +42,14 @@
           <span class="text-slate-300">•</span>
           <span>unlisted</span>
           <span class="text-slate-300">•</span>
-          <span class="text-brand-700">round 2</span>
+          <span class="text-brand-700">round 3</span>
         </div>
         <h1 class="text-2xl sm:text-3xl font-black text-slate-900 mt-1">Feature Ideas</h1>
         <p class="text-sm text-slate-500 mt-1">
-          Round 1 is done — its three picks <strong class="text-slate-700">shipped in v5.10–5.12</strong>
-          (footer, auto connect card, per-club templates; record at the bottom of this page).
-          Below are <strong class="text-slate-700">100 fresh candidates</strong>, with a new
-          "Print quality &amp; hardware" section. Tick the ones you want, then copy a build prompt.
+          Everything unshipped is selectable: <strong class="text-slate-700">Round 3</strong> (#201–250,
+          drawn from what the release history shows actually gets built here), then Round 2
+          (#101–200), then Round 1's 97 passed-on ideas — back in the pool. The three shipped
+          picks (v5.10–5.12) sit as a record at the bottom. Tick what you want, copy a build prompt.
         </p>
         <p class="text-xs text-slate-400 mt-2">
           Note: your ticks live only in this tab and reset if you reload — copy the prompt before you close it.
@@ -78,28 +78,22 @@
       </div>
     </header>
 
-    <!-- Round 2 list -->
+    <!-- Pickable pool (rounds 3, 2, and 1-passed) -->
     <main id="list" class="max-w-4xl mx-auto px-5 py-6 space-y-6"></main>
 
-    <!-- Round 1 record -->
+    <!-- Shipped record -->
     <section class="max-w-4xl mx-auto px-5 pb-10 space-y-4">
       <div class="border-t border-slate-200 pt-6">
-        <h2 class="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1.5">✓ Round 1 — shipped in v5.10–5.12</h2>
+        <h2 class="text-xs font-bold uppercase tracking-wide text-brand-700 mb-1.5">✓ Shipped — round 1 picks</h2>
         <div id="r1-picked" class="bg-white rounded-xl border-2 border-brand-200 p-1.5"></div>
       </div>
-      <details>
-        <summary class="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-400 hover:text-slate-600 select-none">
-          Round 1 — passed on (<span id="r1-passed-count"></span>) — kept for the record
-        </summary>
-        <div id="r1-passed" class="mt-3 space-y-6 opacity-60"></div>
-      </details>
     </section>
 
     <!-- Sticky action bar -->
     <div class="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200">
       <div class="max-w-4xl mx-auto px-5 py-3 flex items-center gap-3">
         <div class="text-sm text-slate-600">
-          <span id="selected-count" class="font-bold text-slate-900">0</span> of 100 selected
+          <span id="selected-count" class="font-bold text-slate-900">0</span> of <span id="total-count">…</span> selected
         </div>
         <div class="flex-1"></div>
         <button id="copy-btn"
@@ -128,124 +122,194 @@
     </style>
 
     <script>
-      // ── Round 2: the pickable ideas (101–200). Self-contained; no fetch. ────
+      // ── The pickable pool. Round 3 (201–250) first — each batch named for the
+      // release-history vein it extends — then round 2 (101–200); round 1's 97
+      // passed ideas are merged in at render time from ROUND1 below.
       // app: 'P' printer · 'D' display · 'B' both.
       var IDEAS = [
-        // Print quality & hardware — Printer
-        { n: 101, app: 'P', cat: 'Print quality & hardware', title: 'Musical printing: vary raster density so the stepper motor "plays" a little tune (raw ESC/POS where supported; opt-in novelty on test prints)' },
-        { n: 102, app: 'P', cat: 'Print quality & hardware', title: 'Startup chirp: a two-second signature motor melody with the morning test print' },
-        { n: 103, app: 'P', cat: 'Print quality & hardware', title: 'Raw ESC/POS print path bypassing the Windows driver — faster, crisper, controllable' },
-        { n: 104, app: 'P', cat: 'Print quality & hardware', title: 'Darkness/density calibration wizard with a printed test chart' },
-        { n: 105, app: 'P', cat: 'Print quality & hardware', title: 'Dithering algorithm selector (Floyd–Steinberg / Atkinson / threshold) with side-by-side preview' },
-        { n: 106, app: 'P', cat: 'Print quality & hardware', title: 'Label stock profiles: die-cut, continuous, linerless — sizes and gap calibration per profile' },
-        { n: 107, app: 'P', cat: 'Print quality & hardware', title: 'Thermal-head wear tracker: ink coverage per label, head-cleaning reminders by mileage' },
-        { n: 108, app: 'P', cat: 'Print quality & hardware', title: 'Overheat-aware pacing that spaces labels out during check-in rushes' },
-        { n: 109, app: 'P', cat: 'Print quality & hardware', title: 'Portrait / rotated label mode for lanyard sleeves' },
-        { n: 110, app: 'P', cat: 'Print quality & hardware', title: 'Quality-vs-speed toggle per printer' },
-        { n: 111, app: 'P', cat: 'Print quality & hardware', title: "Auto-contrast for club logos tuned to each printer's measured density" },
-        { n: 112, app: 'P', cat: 'Print quality & hardware', title: 'Sibling labels grouped onto one tear strip' },
-        { n: 113, app: 'P', cat: 'Print quality & hardware', title: 'Big-name mode: double-height first name readable across the room' },
-        { n: 114, app: 'P', cat: 'Print quality & hardware', title: 'Full Unicode names: CJK / accent font fallback chain in the renderer' },
+        // Round 3 — Fewer clicks (the Quick Mode vein: v3.0.0 "too many buttons", v5.5 one-click everything)
+        { n: 201, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: 'Quick Mode 2.0: one keystroke checks in the highlighted kid and prints' },
+        { n: 202, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: 'Auto-focus the search box on load and after every check-in — zero-mouse nights' },
+        { n: 203, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: 'Recent-families palette: the last 10 households one click away' },
+        { n: 204, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: '"Fix it" button on any failed print row — retries with diagnostics attached' },
+        { n: 205, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: 'Batch check-in self-verify report: list any kid whose site check-in didn\'t stick (extends the v3.0.4 guarantee)' },
+        { n: 206, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: '10-second "didn\'t mean that" undo toast after each check-in' },
+        { n: 207, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: '"Reprint last" item in the tray menu on the server PC' },
+        { n: 208, app: 'P', cat: 'R3 · Fewer clicks (Quick Mode vein)', title: 'Keyboard-driven walk-in flow: type a name, Enter, done' },
+
+        // Round 3 — Identity & phantom-proofing (the v2.3/3.0.3/5.1 vein: phantom prints, clubberId anchoring)
+        { n: 209, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'Phantom-print sentinel: flag prints whose kid never appears in the check-in report (extends undo detection)' },
+        { n: 210, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'Dedup window persisted across restarts so a mid-rush server restart can\'t double-print' },
+        { n: 211, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'clubberId end-to-end: key the roster cache, sibling suggestions and /siblings by recid (finish R-4)' },
+        { n: 212, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'Same-name-kids dashboard warning listing children who need ids to be told apart' },
+        { n: 213, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'Roster-diff detector confidence score with a review queue instead of silent prints' },
+        { n: 214, app: 'P', cat: 'R3 · Identity & phantom-proofing', title: 'Identity audit page: history/attendance rows still keyed by name, one-click re-key when ids are known' },
+
+        // Round 3 — TwoTimTwo contract & drift (the v5.1 vein: validate against the real site, never assume)
+        { n: 215, app: 'B', cat: 'R3 · TwoTimTwo contract & drift', title: 'Contract-drift canary: nightly check that docs/TWOTIMTWO.md selectors still match the live site — warn before club night, not during' },
+        { n: 216, app: 'P', cat: 'R3 · TwoTimTwo contract & drift', title: 'Selector self-test v2: report WHICH selector broke and suggest the closest surviving match' },
+        { n: 217, app: 'B', cat: 'R3 · TwoTimTwo contract & drift', title: 'Record-and-replay: capture one real night (anonymized) as a permanent regression fixture' },
+        { n: 218, app: 'P', cat: 'R3 · TwoTimTwo contract & drift', title: '"Test my site" probe suite in the extension options page' },
+        { n: 219, app: 'P', cat: 'R3 · TwoTimTwo contract & drift', title: 'Alternate selector sets that hot-swap when a TwoTimTwo restyle is detected' },
+
+        // Round 3 — Night-of observability (the v4.1 vein: canary, self-testing selectors, visible failures)
+        { n: 220, app: 'P', cat: 'R3 · Night-of observability', title: 'Guided pre-flight: one screen that runs canary, test print and key checks in order, 30 min before doors' },
+        { n: 221, app: 'P', cat: 'R3 · Night-of observability', title: 'Club-morning digest: canary result, roster freshness, printer test, key status in one email' },
+        { n: 222, app: 'P', cat: 'R3 · Night-of observability', title: 'Every failure type links straight to its TROUBLESHOOTING.md section from the dashboard' },
+        { n: 223, app: 'P', cat: 'R3 · Night-of observability', title: 'Live ops ticker: rolling plain-English log of prints, undos and warnings' },
+        { n: 224, app: 'P', cat: 'R3 · Night-of observability', title: 'Night replay: every event on a scrubbable timeline for the after-club debrief' },
+        { n: 225, app: 'P', cat: 'R3 · Night-of observability', title: 'Anomaly alarm: prints suddenly stopping mid-rush raises a loud dashboard + tray alert' },
+
+        // Round 3 — Updates & releases (the v5.0.x/5.8 vein: smoke tests, push updates, stale-artifact drift)
+        { n: 226, app: 'P', cat: 'R3 · Updates & releases', title: 'Staged rollout: one canary laptop gets each release first, the rest follow after a clean night' },
+        { n: 227, app: 'P', cat: 'R3 · Updates & releases', title: 'Update health beacon (opt-in): confirm the update installed and the server came back cleanly' },
+        { n: 228, app: 'P', cat: 'R3 · Updates & releases', title: 'Rollback from the tray: reinstall the previous release when a new one misbehaves' },
+        { n: 229, app: 'P', cat: 'R3 · Updates & releases', title: '"What changed" panel in-app after each auto-update, fed from changes.md' },
+        { n: 230, app: 'P', cat: 'R3 · Updates & releases', title: 'Version-skew banner when the synced extension hasn\'t been reloaded in Chrome yet' },
+
+        // Round 3 — Consent & safety (the v5.8.2 vein: fail toward protection)
+        { n: 231, app: 'P', cat: 'R3 · Consent & safety', title: 'Consent audit report: every kid whose release columns are blank or ambiguous, for office follow-up' },
+        { n: 232, app: 'P', cat: 'R3 · Consent & safety', title: 'Allergy parse review queue: confirm/deny flagged Notes phrases, teaching the parser' },
+        { n: 233, app: 'P', cat: 'R3 · Consent & safety', title: 'Guardian-mismatch alert at checkout when the pickup name matches no roster contact' },
+        { n: 234, app: 'P', cat: 'R3 · Consent & safety', title: 'Leader-only medical-notes roster, distinct from the label\'s allergy icons' },
+        { n: 235, app: 'P', cat: 'R3 · Consent & safety', title: '"Safety diff" after each CSV update: kids whose allergy or consent data changed this week' },
+
+        // Round 3 — Thermal & label quality (the v3.7.1/5.6.1 vein: ghost logos, dither discipline)
+        { n: 236, app: 'P', cat: 'R3 · Thermal & label quality', title: 'Ghost-logo early warning: dashboard flags any club logo that will print too light, before club night' },
+        { n: 237, app: 'P', cat: 'R3 · Thermal & label quality', title: 'Photo-feedback calibration: print a test card, snap a phone photo, auto-suggest density/dither settings' },
+        { n: 238, app: 'P', cat: 'R3 · Thermal & label quality', title: 'Ink-budget preview in the template editor (estimated darkness per club)' },
+        { n: 239, app: 'P', cat: 'R3 · Thermal & label quality', title: 'Font fallback audit: warn when a kid\'s name has glyphs the club font can\'t render' },
+
+        // Round 3 — Club rhythms & delight (the birthday/store-night/step-up vein)
+        { n: 240, app: 'P', cat: 'R3 · Club rhythms & delight', title: 'Half-birthday cake for summer-birthday kids whose real week never lands on a club night' },
+        { n: 241, app: 'P', cat: 'R3 · Club rhythms & delight', title: '"Welcome back!" first-night-of-season treatment for every returning kid' },
+        { n: 242, app: 'D', cat: 'R3 · Club rhythms & delight', title: 'Milestone wall on the display when someone hits 25/50 nights, synced with the label line' },
+        { n: 243, app: 'B', cat: 'R3 · Club rhythms & delight', title: 'Countdown to the season\'s 1000th check-in across both apps' },
+        { n: 244, app: 'B', cat: 'R3 · Club rhythms & delight', title: 'Grand Prix day mode: heat numbers on labels, race bracket on the screens' },
+
+        // Round 3 — Config & season ops (the config-loss/merge-writer vein)
+        { n: 245, app: 'P', cat: 'R3 · Config & season ops', title: 'Config schema versioning with automatic migration and a backup on every upgrade' },
+        { n: 246, app: 'P', cat: 'R3 · Config & season ops', title: '"Why is this setting like this?" inline help sourced from changes.md rationales' },
+        { n: 247, app: 'P', cat: 'R3 · Config & season ops', title: 'Laptop handoff bundle: one file/QR that moves the whole setup to a replacement machine mid-season' },
+        { n: 248, app: 'P', cat: 'R3 · Config & season ops', title: 'Guardrail on settings saves during club hours ("it\'s 6:40pm — are you sure?")' },
+        { n: 249, app: 'P', cat: 'R3 · Config & season ops', title: 'Dry-run settings save: preview exactly what would change before writing' },
+        { n: 250, app: 'P', cat: 'R3 · Config & season ops', title: 'Season archive export: one zip of the year\'s attendance, history and stats for church records' },
+
+        // Round 2 — Print quality & hardware — Printer
+        { n: 101, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Musical printing: vary raster density so the stepper motor "plays" a little tune (raw ESC/POS where supported; opt-in novelty on test prints)' },
+        { n: 102, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Startup chirp: a two-second signature motor melody with the morning test print' },
+        { n: 103, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Raw ESC/POS print path bypassing the Windows driver — faster, crisper, controllable' },
+        { n: 104, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Darkness/density calibration wizard with a printed test chart' },
+        { n: 105, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Dithering algorithm selector (Floyd–Steinberg / Atkinson / threshold) with side-by-side preview' },
+        { n: 106, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Label stock profiles: die-cut, continuous, linerless — sizes and gap calibration per profile' },
+        { n: 107, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Thermal-head wear tracker: ink coverage per label, head-cleaning reminders by mileage' },
+        { n: 108, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Overheat-aware pacing that spaces labels out during check-in rushes' },
+        { n: 109, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Portrait / rotated label mode for lanyard sleeves' },
+        { n: 110, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Quality-vs-speed toggle per printer' },
+        { n: 111, app: 'P', cat: 'R2 · Print quality & hardware', title: "Auto-contrast for club logos tuned to each printer's measured density" },
+        { n: 112, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Sibling labels grouped onto one tear strip' },
+        { n: 113, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Big-name mode: double-height first name readable across the room' },
+        { n: 114, app: 'P', cat: 'R2 · Print quality & hardware', title: 'Full Unicode names: CJK / accent font fallback chain in the renderer' },
 
         // Labels, round 2 — Printer
-        { n: 115, app: 'P', cat: 'Labels, round 2', title: 'Guardian phone last-4 printed for pickup verification' },
-        { n: 116, app: 'P', cat: 'Labels, round 2', title: 'Twin-safe labels: middle initial or hint when two kids share a name' },
-        { n: 117, app: 'P', cat: 'Labels, round 2', title: 'Attendance streak flame ("6 weeks in a row!")' },
-        { n: 118, app: 'P', cat: 'Labels, round 2', title: '"New this month" subtle marker so leaders learn new names fast' },
-        { n: 119, app: 'P', cat: 'Labels, round 2', title: 'Bus / ride-home route code on the label' },
-        { n: 120, app: 'P', cat: 'Labels, round 2', title: 'Medication-on-file icon (e.g. epipen) distinct from allergy icons' },
-        { n: 121, app: 'P', cat: 'Labels, round 2', title: 'Next-year room/club preview line in the final weeks of the season' },
-        { n: 122, app: 'P', cat: 'Labels, round 2', title: 'Seasonal border art (thermal-safe line work, not gray fills)' },
-        { n: 123, app: 'P', cat: 'Labels, round 2', title: 'Mid-year club-change flag ("moved up from Cubbies")' },
-        { n: 124, app: 'P', cat: 'Labels, round 2', title: 'Color-team stripe rendered as a thermal-safe pattern' },
-        { n: 125, app: 'P', cat: 'Labels, round 2', title: 'Verse-of-the-week rotation feeding the label footer automatically' },
-        { n: 126, app: 'P', cat: 'Labels, round 2', title: "QR on the connect card linking to the church's visitor page" },
+        { n: 115, app: 'P', cat: 'R2 · Labels', title: 'Guardian phone last-4 printed for pickup verification' },
+        { n: 116, app: 'P', cat: 'R2 · Labels', title: 'Twin-safe labels: middle initial or hint when two kids share a name' },
+        { n: 117, app: 'P', cat: 'R2 · Labels', title: 'Attendance streak flame ("6 weeks in a row!")' },
+        { n: 118, app: 'P', cat: 'R2 · Labels', title: '"New this month" subtle marker so leaders learn new names fast' },
+        { n: 119, app: 'P', cat: 'R2 · Labels', title: 'Bus / ride-home route code on the label' },
+        { n: 120, app: 'P', cat: 'R2 · Labels', title: 'Medication-on-file icon (e.g. epipen) distinct from allergy icons' },
+        { n: 121, app: 'P', cat: 'R2 · Labels', title: 'Next-year room/club preview line in the final weeks of the season' },
+        { n: 122, app: 'P', cat: 'R2 · Labels', title: 'Seasonal border art (thermal-safe line work, not gray fills)' },
+        { n: 123, app: 'P', cat: 'R2 · Labels', title: 'Mid-year club-change flag ("moved up from Cubbies")' },
+        { n: 124, app: 'P', cat: 'R2 · Labels', title: 'Color-team stripe rendered as a thermal-safe pattern' },
+        { n: 125, app: 'P', cat: 'R2 · Labels', title: 'Verse-of-the-week rotation feeding the label footer automatically' },
+        { n: 126, app: 'P', cat: 'R2 · Labels', title: "QR on the connect card linking to the church's visitor page" },
 
         // Print server & reliability, round 2 — Printer
-        { n: 127, app: 'P', cat: 'Print server & reliability, round 2', title: 'Second-printer hot standby with automatic failover' },
-        { n: 128, app: 'P', cat: 'Print server & reliability, round 2', title: 'Print-farm mode: split a rush across two printers round-robin' },
-        { n: 129, app: 'P', cat: 'Print server & reliability, round 2', title: 'Windows service mode — server runs with nobody logged in' },
-        { n: 130, app: 'P', cat: 'Print server & reliability, round 2', title: 'Nightly config + attendance backup zip with one-click restore' },
-        { n: 131, app: 'P', cat: 'Print server & reliability, round 2', title: 'Self-diagnosing errors: map driver/PowerShell failures to plain-English fixes' },
-        { n: 132, app: 'P', cat: 'Print server & reliability, round 2', title: 'Print-time metrics: p50/p95 seconds from check-in to paper' },
-        { n: 133, app: 'P', cat: 'Print server & reliability, round 2', title: 'Attendance-ledger explorer: per-kid season history in the dashboard' },
-        { n: 134, app: 'P', cat: 'Print server & reliability, round 2', title: 'Season rollover wizard (archive last year, reset milestones cleanly)' },
-        { n: 135, app: 'P', cat: 'Print server & reliability, round 2', title: 'Roster diff report on every CSV update (added / removed / changed kids)' },
-        { n: 136, app: 'P', cat: 'Print server & reliability, round 2', title: "Simulated club night: replay a past night's check-ins for load testing" },
-        { n: 137, app: 'P', cat: 'Print server & reliability, round 2', title: 'USB hot-unplug detection with an immediate tray alert' },
-        { n: 138, app: 'P', cat: 'Print server & reliability, round 2', title: 'Crash-loop guardian: auto-restart with capped backoff and a visible banner' },
+        { n: 127, app: 'P', cat: 'R2 · Print server & reliability', title: 'Second-printer hot standby with automatic failover' },
+        { n: 128, app: 'P', cat: 'R2 · Print server & reliability', title: 'Print-farm mode: split a rush across two printers round-robin' },
+        { n: 129, app: 'P', cat: 'R2 · Print server & reliability', title: 'Windows service mode — server runs with nobody logged in' },
+        { n: 130, app: 'P', cat: 'R2 · Print server & reliability', title: 'Nightly config + attendance backup zip with one-click restore' },
+        { n: 131, app: 'P', cat: 'R2 · Print server & reliability', title: 'Self-diagnosing errors: map driver/PowerShell failures to plain-English fixes' },
+        { n: 132, app: 'P', cat: 'R2 · Print server & reliability', title: 'Print-time metrics: p50/p95 seconds from check-in to paper' },
+        { n: 133, app: 'P', cat: 'R2 · Print server & reliability', title: 'Attendance-ledger explorer: per-kid season history in the dashboard' },
+        { n: 134, app: 'P', cat: 'R2 · Print server & reliability', title: 'Season rollover wizard (archive last year, reset milestones cleanly)' },
+        { n: 135, app: 'P', cat: 'R2 · Print server & reliability', title: 'Roster diff report on every CSV update (added / removed / changed kids)' },
+        { n: 136, app: 'P', cat: 'R2 · Print server & reliability', title: "Simulated club night: replay a past night's check-ins for load testing" },
+        { n: 137, app: 'P', cat: 'R2 · Print server & reliability', title: 'USB hot-unplug detection with an immediate tray alert' },
+        { n: 138, app: 'P', cat: 'R2 · Print server & reliability', title: 'Crash-loop guardian: auto-restart with capped backoff and a visible banner' },
 
         // Dashboard, round 2 — Printer
-        { n: 139, app: 'P', cat: 'Dashboard, round 2', title: 'Per-club arrivals sparkline for tonight (who is still trickling in)' },
-        { n: 140, app: 'P', cat: 'Dashboard, round 2', title: '"Doors close" countdown in the dashboard header' },
-        { n: 141, app: 'P', cat: 'Dashboard, round 2', title: 'Volunteer check-in tracked alongside kids' },
-        { n: 142, app: 'P', cat: 'Dashboard, round 2', title: 'Printable leader name tents through the same renderer' },
-        { n: 143, app: 'P', cat: 'Dashboard, round 2', title: 'One-click end-of-night report (counts, visitors, failures)' },
-        { n: 144, app: 'P', cat: 'Dashboard, round 2', title: 'Search-as-you-type across all print history' },
-        { n: 145, app: 'P', cat: 'Dashboard, round 2', title: 'Keyboard-first operation: hotkeys for reprint, search, tabs' },
-        { n: 146, app: 'P', cat: 'Dashboard, round 2', title: 'Wall-mounted TV mode for the dashboard (big fonts, auto-refresh)' },
-        { n: 147, app: 'P', cat: 'Dashboard, round 2', title: 'Config audit log: who changed what setting, when' },
-        { n: 148, app: 'P', cat: 'Dashboard, round 2', title: 'Setting profiles: "normal night" / "big event" / "training"' },
+        { n: 139, app: 'P', cat: 'R2 · Dashboard', title: 'Per-club arrivals sparkline for tonight (who is still trickling in)' },
+        { n: 140, app: 'P', cat: 'R2 · Dashboard', title: '"Doors close" countdown in the dashboard header' },
+        { n: 141, app: 'P', cat: 'R2 · Dashboard', title: 'Volunteer check-in tracked alongside kids' },
+        { n: 142, app: 'P', cat: 'R2 · Dashboard', title: 'Printable leader name tents through the same renderer' },
+        { n: 143, app: 'P', cat: 'R2 · Dashboard', title: 'One-click end-of-night report (counts, visitors, failures)' },
+        { n: 144, app: 'P', cat: 'R2 · Dashboard', title: 'Search-as-you-type across all print history' },
+        { n: 145, app: 'P', cat: 'R2 · Dashboard', title: 'Keyboard-first operation: hotkeys for reprint, search, tabs' },
+        { n: 146, app: 'P', cat: 'R2 · Dashboard', title: 'Wall-mounted TV mode for the dashboard (big fonts, auto-refresh)' },
+        { n: 147, app: 'P', cat: 'R2 · Dashboard', title: 'Config audit log: who changed what setting, when' },
+        { n: 148, app: 'P', cat: 'R2 · Dashboard', title: 'Setting profiles: "normal night" / "big event" / "training"' },
 
         // Check-in flow, round 2 — Printer
-        { n: 149, app: 'P', cat: 'Check-in flow, round 2', title: 'Family QR fast-pass: one code checks in every sibling at once' },
-        { n: 150, app: 'P', cat: 'Check-in flow, round 2', title: 'NFC wristband tap check-in' },
-        { n: 151, app: 'P', cat: 'Check-in flow, round 2', title: 'Parking-lot pre-check-in from the phone page (label waits at the desk)' },
-        { n: 152, app: 'P', cat: 'Check-in flow, round 2', title: 'Car-line mode: numbered pickup tags matched to a call board' },
-        { n: 153, app: 'P', cat: 'Check-in flow, round 2', title: 'Late-arrival auto-notify to that club’s leader' },
-        { n: 154, app: 'P', cat: 'Check-in flow, round 2', title: 'Absence follow-up prompt after three missed weeks' },
-        { n: 155, app: 'P', cat: 'Check-in flow, round 2', title: 'Kiosk attract screen with club branding while idle' },
-        { n: 156, app: 'P', cat: 'Check-in flow, round 2', title: 'Multi-station mode: two laptops share one duplicate-suppression domain' },
-        { n: 157, app: 'P', cat: 'Check-in flow, round 2', title: 'Offline-first phone page (PWA that syncs when Wi-Fi returns)' },
-        { n: 158, app: 'P', cat: 'Check-in flow, round 2', title: 'Accessibility: large-target / switch-friendly mode for the phone page' },
+        { n: 149, app: 'P', cat: 'R2 · Check-in flow', title: 'Family QR fast-pass: one code checks in every sibling at once' },
+        { n: 150, app: 'P', cat: 'R2 · Check-in flow', title: 'NFC wristband tap check-in' },
+        { n: 151, app: 'P', cat: 'R2 · Check-in flow', title: 'Parking-lot pre-check-in from the phone page (label waits at the desk)' },
+        { n: 152, app: 'P', cat: 'R2 · Check-in flow', title: 'Car-line mode: numbered pickup tags matched to a call board' },
+        { n: 153, app: 'P', cat: 'R2 · Check-in flow', title: 'Late-arrival auto-notify to that club’s leader' },
+        { n: 154, app: 'P', cat: 'R2 · Check-in flow', title: 'Absence follow-up prompt after three missed weeks' },
+        { n: 155, app: 'P', cat: 'R2 · Check-in flow', title: 'Kiosk attract screen with club branding while idle' },
+        { n: 156, app: 'P', cat: 'R2 · Check-in flow', title: 'Multi-station mode: two laptops share one duplicate-suppression domain' },
+        { n: 157, app: 'P', cat: 'R2 · Check-in flow', title: 'Offline-first phone page (PWA that syncs when Wi-Fi returns)' },
+        { n: 158, app: 'P', cat: 'R2 · Check-in flow', title: 'Accessibility: large-target / switch-friendly mode for the phone page' },
 
         // Screen ideas, round 2 — Display
-        { n: 159, app: 'D', cat: 'Screen ideas, round 2', title: 'Name-reveal animations styled per club font' },
-        { n: 160, app: 'D', cat: 'Screen ideas, round 2', title: 'Welcome marquee timed to the moment the label finishes printing' },
-        { n: 161, app: 'D', cat: 'Screen ideas, round 2', title: 'Consent-safe fun avatars (generated monster per kid, no photos)' },
-        { n: 162, app: 'D', cat: 'Screen ideas, round 2', title: 'Club mascot animations between check-ins' },
-        { n: 163, app: 'D', cat: 'Screen ideas, round 2', title: 'Trivia / quiz loop while the lobby is quiet' },
-        { n: 164, app: 'D', cat: 'Screen ideas, round 2', title: 'Game-time hype countdown with synced music' },
-        { n: 165, app: 'D', cat: 'Screen ideas, round 2', title: 'Parent pickup board: security codes displayed at checkout time' },
-        { n: 166, app: 'D', cat: 'Screen ideas, round 2', title: 'Weather + drive-safe message on the exit screens' },
-        { n: 167, app: 'D', cat: 'Screen ideas, round 2', title: 'Memory-verse karaoke mode (bouncing-ball text)' },
-        { n: 168, app: 'D', cat: 'Screen ideas, round 2', title: 'Achievements wall: handbook completions this month' },
-        { n: 169, app: 'D', cat: 'Screen ideas, round 2', title: 'Live poll: kids vote next game-night theme from the floor' },
-        { n: 170, app: 'D', cat: 'Screen ideas, round 2', title: 'Anniversary shout-outs ("5th year in Awana!")' },
-        { n: 171, app: 'D', cat: 'Screen ideas, round 2', title: 'Multi-zone layout editor (banner / slides / ticker thirds)' },
-        { n: 172, app: 'D', cat: 'Screen ideas, round 2', title: 'OBS / ProPresenter overlay endpoints for pro AV booths' },
-        { n: 173, app: 'D', cat: 'Screen ideas, round 2', title: 'Ambient soundscape scheduler (pre-club, game time, quiet time)' },
-        { n: 174, app: 'D', cat: 'Screen ideas, round 2', title: 'Screen health beacon: each display reports uptime to the print server' },
-        { n: 175, app: 'D', cat: 'Screen ideas, round 2', title: 'Severe-weather alert takeover from the NWS feed' },
-        { n: 176, app: 'D', cat: 'Screen ideas, round 2', title: 'Slideshow synced from a shared church drive folder' },
-        { n: 177, app: 'D', cat: 'Screen ideas, round 2', title: '"Bring a friend" counter with confetti at milestones' },
-        { n: 178, app: 'D', cat: 'Screen ideas, round 2', title: 'End-of-night parent messages ("pickup starts in 10 minutes")' },
+        { n: 159, app: 'D', cat: 'R2 · Screen ideas', title: 'Name-reveal animations styled per club font' },
+        { n: 160, app: 'D', cat: 'R2 · Screen ideas', title: 'Welcome marquee timed to the moment the label finishes printing' },
+        { n: 161, app: 'D', cat: 'R2 · Screen ideas', title: 'Consent-safe fun avatars (generated monster per kid, no photos)' },
+        { n: 162, app: 'D', cat: 'R2 · Screen ideas', title: 'Club mascot animations between check-ins' },
+        { n: 163, app: 'D', cat: 'R2 · Screen ideas', title: 'Trivia / quiz loop while the lobby is quiet' },
+        { n: 164, app: 'D', cat: 'R2 · Screen ideas', title: 'Game-time hype countdown with synced music' },
+        { n: 165, app: 'D', cat: 'R2 · Screen ideas', title: 'Parent pickup board: security codes displayed at checkout time' },
+        { n: 166, app: 'D', cat: 'R2 · Screen ideas', title: 'Weather + drive-safe message on the exit screens' },
+        { n: 167, app: 'D', cat: 'R2 · Screen ideas', title: 'Memory-verse karaoke mode (bouncing-ball text)' },
+        { n: 168, app: 'D', cat: 'R2 · Screen ideas', title: 'Achievements wall: handbook completions this month' },
+        { n: 169, app: 'D', cat: 'R2 · Screen ideas', title: 'Live poll: kids vote next game-night theme from the floor' },
+        { n: 170, app: 'D', cat: 'R2 · Screen ideas', title: 'Anniversary shout-outs ("5th year in Awana!")' },
+        { n: 171, app: 'D', cat: 'R2 · Screen ideas', title: 'Multi-zone layout editor (banner / slides / ticker thirds)' },
+        { n: 172, app: 'D', cat: 'R2 · Screen ideas', title: 'OBS / ProPresenter overlay endpoints for pro AV booths' },
+        { n: 173, app: 'D', cat: 'R2 · Screen ideas', title: 'Ambient soundscape scheduler (pre-club, game time, quiet time)' },
+        { n: 174, app: 'D', cat: 'R2 · Screen ideas', title: 'Screen health beacon: each display reports uptime to the print server' },
+        { n: 175, app: 'D', cat: 'R2 · Screen ideas', title: 'Severe-weather alert takeover from the NWS feed' },
+        { n: 176, app: 'D', cat: 'R2 · Screen ideas', title: 'Slideshow synced from a shared church drive folder' },
+        { n: 177, app: 'D', cat: 'R2 · Screen ideas', title: '"Bring a friend" counter with confetti at milestones' },
+        { n: 178, app: 'D', cat: 'R2 · Screen ideas', title: 'End-of-night parent messages ("pickup starts in 10 minutes")' },
 
         // Cross-app, round 2 — Both
-        { n: 179, app: 'B', cat: 'Cross-app, round 2', title: 'Director companion app: glance stats + a panic button' },
-        { n: 180, app: 'B', cat: 'Cross-app, round 2', title: "Leader phone alert when an allergy kid checks into their club" },
-        { n: 181, app: 'B', cat: 'Cross-app, round 2', title: 'Season analytics: retention, growth, first-timer conversion' },
-        { n: 182, app: 'B', cat: 'Cross-app, round 2', title: 'First-timer pipeline: connect card → follow-up list → CRM export' },
-        { n: 183, app: 'B', cat: 'Cross-app, round 2', title: 'Unified seasonal theming: label art and screen skin switch together' },
-        { n: 184, app: 'B', cat: 'Cross-app, round 2', title: 'QR pairing flow between the printer PC and each screen' },
-        { n: 185, app: 'B', cat: 'Cross-app, round 2', title: 'Config sync through the church’s shared drive (both apps read one file)' },
-        { n: 186, app: 'B', cat: 'Cross-app, round 2', title: 'Rehearsal mode: run a fake club night across both apps at once' },
-        { n: 187, app: 'B', cat: 'Cross-app, round 2', title: 'Capacity alerts: room over volunteer ratio warns dashboard and screens' },
-        { n: 188, app: 'B', cat: 'Cross-app, round 2', title: 'Data-retention dashboard: one place to purge PII on schedule' },
-        { n: 189, app: 'B', cat: 'Cross-app, round 2', title: 'Grandparent mode: bigger text everywhere with one switch' },
-        { n: 190, app: 'B', cat: 'Cross-app, round 2', title: 'Open metrics endpoint (Prometheus) for the church tech team' },
+        { n: 179, app: 'B', cat: 'R2 · Cross-app', title: 'Director companion app: glance stats + a panic button' },
+        { n: 180, app: 'B', cat: 'R2 · Cross-app', title: "Leader phone alert when an allergy kid checks into their club" },
+        { n: 181, app: 'B', cat: 'R2 · Cross-app', title: 'Season analytics: retention, growth, first-timer conversion' },
+        { n: 182, app: 'B', cat: 'R2 · Cross-app', title: 'First-timer pipeline: connect card → follow-up list → CRM export' },
+        { n: 183, app: 'B', cat: 'R2 · Cross-app', title: 'Unified seasonal theming: label art and screen skin switch together' },
+        { n: 184, app: 'B', cat: 'R2 · Cross-app', title: 'QR pairing flow between the printer PC and each screen' },
+        { n: 185, app: 'B', cat: 'R2 · Cross-app', title: 'Config sync through the church’s shared drive (both apps read one file)' },
+        { n: 186, app: 'B', cat: 'R2 · Cross-app', title: 'Rehearsal mode: run a fake club night across both apps at once' },
+        { n: 187, app: 'B', cat: 'R2 · Cross-app', title: 'Capacity alerts: room over volunteer ratio warns dashboard and screens' },
+        { n: 188, app: 'B', cat: 'R2 · Cross-app', title: 'Data-retention dashboard: one place to purge PII on schedule' },
+        { n: 189, app: 'B', cat: 'R2 · Cross-app', title: 'Grandparent mode: bigger text everywhere with one switch' },
+        { n: 190, app: 'B', cat: 'R2 · Cross-app', title: 'Open metrics endpoint (Prometheus) for the church tech team' },
 
         // Wild & delightful — mixed
-        { n: 191, app: 'P', cat: 'Wild & delightful', title: 'Golden ticket: one random label a night gets a star frame' },
-        { n: 192, app: 'P', cat: 'Wild & delightful', title: 'Collectible label icon series that changes weekly' },
-        { n: 193, app: 'D', cat: 'Wild & delightful', title: 'Boarding-pass theme night: labels and screens styled as flights' },
-        { n: 194, app: 'B', cat: 'Wild & delightful', title: 'Awana radio: lo-fi loop whose track flips on milestones' },
-        { n: 195, app: 'P', cat: 'Wild & delightful', title: 'Leader labels with fun titles ("Snack Commander")' },
-        { n: 196, app: 'D', cat: 'Wild & delightful', title: 'Pixel-art fireworks driven by the live check-in rate' },
-        { n: 197, app: 'B', cat: 'Wild & delightful', title: 'Year-in-review data reel generated from season stats' },
-        { n: 198, app: 'P', cat: 'Wild & delightful', title: 'Mini maze or puzzle printed beside the name for waiting kids' },
-        { n: 199, app: 'B', cat: 'Wild & delightful', title: '"Club night in numbers" postcard auto-printed at close for the director' },
-        { n: 200, app: 'B', cat: 'Wild & delightful', title: 'April Fools mode: everything renders upside down (opt-in!)' },
+        { n: 191, app: 'P', cat: 'R2 · Wild & delightful', title: 'Golden ticket: one random label a night gets a star frame' },
+        { n: 192, app: 'P', cat: 'R2 · Wild & delightful', title: 'Collectible label icon series that changes weekly' },
+        { n: 193, app: 'D', cat: 'R2 · Wild & delightful', title: 'Boarding-pass theme night: labels and screens styled as flights' },
+        { n: 194, app: 'B', cat: 'R2 · Wild & delightful', title: 'Awana radio: lo-fi loop whose track flips on milestones' },
+        { n: 195, app: 'P', cat: 'R2 · Wild & delightful', title: 'Leader labels with fun titles ("Snack Commander")' },
+        { n: 196, app: 'D', cat: 'R2 · Wild & delightful', title: 'Pixel-art fireworks driven by the live check-in rate' },
+        { n: 197, app: 'B', cat: 'R2 · Wild & delightful', title: 'Year-in-review data reel generated from season stats' },
+        { n: 198, app: 'P', cat: 'R2 · Wild & delightful', title: 'Mini maze or puzzle printed beside the name for waiting kids' },
+        { n: 199, app: 'B', cat: 'R2 · Wild & delightful', title: '"Club night in numbers" postcard auto-printed at close for the director' },
+        { n: 200, app: 'B', cat: 'R2 · Wild & delightful', title: 'April Fools mode: everything renders upside down (opt-in!)' },
       ];
 
       // ── Round 1: the decided record (1–100; 3 shipped, 97 passed). ──────────
@@ -498,9 +562,7 @@
         document.body.removeChild(ta);
       }
 
-      render();
-
-      // ── Round 1 record (read-only) ───────────────────────────────────────────
+      // ── Round 1 record + merge (render happens after the merge below) ───────
       function recordRow(idea) {
         var picked = !!idea.picked;
         return '<div class="record-row">' +
@@ -513,25 +575,18 @@
           '</div>';
       }
 
-      var r1Picked = ROUND1.filter(function (i) { return i.picked; });
-      var r1Passed = ROUND1.filter(function (i) { return !i.picked; });
-      document.getElementById('r1-picked').innerHTML = r1Picked.map(recordRow).join('');
-      document.getElementById('r1-passed-count').textContent = String(r1Passed.length);
+      document.getElementById('r1-picked').innerHTML =
+        ROUND1.filter(function (i) { return i.picked; }).map(recordRow).join('');
 
-      var r1Groups = [];
-      var r1ByCat = {};
-      r1Passed.forEach(function (idea) {
-        if (!r1ByCat[idea.cat]) { r1ByCat[idea.cat] = []; r1Groups.push(idea.cat); }
-        r1ByCat[idea.cat].push(idea);
+      // Round 1's 97 passed ideas rejoin the pickable pool (only the shipped
+      // three stay retired). They keep their original 1–100 numbers and sort
+      // after rounds 3 and 2, with their categories prefixed for clarity.
+      ROUND1.filter(function (i) { return !i.picked; }).forEach(function (i) {
+        IDEAS.push({ n: i.n, app: i.app, cat: 'R1 · ' + i.cat, title: i.title });
       });
-      document.getElementById('r1-passed').innerHTML = r1Groups.map(function (cat) {
-        return '<section>' +
-          '<h2 class="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1.5">' + esc(cat) + '</h2>' +
-          '<div class="bg-white rounded-xl border border-slate-200 p-1.5">' +
-            r1ByCat[cat].map(recordRow).join('') +
-          '</div>' +
-          '</section>';
-      }).join('');
+
+      document.getElementById('total-count').textContent = String(IDEAS.length);
+      render();
     </script>
   </body>
 </html>
