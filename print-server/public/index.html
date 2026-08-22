@@ -397,6 +397,9 @@
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-musical"> Musical printer: motor melody with test prints (TSPL printers, e.g. D450)
                 </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-update-beacon"> Update health beacon: after an auto-update, announce "vX.Y.Z came back cleanly" on the event bus (version number only)
+                </label>
                 <p style="font-size:10px;color:#94a3b8;margin:0 0 0 22px">
                   Raw-mode party trick: the label stock feeds and returns while the motor "sings".
                   If your printer creeps forward instead of returning, turn this back off.
@@ -929,6 +932,7 @@ function loadSettings() {
     document.getElementById('settings-season-theme').value = config.seasonTheme || 'auto';
     document.getElementById('settings-collectible').checked = config.collectibleIcons !== false;
     document.getElementById('settings-musical').checked = config.musicalPrinter === true;
+    document.getElementById('settings-update-beacon').checked = config.updateBeacon === true;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
@@ -1048,6 +1052,7 @@ function saveSettings() {
       seasonTheme: document.getElementById('settings-season-theme').value,
       collectibleIcons: document.getElementById('settings-collectible').checked,
       musicalPrinter: document.getElementById('settings-musical').checked,
+      updateBeacon: document.getElementById('settings-update-beacon').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,

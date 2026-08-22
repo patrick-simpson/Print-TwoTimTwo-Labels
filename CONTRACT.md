@@ -81,8 +81,9 @@ First names only, ever. `month`/`day` are the birthday's calendar month/day
 
 | Field | Type | Notes |
 |---|---|---|
-| `type` | `"print-failure" \| "canary" \| "selector-fail"` | |
+| `type` | `"print-failure" \| "canary" \| "selector-fail" \| "update-ok"` | `update-ok` NEW: the opt-in update health beacon (#5) — the first boot of a freshly-updated print server announces it came back cleanly. |
 | `club` | string (optional) | Club only — **never a name** |
+| `version` | string (optional) | Bare semver (`5.27.0`), only on `update-ok`. Version + the ok that the event exists at all — nothing else ever rides this. |
 | `at` | string (ISO 8601) | |
 
 ### `canary` — end-to-end pipe test (POST /canary)

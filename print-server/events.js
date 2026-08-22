@@ -13,7 +13,7 @@
 
 const crypto = require('crypto');
 
-const OPS_TYPES = ['print-failure', 'canary', 'selector-fail'];
+const OPS_TYPES = ['print-failure', 'canary', 'selector-fail', 'update-ok'];
 const NOTICE_LEVELS = ['info', 'warn', 'critical'];
 
 const NAME_MAX = 40;
@@ -208,12 +208,19 @@ function buildBirthdays(rawEntries) {
 // Operator-only telemetry (print failures, selector drift). Carries a type,
 // an optional club, and a timestamp — NEVER a name. Displays surface these on
 // status widgets, never as public banners.
-function buildOps(type, club) {
+function buildOps(type, club, extras) {
   const t = OPS_TYPES.includes(type) ? type : null;
   if (!t) return null;
   const payload = { type: t, at: nowIso() };
   const c = cleanName(club);
   if (c) payload.club = c;
+  // Update health beacon (#5): version + ok flag ONLY — a bare semver string
+  // is the entire payload beyond the type. Junk (or anything non-semver) is
+  // dropped rather than published; there is structurally nothing else here.
+  const x = extras || {};
+  if (typeof x.version === 'string' && /^\d+\.\d+\.\d+$/.test(x.version)) {
+    payload.version = x.version;
+  }
   return payload;
 }
 

@@ -1,4 +1,12 @@
-﻿## [5.26.0] - 2026-08-22
+﻿## [5.27.0] - 2026-08-22
+Update health beacon (#5, opt-in): after an auto-update, the operator has no confirmation the new build came back cleanly until they walk to the laptop. With the new "Update health beacon" setting on (dashboard Settings, off by default), the FIRST boot of a new version publishes `ops {type: 'update-ok', version}` on the event bus — the version string and the ok implicit in the event existing at all, nothing else ("version + ok flag only", operator's pick; "Pusher ops event", operator's pick).
+
+Mechanics that keep it honest:
+- The last-booted version is recorded on EVERY boot (`last-boot-version.json`), opted in or not — so enabling the beacon later never fires a stale announcement for an update that happened weeks ago.
+- A first-ever install is not an update: no previous version on record, no beacon.
+- Contract: `ops` gains type `update-ok` and an optional `version` field (bare semver only — junk is dropped before publish, pinned by new valid + dirty vectors). Old displays drop unknown ops types by construction, so deploy order never matters. Vectors mirrored to the display repo in its own commit after this lands on main.
+
+## [5.26.0] - 2026-08-22
 Record-and-replay regression fixture (#4): `scripts/fixtures/replay-night.json` is one FULLY SYNTHETIC club night — every child, phone number and address invented, so it is anonymized by construction ("fully synthetic", operator's pick) and safe to live in the repo forever. `scripts/test-replay-night.cjs` replays it through a real server instance on every `npm test` ("in-repo fixture", operator's pick), pinning both halves ("event stream + CSV shape", operator's pick):
 
 - **The CSV shape**: the verbatim 66-column `/clubber/csv` export — quoted header with the literal `?`s and the truncated `(Te...)` column, trailing empty column, a quoted comma inside Notes, and the `Clubber Count`/`FILTER` footer — must parse, sync via `POST /update-csv`, and enrich prints. If TwoTimTwo renames a column or `HEADER_MAP` drifts, CI fails instead of labels going basic on a Wednesday night.
