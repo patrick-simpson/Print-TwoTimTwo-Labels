@@ -1,4 +1,7 @@
-﻿## [5.29.4] - 2026-08-22
+﻿## [5.30.0] - 2026-08-22
+Removed the dashed seasonal border that traced the whole label (operator request). The per-season top-center motif stays — the seasonal art is now the motif alone, and every label edge is clean. Golden baselines regenerated (42).
+
+## [5.29.4] - 2026-08-22
 Contract-canary refinement (#3), from its first real-world run: on a quiet Saturday the sweep cried "2 check(s) failing" — `YII_CSRF_TOKEN findable` and `/clubber/checkin_report parses` — and painted a DRIFT warning on the dashboard, when both are simply what a NON-CLUB DAY looks like (no meeting tables in today's report; the CSRF input not rendered outside a live meeting context). A canary that cries wolf on weekends trains the operator to ignore the one alarm that matters.
 
 Checks are now classified hard vs SOFT:

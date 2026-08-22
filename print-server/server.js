@@ -825,30 +825,8 @@ function currentLabelSeason(now = new Date()) {
   return seasonForDate(now);
 }
 
-// Per-season dash pattern for the badge outline — eight visually distinct
-// rhythms, all solid strokes (no grays, nothing to dither).
-const SEASON_DASH = {
-  'back-to-school': [7, 3],
-  'fall':           [2, 2, 7, 2],
-  'thanksgiving':   [9, 2, 2, 2],
-  'christmas':      [5, 4],
-  'winter':         [1.5, 3],
-  'spring':         [4, 3],
-  'easter':         [1.5, 2, 5, 2],
-  'vbs-summer':     [11, 2],
-};
-
-// Stroke the badge outline in the season's rhythm. Drawn right after the
-// background so every content layer sits on top of it.
-function drawSeasonBorder(ctx, season, color, BX, BY, BW, BH, CORNER) {
-  ctx.save();
-  roundedRect(ctx, BX + 1.5, BY + 1.5, BW - 3, BH - 3, Math.max(4, CORNER - 1));
-  ctx.setLineDash(SEASON_DASH[season] || []);
-  ctx.lineWidth = 1.3;
-  ctx.strokeStyle = color;
-  ctx.stroke();
-  ctx.restore();
-}
+// (The per-season dashed border that traced the whole label was removed by
+// operator request — the seasonal art is now the top-center motif alone.)
 
 // A small top-center motif, pure path work at ~12pt. Drawn only when the
 // centered name block leaves headroom — a crowded label keeps its ink for
@@ -1733,10 +1711,6 @@ async function generateLabel(input) {
 
   // ── Badge border (no outline) ─────────────────────────────────────────────
   roundedRect(ctx, BX, BY, BW, BH, CORNER);
-
-  // ── Seasonal border (#16) ─────────────────────────────────────────────────
-  // Drawn first so every content layer sits on top; pure line work.
-  if (season) drawSeasonBorder(ctx, season, COLOR.sep, BX, BY, BW, BH, CORNER);
 
   // ── Left icon panel ───────────────────────────────────────────────────────
   // Tracked OUTSIDE the panel block: the text area below prints the club name
