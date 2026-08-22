@@ -1,0 +1,190 @@
+{
+  "description": "Record-and-replay regression fixture (#4): one FULLY SYNTHETIC club night. No line of this file was captured from a real event \u2014 every child, phone number and address is invented \u2014 so it is anonymized by construction and safe to live in the repo forever. It pins two contracts at once: the verbatim 66-column /clubber/csv export shape (quoted header, trailing empty column, quoted commas in Notes, Clubber Count/FILTER footer) and the event stream of a night (normal / birthday / visitor / twins / allergy / walk-in / duplicate / reconcile-undo). {{BIRTHDAY}} is substituted with today's month/day at test time so the birthday-week path always fires.",
+  "csvLines": [
+    "\"Clubber ID\",\"Inactive\",\"First Name\",\"Last Name\",\"Gender\",\"Grade\",\"Club\",\"Group\",\"Color\",\"Handbook Group\",\"Birthdate\",\"Shirt Size\",\"New to Awana?\",\"Has an Awana vest?\",\"Invited by\",\"Completed Handbooks\",\"Notes\",\"Clubber Created\",\"Clubber Last Updated\",\"# payments\",\"Med Release?\",\"Share Balance\",\"Book\",\"Doctor Name\",\"Doctor Phone\",\"Payments total\",\"Rate\",\"Parent/Guardian#1\",\"Parent/Guardian#2\",\"Address1\",\"Address2\",\"City\",\"State\",\"Zip\",\"Alt Address1\",\"Alt Address2\",\"Alt City\",\"Alt State\",\"Alt Zip\",\"Primary Phone\",\"Primary Phone Type\",\"Primary Phone SMS (Text)?\",\"Alt Phone\",\"Alt Phone Type\",\"Alt Phone SMS (Text)?\",\"3rd Phone\",\"3rd Phone Type\",\"3rd Phone SMS (Text)?\",\"Alt Primary Phone\",\"Alt Primary Phone Type\",\"Alt Primary Phone SMS (Te...\",\"Alt Phone#2\",\"Alt Phone#2 Type\",\"Alt Phone#2 SMS (Text)?\",\"Alt Phone#3\",\"Alt Phone#3 Type\",\"Alt Phone#3 SMS (Text)?\",\"Emergency Contact\",\"Others Pickup\",\"Church\",\"Email\",\"Alt Email\",\"GrandPrix Type\",\"Photo Release?\",\"Leader Notes\",",
+    "\"9001\",\"\",\"Nova\",\"Quasar\",\"F\",\"1\",\"Sparks\",\"\",\"\",\"Sparks A\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Cass Quasar\",\"\",\"1 Synthetic Way\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0001\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "\"9002\",\"\",\"Orion\",\"Quasar\",\"M\",\"3\",\"T&T\",\"\",\"\",\"T&T Boys\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Cass Quasar\",\"\",\"1 Synthetic Way\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0001\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "\"9003\",\"\",\"Vega\",\"Pulsar\",\"F\",\"4\",\"T&T\",\"\",\"\",\"T&T Girls\",\"{{BIRTHDAY}}\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Lyle Pulsar\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0002\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "\"9004\",\"\",\"Lyra\",\"Pulsar\",\"F\",\"2\",\"Sparks\",\"\",\"\",\"Sparks B\",\"\",\"\",\"\",\"\",\"\",\"\",\"peanut allergy, carries epipen\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Lyle Pulsar\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0002\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"no\",\"\",",
+    "\"9005\",\"\",\"Mia\",\"Castor\",\"F\",\"1\",\"Sparks\",\"\",\"\",\"Sparks A\",\"3/14/2019\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Pax Castor\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0003\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "\"9006\",\"\",\"Mia\",\"Delphinus\",\"F\",\"1\",\"Sparks\",\"\",\"\",\"Sparks A\",\"9/2/2019\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Rue Delphinus\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0004\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "\"9007\",\"\",\"Atlas\",\"Cygnus\",\"M\",\"K\",\"Cubbies\",\"\",\"\",\"Cubbies\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",\"\",\"\",\"\",\"\",\"\",\"Io Cygnus\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"555-0005\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"yes\",\"\",",
+    "Clubber Count=7",
+    "",
+    "FILTER,VALUE"
+  ],
+  "night": [
+    {
+      "step": "roster-sync",
+      "expectRows": 7
+    },
+    {
+      "step": "print",
+      "label": "normal kid",
+      "body": {
+        "firstName": "Nova",
+        "lastName": "Quasar",
+        "clubName": "Sparks",
+        "clubberId": "9001"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Nova",
+          "isBirthday": false,
+          "isFirstTimer": false
+        }
+      }
+    },
+    {
+      "step": "print",
+      "label": "birthday-week kid",
+      "body": {
+        "firstName": "Vega",
+        "lastName": "Pulsar",
+        "clubName": "T&T",
+        "clubberId": "9003"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Vega",
+          "isBirthday": true
+        }
+      }
+    },
+    {
+      "step": "print",
+      "label": "operator-marked visitor",
+      "body": {
+        "firstName": "Atlas",
+        "lastName": "Cygnus",
+        "clubName": "Cubbies",
+        "clubberId": "9007",
+        "visitor": true
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Atlas",
+          "isFirstTimer": true
+        }
+      }
+    },
+    {
+      "step": "print",
+      "label": "allergy kid (quoted comma in Notes)",
+      "body": {
+        "firstName": "Lyra",
+        "lastName": "Pulsar",
+        "clubName": "Sparks",
+        "clubberId": "9004"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Lyra"
+        }
+      }
+    },
+    {
+      "step": "print",
+      "label": "twin A",
+      "body": {
+        "firstName": "Mia",
+        "lastName": "Castor",
+        "clubName": "Sparks",
+        "clubberId": "9005"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Mia"
+        }
+      }
+    },
+    {
+      "step": "print",
+      "label": "twin B \u2014 same first name, distinct id, must NOT dedup-collide",
+      "body": {
+        "firstName": "Mia",
+        "lastName": "Delphinus",
+        "clubName": "Sparks",
+        "clubberId": "9006"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Mia"
+        }
+      }
+    },
+    {
+      "step": "print-duplicate",
+      "label": "same kid again inside the window",
+      "body": {
+        "firstName": "Nova",
+        "lastName": "Quasar",
+        "clubName": "Sparks",
+        "clubberId": "9001"
+      }
+    },
+    {
+      "step": "print",
+      "label": "walk-in with no CSV row (fail-open enrichment)",
+      "body": {
+        "firstName": "Zed",
+        "lastName": "Andromeda",
+        "clubName": "T&T"
+      },
+      "expect": {
+        "checkin": {
+          "firstName": "Zed"
+        }
+      }
+    },
+    {
+      "step": "checkin-report-undo",
+      "label": "reconcile: Nova was undone on TwoTimTwo",
+      "reportEntries": [
+        {
+          "clubberId": "9003",
+          "name": "Vega Pulsar",
+          "club": "T&T"
+        },
+        {
+          "clubberId": "9007",
+          "name": "Atlas Cygnus",
+          "club": "Cubbies"
+        },
+        {
+          "clubberId": "9004",
+          "name": "Lyra Pulsar",
+          "club": "Sparks"
+        },
+        {
+          "clubberId": "9005",
+          "name": "Mia Castor",
+          "club": "Sparks"
+        },
+        {
+          "clubberId": "9006",
+          "name": "Mia Delphinus",
+          "club": "Sparks"
+        },
+        {
+          "name": "Zed Andromeda",
+          "club": "T&T"
+        }
+      ],
+      "expect": {
+        "changed": 1
+      }
+    }
+  ],
+  "expectedAggregates": {
+    "historyRows": 7,
+    "checkedIn": 6,
+    "tally": {
+      "total": 6,
+      "Sparks": 3,
+      "T&T": 2,
+      "Cubbies": 1
+    },
+    "checkinEventsPublished": 7
+  }
+}
