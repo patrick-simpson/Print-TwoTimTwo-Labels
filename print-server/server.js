@@ -106,6 +106,11 @@ const CHURCH_DEFAULTS = {
   sharesClubIds: [2, 3, 4, 5, 6],
   clubNights: [{ dow: 3, start: '17:30', end: '20:00' }],
   canaryLeadMinutes: 20,
+  // Origins allowed to POST /api/lobby-slides (with the publish token) — the
+  // deployed display app, so its slide editor's "Publish to all displays"
+  // button can reach this server from the check-in machine's own browser.
+  // Exact origins only; a fork edits this like every other church knob.
+  displayOrigins: ['https://patrick-simpson.github.io'],
 };
 let churchConfig = { ...CHURCH_DEFAULTS };
 try {
@@ -2622,7 +2627,15 @@ const app = express();
 //     reached print-history.json and then the dashboard's innerHTML).
 function corsPolicy(req, res, next) {
   const origin = req.headers.origin;
-  const allowed = security.isAllowedOrigin(origin, {
+  // The lobby-slides publish endpoint admits ONE extra caller: the deployed
+  // display app's exact origin (churchConfig.displayOrigins), scoped to this
+  // single path so the display site never gains cross-origin access to the
+  // roster or any other endpoint. The bearer publish token — checked in the
+  // route — is the actual credential; the origin gate is browser hygiene.
+  const isSlidesPath = req.path === '/api/lobby-slides';
+  const slidesOrigin = isSlidesPath && security.isExactAllowedOrigin(
+    origin, security.sanitizeAllowedOrigins(churchConfig.displayOrigins));
+  const allowed = slidesOrigin || security.isAllowedOrigin(origin, {
     port: PORT,
     extraOrigins: security.sanitizeAllowedOrigins(config.allowedOrigins),
   });
@@ -2636,8 +2649,18 @@ function corsPolicy(req, res, next) {
     // are authenticated by PIN (or by being loopback), never by cookie.
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Awana-Pin');
+    // Authorization is only ever needed (or granted) on the slides path — it
+    // carries the publish token from the display app's slide editor.
+    res.setHeader('Access-Control-Allow-Headers',
+      isSlidesPath ? 'Content-Type,Authorization' : 'Content-Type,X-Awana-Pin');
     res.setHeader('Access-Control-Max-Age', '600');
+    // Chrome's Private Network Access: a public https page fetching a local
+    // server preflights with this request header, and the fetch is blocked
+    // unless we opt in. Scoped to the slides path — nothing else on this
+    // server is meant to be reachable from a public origin.
+    if (isSlidesPath && req.headers['access-control-request-private-network'] === 'true') {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
   }
 
   if (req.method === 'OPTIONS') {
@@ -4117,6 +4140,57 @@ app.post('/feed/unverified-checkins', (req, res) => {
 // detection), the recap buffer empties (a reconnecting display must not
 // replay celebrations for a night that was reset), and a fresh tally goes
 // out immediately so every screen drops to zero within seconds.
+// ── Lobby slides endpoints ────────────────────────────────────────────────────
+// Two callers, two credentials:
+//   • The dashboard's "Lobby slides" card — trusted like every other loopback
+//     origin (the same trust that can already set the Pusher secret).
+//   • The display app's slide editor ("Publish to all displays") — a PUBLIC
+//     https origin, so it is scoped to exactly this path in corsPolicy and must
+//     additionally present the publish token. The token is the credential; the
+//     origin check is browser hygiene (curl can forge an Origin, a tab cannot).
+// Either way the payload goes through buildSlidesDeck, so nothing but capped
+// text slides can reach the wire, whoever asks.
+function slidesTokenOk(req) {
+  const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  const token = String(config.slidesPublishToken || '');
+  if (!m || !token) return false;
+  return security.timingSafeStringEqual(m[1].trim(), token);
+}
+
+app.post('/api/lobby-slides', (req, res) => {
+  const origin = req.headers.origin;
+  const fromDisplayOrigin = security.isExactAllowedOrigin(
+    origin, security.sanitizeAllowedOrigins(churchConfig.displayOrigins));
+  if (!isTrustedConfigOrigin(req) && !(fromDisplayOrigin && slidesTokenOk(req))) {
+    if (fromDisplayOrigin && !config.slidesPublishToken) {
+      return res.status(403).json({ error: 'No publish token is set on the print server. Open its dashboard → Lobby slides → Generate publish token, and paste it into this display’s Settings.' });
+    }
+    if (fromDisplayOrigin) {
+      return res.status(403).json({ error: 'Wrong publish token. Compare it with the print server dashboard → Lobby slides.' });
+    }
+    console.warn(`[security] Refused lobby-slides publish from ${origin || 'no-origin non-loopback caller'}`);
+    return res.status(403).json({ error: 'Lobby slides can be published from the printer dashboard or the display app’s slide editor on this computer.' });
+  }
+  const result = acceptLobbySlidesPublish((req.body || {}).slides);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  return res.json(result);
+});
+
+// Current deck for the dashboard card. Loopback-trusted origins only — the
+// deck is lobby copy, not a secret, but nothing here needs to be readable
+// cross-origin and the discipline is cheaper than the exception.
+app.get('/api/lobby-slides', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The lobby deck is only readable from this computer' });
+  }
+  res.json({
+    deckRev: lobbySlides.deckRev,
+    publishedAt: lobbySlides.publishedAt || null,
+    slides: lobbySlides.slides,
+    tokenConfigured: Boolean(config.slidesPublishToken),
+  });
+});
+
 app.post('/reset-tonight', (req, res) => {
   if ((req.body || {}).confirm !== true) {
     return res.status(400).json({ error: 'confirm: true required — this zeroes tonight on every surface' });
@@ -4211,6 +4285,112 @@ function publishBirthdays() {
   } catch (e) { console.warn('[events] birthdays publish skipped:', e.message); }
 }
 
+// ── Lobby slides (contract v5) ────────────────────────────────────────────────
+// The displays' typed slide deck, published once by the operator and mirrored
+// to every screen over the sealed `slides` event. State survives restarts in
+// lobby-slides.json; losing that file is harmless BY DESIGN — deckRev may
+// restart at 1, but consumers order solely on publishedAt, so the next publish
+// (whose publishedAt is current) still wins. Never "fix" a restarted rev by
+// re-seeding it.
+const LOBBY_SLIDES_FILE = path.join(DATA_DIR, 'lobby-slides.json');
+let lobbySlides = { deckRev: 0, publishedAt: '', slides: [] };
+try {
+  if (fs.existsSync(LOBBY_SLIDES_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(LOBBY_SLIDES_FILE, 'utf8'));
+    const slides = events.buildSlidesDeck(raw.slides);
+    const rev = Math.floor(Number(raw.deckRev));
+    const at = Date.parse(raw.publishedAt);
+    if (Number.isFinite(at) && rev >= 1) {
+      lobbySlides = { deckRev: rev, publishedAt: new Date(at).toISOString(), slides };
+      console.log(`[slides] Loaded lobby deck rev ${rev} (${slides.length} slide(s), published ${lobbySlides.publishedAt})`);
+    }
+  }
+} catch (e) {
+  console.warn('[slides] Could not load lobby-slides.json — starting with no deck:', e.message);
+}
+
+function persistLobbySlides() {
+  try {
+    const tmp = LOBBY_SLIDES_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(lobbySlides), 'utf8');
+    fs.renameSync(tmp, LOBBY_SLIDES_FILE);
+  } catch (e) { console.warn('[slides] Could not persist lobby deck:', e.message); }
+}
+
+// Broadcast the CURRENT deck: every chunk of one publish shares its
+// {deckRev, publishedAt} byte-identically, on first publish and on every
+// rebroadcast — publishedAt is the consumers' ordering authority, so a
+// rebroadcast that re-stamped it would masquerade as a new publish.
+async function publishLobbySlides() {
+  if (lobbySlides.deckRev < 1) return false;    // nothing ever published
+  const chunks = events.buildSlidesChunks(lobbySlides.slides, lobbySlides.deckRev, lobbySlides.publishedAt);
+  if (!chunks) {
+    console.error('[slides] Deck no longer fits the chunk ceiling — NOT published (fail closed)');
+    return false;
+  }
+  let ok = true;
+  for (const chunk of chunks) {
+    // Sequential on purpose: chunks of one deck should not race each other.
+    // publish() seals (slides is an ENCRYPTED_EVENT) and never throws.
+    ok = (await events.publish(pusher, EVENT_CHANNEL, 'slides', chunk)) && ok;
+  }
+  return ok;
+}
+
+/**
+ * Accept an operator publish: sanitize, gate on total size, stamp, persist,
+ * broadcast. Returns {ok:true, ...summary} or {ok:false, error}.
+ */
+function acceptLobbySlidesPublish(rawSlides) {
+  if (!Array.isArray(rawSlides)) {
+    return { ok: false, status: 400, error: 'Body must be { slides: [...] }' };
+  }
+  const slides = events.buildSlidesDeck(rawSlides);
+  const bytes = events.slidesDeckJsonBytes(slides);
+  if (bytes > events.SLIDES_DECK_JSON_MAX) {
+    return {
+      ok: false, status: 413,
+      error: `Deck too large to broadcast (${bytes} bytes of slide text; limit ${events.SLIDES_DECK_JSON_MAX}). Shorten or remove slides.`,
+    };
+  }
+  // Strictly-increasing stamp even across rapid re-publishes or a clock that
+  // lost a second; consumers commit only on publishedAt strictly newer.
+  const lastMs = Date.parse(lobbySlides.publishedAt);
+  const stampMs = Math.max(Date.now(), (Number.isFinite(lastMs) ? lastMs : 0) + 1000);
+  const nextRev = (lobbySlides.deckRev || 0) + 1;
+  const nextStamp = new Date(stampMs).toISOString();
+  // Dry-run the chunker BEFORE committing anything. The byte gate above is a
+  // coarse guard, not a guarantee: greedy packing can strand nearly a full
+  // slide of slack per chunk, so a deck of mid-sized (e.g. non-Latin) slides
+  // can pass 40 KB yet need more than SLIDES_TOTAL_MAX chunks. Accepting such
+  // a deck would be the worst kind of failure — ok:true to the operator, the
+  // deck persisted, and every broadcast (now and every heartbeat after)
+  // silently failing closed. Refuse it here instead, with nothing committed.
+  const chunks = events.buildSlidesChunks(slides, nextRev, nextStamp);
+  if (!chunks) {
+    return {
+      ok: false, status: 413,
+      error: `Deck too large to broadcast (needs more than ${events.SLIDES_TOTAL_MAX} chunks). Shorten or remove slides.`,
+    };
+  }
+  lobbySlides = {
+    deckRev: nextRev,
+    publishedAt: nextStamp,
+    slides,
+  };
+  persistLobbySlides();
+  publishLobbySlides();
+  const dropped = rawSlides.length - slides.length;
+  console.log(`[slides] Published lobby deck rev ${lobbySlides.deckRev} (${slides.length} slide(s)${dropped > 0 ? `, ${dropped} device-local/blank entr${dropped === 1 ? 'y' : 'ies'} dropped` : ''})`);
+  return {
+    ok: true,
+    deckRev: lobbySlides.deckRev,
+    publishedAt: lobbySlides.publishedAt,
+    slideCount: slides.length,
+    droppedCount: Math.max(0, dropped),
+  };
+}
+
 function onClubNight(fn) {
   return () => {
     try {
@@ -4227,6 +4407,14 @@ function startClubNightTimers() {
   setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
   setInterval(onClubNight(publishTally), 60 * 1000);
   setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+  // Slides heartbeat is deliberately NOT club-night-gated: this server mostly
+  // runs around club time anyway, and while it IS running, a screen that
+  // reboots (or a brand-new one) must converge on the current deck within
+  // minutes on any day — Saturday setup included. Publishes only when a deck
+  // has ever been published; ~300 sealed frames/day worst case, far under
+  // Pusher's quota. Startup broadcast included so a restart re-seeds quickly.
+  setInterval(() => { publishLobbySlides().catch(() => {}); }, 5 * 60 * 1000);
+  publishLobbySlides().catch(() => {});
 }
 
 // ── Selector self-test receiver ───────────────────────────────────────────────
@@ -4600,6 +4788,15 @@ app.get('/health', async (req, res) => {
     // Freshness per POST /feed/* so the dashboard can show whether the
     // extension's tonight/points/schedule/notice scrapes are still landing.
     feeds: feeds.getFeedsHealth(),
+    // The published lobby deck — rev/stamp/count only, never the slide text
+    // (that is one GET away on the dashboard, and /health is CORS-reachable
+    // from the check-in site).
+    lobbySlides: {
+      deckRev: lobbySlides.deckRev,
+      publishedAt: lobbySlides.publishedAt || null,
+      slideCount: lobbySlides.slides.length,
+      tokenConfigured: Boolean(config.slidesPublishToken),
+    },
   });
 });
 
@@ -4646,7 +4843,7 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken'];
 
 // Operator text that ends up printed on a label (labelFooter, the connect-card
 // greeting). Not secrets, but they go onto paper and into config.json, so only
@@ -4729,6 +4926,21 @@ app.post('/config/display-key/generate', (req, res) => {
   res.json({ key });
 });
 
+// The lobby-slides publish token: what the display app's slide editor must
+// present to POST /api/lobby-slides from its https origin. Same loopback-only
+// mint rule as the display key — a phone on the venue Wi-Fi must not be able
+// to create the credential that writes to every lobby screen.
+const SLIDES_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+
+app.post('/config/slides-token/generate', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The publish token can only be generated from the dashboard on this computer' });
+  }
+  const token = crypto.randomBytes(24).toString('base64url');
+  console.log('[slides] Generated a new publish token (not yet saved)');
+  res.json({ token });
+});
+
 app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
@@ -4736,7 +4948,7 @@ app.post('/config', (req, res) => {
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
-    musicalPrinter, updateBeacon,
+    musicalPrinter, updateBeacon, slidesPublishToken,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
@@ -4792,6 +5004,21 @@ app.post('/config', (req, res) => {
         });
       } else {
         next.displayKey = wanted;
+      }
+    }
+    // The lobby-slides publish token (see /api/lobby-slides). Clearing it
+    // revokes the display app's publish path immediately; the dashboard's own
+    // paste flow keeps working either way.
+    if (slidesPublishToken !== undefined) {
+      const wanted = String(slidesPublishToken).trim();
+      if (wanted === '') {
+        delete next.slidesPublishToken;
+      } else if (!SLIDES_TOKEN_RE.test(wanted)) {
+        return res.status(400).json({
+          error: 'Publish token must come from the Generate button (24–64 URL-safe base64 characters)',
+        });
+      } else {
+        next.slidesPublishToken = wanted;
       }
     }
     // Binding beyond loopback is an explicit choice, not a default. Takes

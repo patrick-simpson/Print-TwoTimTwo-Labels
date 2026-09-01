@@ -150,6 +150,25 @@ function isAllowedOrigin(origin, opts) {
   });
 }
 
+// Exact-match origin check for narrowly-scoped route exceptions (the lobby
+// slides publish endpoint admits the display app's own https origin, nothing
+// else). Deliberately NOT isAllowedOrigin: that list grants roster reads, and
+// widening it for one route would widen it for every route. No wildcards, and
+// the browser-facing rule stays "exact origin or nothing".
+function isExactAllowedOrigin(origin, origins) {
+  if (!origin || typeof origin !== 'string' || !Array.isArray(origins)) return false;
+  let url;
+  try { url = new URL(origin.trim()); } catch { return false; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const normalized = `${url.protocol}//${url.host}`.toLowerCase();
+  return origins.some((e) => {
+    if (typeof e !== 'string' || e.includes('*') || hasControlChars(e)) return false;
+    let candidate;
+    try { candidate = new URL(e.trim()); } catch { return false; }
+    return `${candidate.protocol}//${candidate.host}`.toLowerCase() === normalized;
+  });
+}
+
 function sanitizeAllowedOrigins(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -369,6 +388,7 @@ module.exports = {
   isLoopbackRequest,
   isPrivateHostname,
   isAllowedOrigin,
+  isExactAllowedOrigin,
   sanitizeAllowedOrigins,
   isMutatingMethod,
   timingSafeStringEqual,

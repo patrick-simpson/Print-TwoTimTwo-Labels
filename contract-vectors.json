@@ -1,14 +1,15 @@
 {
-  "contractVersion": 4,
+  "contractVersion": 5,
   "channel": "awana-channel",
-  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel \u2014 no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement \u2014 the only free-text field on the channel, bounded and plain-text-forced).",
+  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — bounded and plain-text-forced). v5 adds `slides`: the operator's typed lobby slide deck, sealed and chunked — the second free-text surface on the channel, and the reason it rides encrypted.",
   "transport": {
-    "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the three name-bearing events are sealed with AES-256-GCM before publish. This is a TRANSPORT change only: every payload vector below is unchanged, and both repos' sanitizers run on the OPENED payload exactly as before. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
+    "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the four name-bearing events — and `slides`, which carries arbitrary operator-authored copy — are sealed with AES-256-GCM before publish. This is a TRANSPORT layer: every payload vector below describes the OPENED payload, which both repos' sanitizers run on exactly as they would a plaintext one. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
     "encryptedEvents": [
       "checkin",
       "recap",
       "birthdays",
-      "checkout"
+      "checkout",
+      "slides"
     ],
     "plaintextEvents": [
       "tally",
@@ -19,7 +20,7 @@
       "ops",
       "canary"
     ],
-    "plaintextRationale": "Deliberate. Counts and church-authored copy carry no PII, and their readability is what lets a screen distinguish \"the pipe is down\" from \"I cannot read the names\" from \"quiet night\" \u2014 the last being the dangerous case, because nobody investigates a quiet night.",
+    "plaintextRationale": "Deliberate. Counts and church-authored copy carry no PII, and their readability is what lets a screen distinguish \"the pipe is down\" from \"I cannot read the names\" from \"quiet night\" — the last being the dangerous case, because nobody investigates a quiet night.",
     "fixture": "envelope-vectors.json"
   },
   "events": {
@@ -194,7 +195,7 @@
           ]
         },
         {
-          "reason": "entries without id/at cannot be deduped \u2014 dropped",
+          "reason": "entries without id/at cannot be deduped — dropped",
           "payload": {
             "entries": [
               {
@@ -376,7 +377,7 @@
       ],
       "dirty": [
         {
-          "reason": "counts must be numbers only \u2014 a name smuggled as a value is dropped",
+          "reason": "counts must be numbers only — a name smuggled as a value is dropped",
           "payload": {
             "counts": {
               "Sparks": 12,
@@ -465,7 +466,7 @@
       ],
       "dirty": [
         {
-          "reason": "no lastName, no birth year \u2014 ever",
+          "reason": "no lastName, no birth year — ever",
           "payload": {
             "entries": [
               {
@@ -549,7 +550,7 @@
       ],
       "dirty": [
         {
-          "reason": "ops events carry type/club/at ONLY \u2014 never a name",
+          "reason": "ops events carry type/club/at ONLY — never a name",
           "payload": {
             "type": "print-failure",
             "club": "Sparks",
@@ -562,7 +563,7 @@
           ]
         },
         {
-          "reason": "version must be a bare semver string \u2014 junk is dropped, never published",
+          "reason": "version must be a bare semver string — junk is dropped, never published",
           "payload": {
             "type": "update-ok",
             "version": "<script>alert(1)</script>",
@@ -643,7 +644,7 @@
       ],
       "dirty": [
         {
-          "reason": "counters are numbers only \u2014 a name smuggled into a counter must not survive",
+          "reason": "counters are numbers only — a name smuggled into a counter must not survive",
           "payload": {
             "checkedIn": "Alice Smith",
             "booksCompleted": 4,
@@ -719,7 +720,7 @@
       ],
       "dirty": [
         {
-          "reason": "point values are numbers only \u2014 a name smuggled as a value is dropped",
+          "reason": "point values are numbers only — a name smuggled as a value is dropped",
           "payload": {
             "groups": {
               "Red": 240,
@@ -819,6 +820,204 @@
         }
       ]
     },
+    "slides": {
+      "note": "The lobby displays' typed slide deck (contract v5), published by the operator so every screen shows one deck. TEXT ONLY by contract: the display app's per-device video slides reference bytes in that device's own storage, so the publisher strips them and the consumer's sanitizer drops them. One publish is split into chunks so a large deck stays under Pusher's per-message ceiling; every chunk of a publish carries identical {deckRev, publishedAt}. publishedAt is the consumer's ONLY ordering and anti-replay authority — a deck commits iff its publishedAt is strictly newer than the committed one — because deckRev is an operator-facing counter that may restart at 1 if the publisher loses its state file. An explicitly published EMPTY deck (slides:[] with total:1) propagates: 'the operator cleared the deck' and 'never received a deck' are different facts. The publisher refuses (at publish time, before committing) any deck that cannot be broadcast within maxTotal chunks, and additionally caps a whole deck's serialized JSON at 40000 bytes.",
+      "fields": [
+        "deckRev",
+        "publishedAt",
+        "seq",
+        "total",
+        "slides"
+      ],
+      "entryFields": [
+        "eyebrow",
+        "text",
+        "theme",
+        "textSize",
+        "durationSec"
+      ],
+      "entryOptionalFields": [
+        "id"
+      ],
+      "maxEntries": 50,
+      "maxTotal": 12,
+      "maxText": 500,
+      "maxEyebrow": 60,
+      "themes": [
+        "sky",
+        "sunset",
+        "night",
+        "meadow",
+        "lavender"
+      ],
+      "textSizes": [
+        "auto",
+        "xl",
+        "lg",
+        "md"
+      ],
+      "valid": [
+        {
+          "deckRev": 3,
+          "publishedAt": "2026-09-16T22:12:00.000Z",
+          "seq": 0,
+          "total": 1,
+          "slides": [
+            {
+              "id": "s_6f9619ff-8b86-4011-b42d-00c04fc964ff",
+              "eyebrow": "Awana Clubs",
+              "text": "Welcome to\nAwana!",
+              "theme": "sky",
+              "textSize": "auto",
+              "durationSec": 0
+            },
+            {
+              "eyebrow": "",
+              "text": "Grand Prix — Saturday 9 AM 🏎️",
+              "theme": "auto",
+              "textSize": "lg",
+              "durationSec": 12
+            }
+          ]
+        },
+        {
+          "deckRev": 4,
+          "publishedAt": "2026-09-16T22:15:00.000Z",
+          "seq": 0,
+          "total": 1,
+          "slides": []
+        },
+        {
+          "deckRev": 5,
+          "publishedAt": "2026-09-16T22:20:00.000Z",
+          "seq": 1,
+          "total": 3,
+          "slides": [
+            {
+              "eyebrow": "T&T",
+              "text": "Bring your handbook next week",
+              "theme": "meadow",
+              "textSize": "auto",
+              "durationSec": 0
+            }
+          ]
+        }
+      ],
+      "dirty": [
+        {
+          "reason": "a video slide references THIS device's storage — dropped, never broadcast",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 0,
+            "total": 1,
+            "slides": [
+              {
+                "type": "video",
+                "videoId": "v_abc123",
+                "videoName": "opener.mp4",
+                "videoSize": 12345678,
+                "durationSec": 0
+              },
+              {
+                "eyebrow": "",
+                "text": "Store night is back!",
+                "theme": "auto",
+                "textSize": "auto",
+                "durationSec": 0
+              }
+            ]
+          },
+          "mustNotContain": [
+            "videoId",
+            "v_abc123",
+            "opener.mp4"
+          ],
+          "expectEntryCount": 1
+        },
+        {
+          "reason": "oversized text is sliced, a junk theme falls back to auto, and unknown per-slide fields are stripped",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 0,
+            "total": 1,
+            "slides": [
+              {
+                "eyebrow": "",
+                "text": "Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! Great is Thy faithfulness! ",
+                "theme": "hotdog-stand",
+                "textSize": "banner",
+                "durationSec": 99999,
+                "presenterNotes": "call the Smiths about allergy forms"
+              }
+            ]
+          },
+          "mustNotContain": [
+            "hotdog-stand",
+            "banner",
+            "presenterNotes",
+            "Smiths"
+          ],
+          "expectEntryCount": 1
+        }
+      ],
+      "reject": [
+        {
+          "reason": "publishedAt is the ordering authority — a chunk without it cannot be sequenced",
+          "payload": {
+            "deckRev": 3,
+            "seq": 0,
+            "total": 1,
+            "slides": []
+          }
+        },
+        {
+          "reason": "seq must be < total",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 1,
+            "total": 1,
+            "slides": []
+          }
+        },
+        {
+          "reason": "total above maxTotal",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 0,
+            "total": 13,
+            "slides": []
+          }
+        },
+        {
+          "reason": "slides must be an array",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 0,
+            "total": 1,
+            "slides": "Welcome to Awana"
+          }
+        },
+        {
+          "reason": "an empty slides array is only legal on a single-chunk publish — a multi-chunk deck has no empty pieces",
+          "payload": {
+            "deckRev": 3,
+            "publishedAt": "2026-09-16T22:12:00.000Z",
+            "seq": 0,
+            "total": 2,
+            "slides": []
+          }
+        },
+        {
+          "reason": "null",
+          "payload": null
+        }
+      ]
+    },
     "notice": {
       "fields": [
         "level",
@@ -831,11 +1030,11 @@
         "critical"
       ],
       "maxMessage": 200,
-      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design \u2014 but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
+      "note": "`message` is the ONLY free-text field on the channel. It is church-authored copy written for public display (TwoTimTwo /msg/admin), shown verbatim by design — but bounded to 200 chars and forced to plain text so it cannot inject markup or break the layout. It is never derived from roster data.",
       "valid": [
         {
           "level": "critical",
-          "message": "CLUB CANCELLED TONIGHT \u2014 snow",
+          "message": "CLUB CANCELLED TONIGHT — snow",
           "at": "2026-09-16T21:00:00.000Z"
         },
         {

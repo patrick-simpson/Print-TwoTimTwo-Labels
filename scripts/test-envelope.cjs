@@ -67,7 +67,8 @@ console.log('\nenvelope: the committed interop fixture still opens');
   check('fixture declares the framing this build implements',
     FIXTURE.envelopeVersion === events.ENVELOPE_VERSION
     && FIXTURE.checkinPad === events.CHECKIN_PAD
-    && JSON.stringify(FIXTURE.padLadder) === JSON.stringify(events.PAD_LADDER),
+    && JSON.stringify(FIXTURE.padLadder) === JSON.stringify(events.PAD_LADDER)
+    && JSON.stringify(FIXTURE.slidesPadLadder) === JSON.stringify(events.SLIDES_PAD_LADDER),
     'regenerate with scripts/gen-envelope-fixture.cjs AND mirror it');
 
   for (const c of FIXTURE.cases) {

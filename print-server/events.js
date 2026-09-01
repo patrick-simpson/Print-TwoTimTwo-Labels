@@ -300,6 +300,148 @@ function buildNotice(level, message) {
   return { level: lvl, message: text, at: nowIso() };
 }
 
+// ── slides (contract v5) ──────────────────────────────────────────────────────
+// The lobby displays' typed slide deck, published once by the operator so every
+// screen shows the same announcements. TEXT ONLY, by contract: the display app
+// also supports per-device video slides whose bytes live in that device's
+// IndexedDB, so a video entry is meaningless on any other screen — the builder
+// drops them (and any unknown type) rather than publishing a dead reference.
+//
+// The deck is arbitrary operator-authored copy ("Pray for the Smiths"), so the
+// event rides SEALED like the name-bearing four. One deck can exceed Pusher's
+// per-message ceiling, so it is split into chunks; every chunk of one publish
+// carries identical {deckRev, publishedAt} and its {seq, total}. publishedAt is
+// the ONE ordering authority on the consumer (deckRev is an operator-facing
+// counter that restarts harmlessly if this server loses its state file), so
+// rebroadcasts must reuse the stored publishedAt byte-identically.
+//
+// These caps mirror the display repo's src/lib/slides.js and are pinned on both
+// sides by contract-vectors.json.
+const SLIDE_THEMES = ['sky', 'sunset', 'night', 'meadow', 'lavender'];
+const SLIDE_TEXT_SIZES = ['auto', 'xl', 'lg', 'md'];
+const SLIDES_MAX = 50;
+const SLIDE_TEXT_MAX = 500;
+const SLIDE_EYEBROW_MAX = 60;
+const SLIDE_ID_MAX = 64;
+const SLIDE_MIN_DURATION_SEC = 3;
+const SLIDE_MAX_DURATION_SEC = 600;
+// One chunk's JSON must seal into the 4096 pad rung (4 length-prefix bytes
+// spare), and 12 chunks must cover any deck the size gate below admits. The
+// budget leaves margin for the {deckRev, publishedAt, seq, total} wrapper.
+const SLIDES_CHUNK_JSON_BUDGET = 3900;
+const SLIDES_TOTAL_MAX = 12;
+// Coarse publish-time cap on the whole sanitized deck's serialized size —
+// far beyond any deck a lobby loop can actually show. NOT a chunk-count
+// guarantee: greedy packing can strand nearly a full slide of slack per
+// chunk, so the publish endpoint additionally dry-runs buildSlidesChunks and
+// refuses any deck it returns null for. Both refusals are a clear 413, never
+// silent truncation.
+const SLIDES_DECK_JSON_MAX = 40000;
+
+// Slide text keeps its newlines (decks are typed multi-line) but never control
+// characters, which bloat as \uXXXX escapes and can mangle logs.
+function slideText(value, max) {
+  const s = String(value == null ? '' : value);
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    out += code === 0x0a ? '\n' : ((code < 0x20 || code === 0x7f) ? ' ' : s[i]);
+  }
+  return out.trim().slice(0, max);
+}
+
+/**
+ * Sanitize one raw deck into publishable text slides. Video and unknown-type
+ * entries are DROPPED (device-local by design), blank text drops the slide,
+ * every field is clamped to the contract caps. Never throws.
+ */
+function buildSlidesDeck(rawSlides) {
+  const slides = [];
+  for (const item of Array.isArray(rawSlides) ? rawSlides : []) {
+    if (slides.length >= SLIDES_MAX) break;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    if (item.type !== undefined) continue;               // video / future types: device-local
+    const text = slideText(item.text, SLIDE_TEXT_MAX);
+    if (!text) continue;
+    const slide = {
+      eyebrow: slideText(item.eyebrow, SLIDE_EYEBROW_MAX).replace(/\n/g, ' '),
+      text,
+      theme: SLIDE_THEMES.includes(item.theme) ? item.theme : 'auto',
+      textSize: SLIDE_TEXT_SIZES.includes(item.textSize) ? item.textSize : 'auto',
+      durationSec: 0,
+    };
+    const dur = Number(item.durationSec);
+    if (Number.isFinite(dur) && dur > 0) {
+      slide.durationSec = Math.min(SLIDE_MAX_DURATION_SEC, Math.max(SLIDE_MIN_DURATION_SEC, Math.round(dur)));
+    }
+    // The display keys its React lists and dedupe on ids; a clean one passes
+    // through, anything else is omitted and the consumer mints its own.
+    if (typeof item.id === 'string' && item.id.trim() && item.id.length <= SLIDE_ID_MAX
+        && !hasSlideControlChars(item.id)) {
+      slide.id = item.id;
+    }
+    slides.push(slide);
+  }
+  return slides;
+}
+
+function hasSlideControlChars(s) {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Serialized size of the sanitized deck — the publish endpoint's size gate. */
+function slidesDeckJsonBytes(slides) {
+  return Buffer.byteLength(JSON.stringify(slides), 'utf8');
+}
+
+/**
+ * Split one sanitized deck into sealed-transport chunks. Greedy byte-budget
+ * packing; every chunk carries identical {deckRev, publishedAt} plus its
+ * {seq, total}. An EMPTY deck is one chunk with slides:[] — "the operator
+ * published nothing" must propagate, it is not the absence of a publish.
+ *
+ * Returns null (fail closed — nothing publishable) when the deck cannot fit
+ * SLIDES_TOTAL_MAX chunks. The publish endpoint dry-runs this and refuses
+ * (413) any deck that returns null BEFORE committing state, so a null from
+ * the heartbeat/startup path can only mean a state file written by something
+ * other than an accepted publish.
+ */
+function buildSlidesChunks(slides, deckRev, publishedAt) {
+  const deck = Array.isArray(slides) ? slides : [];
+  const rev = Math.max(1, Math.floor(Number(deckRev) || 1));
+  const stamp = String(publishedAt);
+  const groups = [[]];
+  let groupBytes = 0;
+  for (const slide of deck) {
+    const bytes = Buffer.byteLength(JSON.stringify(slide), 'utf8') + 1;
+    if (groups[groups.length - 1].length > 0 && groupBytes + bytes > SLIDES_CHUNK_JSON_BUDGET) {
+      groups.push([]);
+      groupBytes = 0;
+    }
+    groups[groups.length - 1].push(slide);
+    groupBytes += bytes;
+  }
+  if (groups.length > SLIDES_TOTAL_MAX) return null;
+  const total = groups.length;
+  const chunks = groups.map((group, seq) => ({
+    deckRev: rev,
+    publishedAt: stamp,
+    seq,
+    total,
+    slides: group,
+  }));
+  // The budget must guarantee every chunk seals into the slides pad ladder; a
+  // chunk that could not would make publish() fail closed mid-deck.
+  for (const chunk of chunks) {
+    if (paddedSize('slides', Buffer.byteLength(JSON.stringify(chunk), 'utf8')) == null) return null;
+  }
+  return chunks;
+}
+
 // ── Club-night window ─────────────────────────────────────────────────────────
 // clubNights: [{ dow: 0-6 (Sunday=0), start: "HH:MM", end: "HH:MM" }].
 // Pure function of the supplied date (defaults to now) so it's testable.
@@ -339,18 +481,20 @@ function isClubNightNow(clubNights, date) {
 // the primary defence and still holds, but "a stranger can read every child's
 // first name and club, live, from anywhere" was never acceptable.
 //
-// Only the three name-bearing events are sealed. The other seven stay
-// plaintext ON PURPOSE: they are counts and church-authored copy, and their
-// readability is what lets a screen distinguish "the pipe is down" from "I
-// can't read the names" from "quiet night". See SECURITY.md in the display
-// repo for what remains exposed (timing and headcount, irreducibly).
+// The four name-bearing events are sealed, and so is `slides` — the operator's
+// typed deck is arbitrary church-authored text that has no business being
+// world-readable forever. The remaining events stay plaintext ON PURPOSE: they
+// are counts and short public copy, and their readability is what lets a screen
+// distinguish "the pipe is down" from "I can't read the names" from "quiet
+// night". See SECURITY.md in the display repo for what remains exposed (timing
+// and headcount, irreducibly).
 //
 //   envelope  = { v: 1, kid, iv, ct }          // base64 except v
 //   aad       = utf8("1:" + eventName)         // binds a frame to its event
 //   plaintext = u32be(jsonByteLength) || json || zero filler
 //   ct        = aesgcm_ciphertext || 16-byte tag   (WebCrypto's layout)
 const ENVELOPE_VERSION = 1;
-const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays', 'checkout']);
+const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays', 'checkout', 'slides']);
 // checkin gets a FIXED pad: it is the frame that matters, one child per event,
 // so its length must reveal nothing at all. 512 covers the true worst case —
 // note the builders cap names at 40 CHARACTERS, and a character can be 4 bytes
@@ -366,6 +510,12 @@ const CHECKIN_PAD = 512;
 // is public knowledge either way. What must stay hidden is WHO, and it does.
 // The ladder starts high on purpose, so realistic recaps all land in one rung.
 const PAD_LADDER = [2048, 4096, 8192];
+// `slides` gets its own SHORTER ladder with NO round-up past the top rung: an
+// 8192-padded plaintext base64-inflates past Pusher's 10 KB ceiling, so a rung
+// the transport cannot actually deliver must not exist for this event. The
+// chunker guarantees every chunk fits 4096; if one ever did not, publish()
+// fails closed rather than leaking a bigger-than-declared frame.
+const SLIDES_PAD_LADDER = [2048, 4096];
 const LEN_PREFIX = 4;
 // Pusher's per-event ceiling (10 KB on the Sandbox plan). Base64 inflates by
 // 4/3, so a padded plaintext above ~7 KB produces a message Pusher refuses.
@@ -387,6 +537,10 @@ function paddedSize(event, jsonByteLength) {
     // name and club length upstream so this is unreachable; if it ever fires,
     // publish() fails closed rather than leaking a length.
     return needed <= CHECKIN_PAD ? CHECKIN_PAD : null;
+  }
+  if (event === 'slides') {
+    for (const rung of SLIDES_PAD_LADDER) if (needed <= rung) return rung;
+    return null;   // fail closed — see SLIDES_PAD_LADDER above
   }
   for (const rung of PAD_LADDER) if (needed <= rung) return rung;
   const step = PAD_LADDER[PAD_LADDER.length - 1];
@@ -584,6 +738,13 @@ module.exports = {
   buildPoints,
   buildSchedule,
   buildNotice,
+  buildSlidesDeck,
+  buildSlidesChunks,
+  slidesDeckJsonBytes,
+  SLIDES_MAX,
+  SLIDES_TOTAL_MAX,
+  SLIDES_DECK_JSON_MAX,
+  SLIDES_CHUNK_JSON_BUDGET,
   isClubNightNow,
   parseHM,
   publish,
@@ -594,6 +755,7 @@ module.exports = {
   ENCRYPTED_EVENTS,
   CHECKIN_PAD,
   PAD_LADDER,
+  SLIDES_PAD_LADDER,
   PUSHER_MAX_BYTES,
   paddedSize,
   isValidDisplayKey,

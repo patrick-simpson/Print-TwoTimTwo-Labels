@@ -66,8 +66,9 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
 console.log('contract-vectors.json — self-consistency');
 {
-  // v4 added the `checkout` event (who is still in the building).
-  check('contractVersion is 4', vectors.contractVersion === 4);
+  // v4 added `checkout` (who is still in the building); v5 added `slides`
+  // (the operator's typed lobby deck, sealed and chunked).
+  check('contractVersion is 5', vectors.contractVersion === 5);
   check('channel is awana-channel', vectors.channel === 'awana-channel');
   for (const [name, spec] of Object.entries(vectors.events)) {
     for (const [i, v] of (spec.valid || []).entries()) {
@@ -274,6 +275,109 @@ console.log('buildNotice');
   check(`message capped at ${spec.maxMessage}`, events.buildNotice('info', 'x'.repeat(500)).message.length === spec.maxMessage);
   check('newlines collapsed', events.buildNotice('info', 'line one\n\nline two').message === 'line one line two');
   check('at is ISO', ISO_RE.test(n.at));
+}
+
+console.log('buildSlidesDeck');
+{
+  const spec = vectors.events.slides;
+  const deck = events.buildSlidesDeck([
+    { id: 's_1', eyebrow: 'Awana Clubs', text: 'Welcome to\nAwana!', theme: 'sky', textSize: 'auto', durationSec: 0 },
+    { text: 'Grand Prix — Saturday 9 AM 🏎️', theme: 'auto', textSize: 'lg', durationSec: 12 },
+  ]);
+  check('two clean slides pass', deck.length === 2);
+  check('entry has exact shape (with id)',
+    keysOf(deck[0]).join(',') === [...spec.entryFields, ...spec.entryOptionalFields].sort().join(','),
+    keysOf(deck[0]).join(','));
+  check('entry has exact shape (no id)',
+    keysOf(deck[1]).join(',') === [...spec.entryFields].sort().join(','), keysOf(deck[1]).join(','));
+  check('multi-line text survives', deck[0].text === 'Welcome to\nAwana!');
+  check('theme/textSize whitelists match the vectors',
+    JSON.stringify(spec.themes) === JSON.stringify(['sky', 'sunset', 'night', 'meadow', 'lavender'])
+    && JSON.stringify(spec.textSizes) === JSON.stringify(['auto', 'xl', 'lg', 'md']));
+
+  // TEXT ONLY: a video slide references THIS device's storage — dropped.
+  const dirty = vectors.events.slides.dirty[0];
+  const scrubbed = events.buildSlidesDeck(dirty.payload.slides);
+  check('video slide dropped (dirty vector)', scrubbed.length === dirty.expectEntryCount);
+  check('nothing video-ish survives', !dirty.mustNotContain.some((s) => JSON.stringify(scrubbed).includes(s)));
+
+  const messy = vectors.events.slides.dirty[1];
+  const cleaned = events.buildSlidesDeck(messy.payload.slides);
+  check('oversized text sliced to the cap', cleaned[0].text.length === spec.maxText);
+  check('junk theme falls back to auto', cleaned[0].theme === 'auto');
+  check('junk textSize falls back to auto', cleaned[0].textSize === 'auto');
+  check('unknown per-slide fields stripped',
+    !messy.mustNotContain.some((s) => JSON.stringify(cleaned).includes(s)));
+  check('overlong duration clamped', cleaned[0].durationSec === 600);
+
+  check('blank text drops the slide', events.buildSlidesDeck([{ text: '   ' }]).length === 0);
+  check('eyebrow capped and single-line',
+    events.buildSlidesDeck([{ text: 'x', eyebrow: 'a\nb'.padEnd(100, 'y') }])[0].eyebrow.length <= spec.maxEyebrow
+    && !events.buildSlidesDeck([{ text: 'x', eyebrow: 'a\nb' }])[0].eyebrow.includes('\n'));
+  check('control characters never survive slide text',
+    events.buildSlidesDeck([{ text: 'abc' }])[0].text === 'a b c');
+  check('junk id omitted, clean id kept',
+    !('id' in events.buildSlidesDeck([{ text: 'x', id: 'a b' }])[0])
+    && events.buildSlidesDeck([{ text: 'x', id: 's_ok' }])[0].id === 's_ok');
+  check(`caps at ${spec.maxEntries} slides`,
+    events.buildSlidesDeck(Array.from({ length: 80 }, (_, i) => ({ text: 'slide ' + i }))).length === spec.maxEntries);
+  check('null input safe', events.buildSlidesDeck(null).length === 0);
+}
+
+console.log('buildSlidesChunks');
+{
+  const spec = vectors.events.slides;
+  const stamp = '2026-09-16T22:12:00.000Z';
+  const small = events.buildSlidesChunks(events.buildSlidesDeck([{ text: 'Welcome!' }]), 3, stamp);
+  check('a small deck is one chunk', small.length === 1 && small[0].seq === 0 && small[0].total === 1);
+  check('chunk has exact field set',
+    keysOf(small[0]).join(',') === [...spec.fields].sort().join(','), keysOf(small[0]).join(','));
+  check('chunk carries the rev and stamp verbatim',
+    small[0].deckRev === 3 && small[0].publishedAt === stamp);
+
+  const empty = events.buildSlidesChunks([], 4, stamp);
+  check('an EMPTY deck is one chunk with slides:[] — a cleared deck propagates',
+    empty.length === 1 && empty[0].total === 1 && Array.isArray(empty[0].slides) && empty[0].slides.length === 0);
+
+  // A big deck splits; every chunk stays inside the JSON budget, shares the
+  // stamp, and reassembles in seq order to the exact deck.
+  const bigDeck = events.buildSlidesDeck(Array.from({ length: 50 }, (_, i) => ({
+    text: (`Announcement ${i}: ` + 'Grand Prix — Saturday 9 AM 🏎️ '.repeat(12)),
+    eyebrow: 'Awana Clubs',
+    durationSec: 15,
+  })));
+  const chunks = events.buildSlidesChunks(bigDeck, 7, stamp);
+  check('a large deck splits into multiple chunks', chunks.length > 1, `got ${chunks.length}`);
+  check(`total stays within maxTotal (${spec.maxTotal})`, chunks.length <= spec.maxTotal, `got ${chunks.length}`);
+  check('every chunk fits the sealed 4096 rung',
+    chunks.every((c) => events.paddedSize('slides', Buffer.byteLength(JSON.stringify(c), 'utf8')) !== null));
+  check('seq/total are consistent',
+    chunks.every((c, i) => c.seq === i && c.total === chunks.length));
+  check('chunks reassemble to the exact deck',
+    JSON.stringify(chunks.flatMap((c) => c.slides)) === JSON.stringify(bigDeck));
+  check('identical inputs rebuild byte-identical chunks (rebroadcast contract)',
+    JSON.stringify(events.buildSlidesChunks(bigDeck, 7, stamp)) === JSON.stringify(chunks));
+
+  // The byte cap is NOT a chunk-count guarantee — greedy packing strands
+  // slack, so decks well under 40 KB can need more than maxTotal chunks.
+  // This pins that such decks EXIST, which is exactly why the publish
+  // endpoint dry-runs the chunker and refuses null before committing.
+  const cjkDeck = events.buildSlidesDeck(Array.from({ length: 25 }, () => ({
+    text: '你'.repeat(380) + 'x'.repeat(120),   // 500 chars, ~1.33 KB of JSON each
+  })));
+  check('a sub-40KB deck CAN be unchunkable (greedy worst case)',
+    events.slidesDeckJsonBytes(cjkDeck) <= events.SLIDES_DECK_JSON_MAX
+    && events.buildSlidesChunks(cjkDeck, 1, stamp) === null,
+    `${events.slidesDeckJsonBytes(cjkDeck)} bytes`);
+  check('slidesDeckJsonBytes measures the sanitized deck',
+    events.slidesDeckJsonBytes(bigDeck) === Buffer.byteLength(JSON.stringify(bigDeck), 'utf8'));
+
+  // Every slides valid vector must seal (that is what the envelope fixture
+  // generator does with them) — belt and braces here, in the contract suite.
+  for (const [i, v] of spec.valid.entries()) {
+    check(`slides.valid[${i}] fits the slides pad ladder`,
+      events.paddedSize('slides', Buffer.byteLength(JSON.stringify(v), 'utf8')) !== null);
+  }
 }
 
 console.log('isClubNightNow');
