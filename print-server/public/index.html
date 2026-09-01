@@ -185,6 +185,40 @@
     </div>
   </div>
 
+  <!-- Lobby slides — the typed slide deck every display shows. Published from
+       here (paste/upload the display app's export) or from the display app's
+       own slide editor, which needs the publish token below. -->
+  <div class="card" id="lobby-slides-card">
+    <div class="card-header">
+      <span>Lobby Slides</span>
+      <span id="lobby-slides-summary" style="font-weight:400;font-size:12px;color:#64748b">Loading…</span>
+    </div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:12px;color:#475569">
+        Publish one typed slide deck to <strong>every</strong> display. On any display: Settings &rarr; Edit slides &rarr; <strong>Export</strong> gives you the <code>awana-slides.json</code> file — paste its contents here (or choose the file) and press Publish. Screens with the display key update within seconds; video slides always stay on the device they were added on.
+      </div>
+      <textarea id="lobby-slides-json" rows="3" placeholder='Paste the contents of awana-slides.json here…' style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:12px;padding:8px;border:1px solid #e2e8f0;border-radius:6px"></textarea>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="lobby-slides-file" accept=".json,application/json" style="font-size:12px">
+        <span style="flex:1"></span>
+        <button class="btn btn-primary btn-sm" onclick="publishLobbyDeck()">Publish to all displays</button>
+      </div>
+      <div id="lobby-slides-note" style="font-size:12px;color:#64748b"></div>
+      <div style="border-top:1px solid #f1f5f9;padding-top:10px">
+        <div style="font-size:12px;color:#475569;margin-bottom:6px">
+          <strong>Publish token</strong> — lets the display app's slide editor publish straight from its Settings on this computer. Generate it once, paste it into that display's Settings, then Save. Clearing it revokes that path; this card keeps working without one.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="lobby-slides-token" readonly placeholder="No publish token set" style="flex:1;min-width:200px;font-family:ui-monospace,monospace;font-size:12px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc">
+          <button class="btn btn-secondary btn-sm" onclick="generateSlidesToken()">Generate</button>
+          <button class="btn btn-secondary btn-sm" onclick="copySlidesToken()">Copy</button>
+          <button class="btn btn-secondary btn-sm" onclick="clearSlidesToken()">Clear</button>
+        </div>
+        <div id="lobby-slides-token-note" style="font-size:12px;color:#64748b;margin-top:4px"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Print failures -->
   <div id="failures-card" class="card" style="display:none">
     <div class="card-header" style="background:#fef2f2;color:#991b1b">Print Failures Tonight</div>
@@ -338,9 +372,10 @@
               <p style="font-size:11px; color:#64748b; margin-bottom:8px">
                 The Pusher channel is <strong>public</strong>: anyone who views a screen's page source can
                 subscribe to it from anywhere. So children's first names are <strong>encrypted</strong> before
-                they leave this PC. Generate the key once, then paste the same value into every screen
-                (Settings &rarr; Connection &rarr; Display key). Counts, clock, countdown and slides never need it
-                &mdash; without it only the welcome banners stop.
+                they leave this PC &mdash; and so is the published lobby slide deck, since it is
+                free-typed church copy. Generate the key once, then paste the same value into every
+                screen (Settings &rarr; Connection &rarr; Display key). Counts, clock and countdown never
+                need it &mdash; without it the welcome banners and slide sync stop.
               </p>
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
                 <input type="text" id="settings-display-key" placeholder="none &mdash; names are NOT encrypted" style="flex:1 1 240px" readonly>
@@ -1013,6 +1048,149 @@ function setDisplayKeyState(value) {
   }
 }
 
+// ── Lobby slides card ────────────────────────────────────────────────────────
+// The deck itself is fetched (loopback-only endpoint) so the card can say what
+// is actually published; publishing goes through the same route the display
+// app's editor uses, so this card exercises the real pipe.
+function fmtDeckAge(iso) {
+  if (!iso) return '';
+  var mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (!isFinite(mins) || mins < 0) return '';
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + ' min ago';
+  var h = Math.floor(mins / 60);
+  return h + 'h ' + (mins % 60) + 'm ago';
+}
+
+function loadLobbyDeck() {
+  fetch(BASE + '/api/lobby-slides')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (!d) return;
+      var summary = document.getElementById('lobby-slides-summary');
+      if (d.deckRev >= 1) {
+        summary.textContent = 'Rev ' + d.deckRev + ' · ' + d.slides.length + ' slide' + (d.slides.length === 1 ? '' : 's')
+          + ' · published ' + formatTime(d.publishedAt) + (fmtDeckAge(d.publishedAt) ? ' (' + fmtDeckAge(d.publishedAt) + ')' : '');
+      } else {
+        summary.textContent = 'Nothing published yet';
+      }
+      var tokenInput = document.getElementById('lobby-slides-token');
+      // Never show the token itself here unless freshly generated — the saved
+      // one is a secret; the card only reports whether one exists.
+      if (!tokenInput.dataset.fresh) {
+        tokenInput.value = '';
+        tokenInput.placeholder = d.tokenConfigured ? 'A publish token is set (hidden) — Generate replaces it' : 'No publish token set';
+      }
+    })
+    .catch(function() { /* server offline — summary keeps its last text */ });
+}
+
+function publishLobbyDeck() {
+  var note = document.getElementById('lobby-slides-note');
+  var text = document.getElementById('lobby-slides-json').value.trim();
+  var doPublish = function(raw) {
+    var slides;
+    try {
+      slides = JSON.parse(raw);
+    } catch (e) {
+      note.textContent = "That isn't valid JSON — export the deck from a display's slide editor and paste the whole file.";
+      note.style.color = '#dc2626';
+      return;
+    }
+    if (!Array.isArray(slides)) slides = slides && Array.isArray(slides.slides) ? slides.slides : null;
+    if (!slides) {
+      note.textContent = 'Expected an array of slides (the awana-slides.json export).';
+      note.style.color = '#dc2626';
+      return;
+    }
+    fetch(BASE + '/api/lobby-slides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slides: slides }),
+    }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+      .then(function(res) {
+        if (!res.ok) throw new Error(res.d && res.d.error || 'publish failed');
+        note.textContent = 'Published rev ' + res.d.deckRev + ' (' + res.d.slideCount + ' slide' + (res.d.slideCount === 1 ? '' : 's')
+          + (res.d.droppedCount ? ', ' + res.d.droppedCount + ' device-local/blank dropped' : '')
+          + '). Keyed displays update within seconds; any that were off catch up within ~5 minutes of coming back.';
+        note.style.color = '#16a34a';
+        loadLobbyDeck();
+      })
+      .catch(function(e) {
+        note.textContent = 'Publish failed: ' + e.message;
+        note.style.color = '#dc2626';
+      });
+  };
+  var file = document.getElementById('lobby-slides-file').files[0];
+  if (!text && file) {
+    var reader = new FileReader();
+    reader.onload = function() { doPublish(String(reader.result)); };
+    reader.onerror = function() { note.textContent = 'Could not read that file.'; note.style.color = '#dc2626'; };
+    reader.readAsText(file);
+    return;
+  }
+  if (!text) {
+    note.textContent = 'Paste the exported slides JSON (or choose the file) first.';
+    note.style.color = '#dc2626';
+    return;
+  }
+  doPublish(text);
+}
+
+function generateSlidesToken() {
+  var input = document.getElementById('lobby-slides-token');
+  var note = document.getElementById('lobby-slides-token-note');
+  if (input.placeholder.indexOf('is set') !== -1
+      && !confirm('Replace the publish token?\n\nThe display that currently holds the old token will stop being able to publish until you paste the new one into its Settings.')) return;
+  fetch(BASE + '/config/slides-token/generate', { method: 'POST' })
+    .then(function(r) { if (!r.ok) throw new Error('generate failed'); return r.json(); })
+    .then(function(d) {
+      return fetch(BASE + '/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slidesPublishToken: d.token }),
+      }).then(function(r) {
+        if (!r.ok) throw new Error('save failed');
+        input.value = d.token;
+        input.dataset.fresh = '1';
+        note.textContent = 'Saved. Copy it into the publishing display: Settings → Slide sync → Publish token.';
+        note.style.color = '#16a34a';
+      });
+    })
+    .catch(function() { note.textContent = 'Could not generate a publish token — is the server running on this computer?'; note.style.color = '#dc2626'; });
+}
+
+function copySlidesToken() {
+  var input = document.getElementById('lobby-slides-token');
+  var note = document.getElementById('lobby-slides-token-note');
+  if (!input.value) { note.textContent = 'Nothing to copy — the saved token stays hidden. Press Generate to mint (and show) a fresh one.'; note.style.color = '#b45309'; return; }
+  var done = function() { note.textContent = 'Copied.'; note.style.color = '#16a34a'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(done, function() { input.select(); });
+  } else {
+    input.select();
+    try { document.execCommand('copy'); done(); } catch (e) { /* leave it selected */ }
+  }
+}
+
+function clearSlidesToken() {
+  if (!confirm('Clear the publish token?\n\nThe display app’s "Publish to all displays" button will stop working; this dashboard card keeps working.')) return;
+  fetch(BASE + '/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slidesPublishToken: '' }),
+  }).then(function(r) {
+    if (!r.ok) throw new Error('save failed');
+    var input = document.getElementById('lobby-slides-token');
+    delete input.dataset.fresh;
+    input.value = '';
+    input.placeholder = 'No publish token set';
+    var note = document.getElementById('lobby-slides-token-note');
+    note.textContent = 'Cleared — the display-app publish path is revoked.';
+    note.style.color = '#64748b';
+  }).catch(function() { alert('Could not clear the token — is the server running?'); });
+}
+
 function generateDisplayKey() {
   // Rotating invalidates every screen at once — there is no partial rotation, so
   // this has to be a deliberate act rather than a stray click during club.
@@ -1051,7 +1229,7 @@ function copyDisplayKey() {
 }
 
 function clearDisplayKey() {
-  if (!confirm("Clear the display key?\n\nThe name events will stop being published entirely — they fail closed rather than reverting to plaintext — so screens keep showing counts, the clock, the countdown and slides but no welcome banners. This is the whole-system rollback lever.")) return;
+  if (!confirm("Clear the display key?\n\nThe server drops back to ROLLOUT MODE: names and lobby slides go out unencrypted — and every screen that still holds a key will REFUSE those plaintext events, so keyed screens show no banners and keep their last slide deck. Clear the key on each screen too only if you truly mean to run unencrypted.")) return;
   setDisplayKeyState('');
 }
 
@@ -1303,6 +1481,7 @@ function runDiagnostics() {
 // Init
 loadWhatsNew();
 loadHealth();
+loadLobbyDeck();
 loadRoster();
 loadHistory();
 loadTonightStats();
@@ -1314,6 +1493,7 @@ applyHashRoute();
 // Refresh periodically
 setInterval(loadHealth, 10000);
 setInterval(loadHistory, 15000);
+setInterval(loadLobbyDeck, 30000);
 setInterval(loadTonightStats, 15000);
 </script>
 </body>

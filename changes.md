@@ -1,4 +1,19 @@
-﻿## [5.32.1] - 2026-08-22
+﻿## [5.33.0] - 2026-09-01
+Lobby slide sync (operator request: "slides created on one machine should show up on any device viewing the web page"). The displays' typed slide deck used to live in each screen's own browser storage, moved around by exporting and importing a JSON file. Now the operator publishes it ONCE and every display shows it.
+
+**How it works**: a new sealed `slides` event on the existing Pusher channel (contract v5). The deck is free-typed church copy, so it gets the same AES-256-GCM envelope as children's names — the public channel sees ciphertext and a coarse size bucket, nothing else. Large decks split into chunks (each sealed frame stays under Pusher's 10 KB ceiling on a dedicated [2048, 4096] pad ladder that FAILS CLOSED rather than ever emitting an oversized frame); every chunk of one publish carries the same `deckRev` + `publishedAt`, and displays order strictly by `publishedAt` — so if this server ever loses `lobby-slides.json` and its revs restart at 1, the next real publish still wins everywhere. The deck rebroadcasts whole every ~5 minutes while the server runs (club night or not), so a screen that reboots at 5 pm Wednesday — or a brand-new one — converges without anyone touching it.
+
+**Two ways to publish**:
+- **Dashboard → Lobby Slides card** (primary; works in any browser): paste or upload the display app's `awana-slides.json` export and press Publish. The card shows the live rev / publish time / slide count.
+- **The display app's slide editor** ("Publish to all displays"): its https origin gets a CORS/Private-Network-Access carve-out scoped to exactly `POST /api/lobby-slides` and must present a **publish token** (generate it on the card, paste it into that display's Settings). The token is a bearer credential checked in constant time, mints loopback-only like the display key, lives in config.json's secret set (never readable cross-origin), and clearing it revokes the path instantly. Worst case if it leaks: length-capped, allowlist-sanitized plain text on the lobby TVs — it opens no other endpoint.
+
+**Video slides stay per-device by design** — their bytes live in one screen's browser storage, so the publisher strips them (and says how many it dropped) rather than broadcasting dead references. A deck that can't be broadcast — over 40 KB of slide JSON, or one greedy packing can't fit into the 12-chunk ceiling (possible well under 40 KB with non-Latin text) — is refused with a clear 413 before anything is committed, rather than silently truncated or, worse, accepted-and-never-broadcast.
+
+Also fixed in passing: the "Clear the display key" confirm claimed the name events stop publishing entirely; what actually happens (and what `test:envelope` has always pinned) is rollout mode — plaintext publishes that keyed screens then refuse. The dialog now says so, and notes it applies to slide sync too.
+
+New `npm run test:slides` suite (39 checks: auth matrix incl. token-cannot-open-other-routes, CORS/PNA preflights, sealed wire frames, monotonic stamps, persistence, size gate) plus slides coverage in `test:contracts` (builder/chunker) and the regenerated envelope interop fixture. Requires display app v-next for the receiving half; older displays ignore the unknown event with a console note, so deploy order between the repos doesn't matter.
+
+## [5.32.1] - 2026-08-22
 Update self-repair (operator field report: "server failed to start — Cannot find module 'parseurl'"). The released installers were fine — every release passes a fresh-install smoke test that boots the full server — but the operator's laptop took two auto-updates within a couple of hours and ended up with a half-copied `resources/print-server/node_modules`: the signature of an interrupted or interleaved in-place update.
 
 Two defenses:

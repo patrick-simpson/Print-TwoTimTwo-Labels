@@ -81,6 +81,10 @@ const out = {
   ciphertextLayout: 'aes-256-gcm ciphertext || 16-byte auth tag, base64',
   checkinPad: events.CHECKIN_PAD,
   padLadder: events.PAD_LADDER,
+  // `slides` pads on its own shorter ladder with NO round-up past 4096: an
+  // 8192-padded plaintext base64-inflates past Pusher's ceiling, so that rung
+  // must not exist for this event. Fail closed instead — see events.js.
+  slidesPadLadder: events.SLIDES_PAD_LADDER,
   testKey: TEST_KEY,
   cases,
 };

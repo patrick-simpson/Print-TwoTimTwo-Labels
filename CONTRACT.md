@@ -1,4 +1,4 @@
-﻿# Club Event Bus Contract (v2)
+﻿# Club Event Bus Contract (v5)
 
 This document pins the payload schemas for every event on the shared Pusher
 channel **`awana-channel`**. The **print server in this repo is the ONLY
@@ -93,6 +93,37 @@ First names only, ever. `month`/`day` are the birthday's calendar month/day
 | `at` | string (ISO 8601) |
 | `nonce` | string (optional, ≤64) |
 
+### `slides` — the operator's typed lobby slide deck (v5, sealed, chunked)
+
+Published by the print server when the operator publishes the typed slide
+deck (dashboard "Lobby slides" card, or the display app's slide editor
+POSTing to `/api/lobby-slides`), then rebroadcast whole every ~5 minutes
+while the server runs so a rebooted screen converges without a handshake.
+
+**TEXT ONLY.** The display app's video slides reference bytes in one
+device's own storage, so the publisher strips them and every consumer's
+sanitizer drops them. The deck is arbitrary operator-authored copy, which is
+why this event rides **sealed** like the name-bearing four.
+
+One publish is split into chunks to stay under Pusher's per-message ceiling.
+Every chunk of a publish carries identical `deckRev` + `publishedAt`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `deckRev` | int ≥ 1 | Operator-facing counter. Chunk grouping only — **never** the ordering authority; it may restart at 1 if the server loses its state file. |
+| `publishedAt` | string (ISO 8601) | **The** ordering + anti-replay authority. A consumer commits an assembled deck iff its `publishedAt` is strictly newer than the committed one. Rebroadcasts reuse it byte-identically. |
+| `seq` | int, `0 ≤ seq < total` | Chunk index. |
+| `total` | int, 1–12 | Chunk count for this publish. |
+| `slides` | array | `{ id? (≤64), eyebrow (≤60), text (required, ≤500, multi-line), theme (whitelist else "auto"), textSize (whitelist else "auto"), durationSec (0 or 3–600) }`. ≤50 per deck. `slides: []` is legal only when `total` is 1 — an explicitly cleared deck propagates. |
+
+The publisher refuses — at publish time, before committing anything — any
+deck that cannot be broadcast within the 12-chunk ceiling (greedy packing
+can strand slack per chunk, so a raw byte cap alone is not a guarantee),
+and also caps a whole deck's serialized JSON at 40 000 bytes. Every chunk
+of an accepted publish seals into the `slides` pad ladder (`[2048, 4096]`,
+**fail closed** above — the 8192 rung would base64-inflate past Pusher's
+ceiling, so it must not exist for this event).
+
 ### `update` — laptop-internal release ping (NOT part of the display contract)
 
 Published once by the release workflow (`.github/workflows/build-electron.yml`)
@@ -150,9 +181,10 @@ exact key sets, correct types, PII structurally impossible, plus the
 
 The Pusher channel is **public**, and Pusher public channels have no
 server-side authorization primitive — subscription is granted by possession of
-the app key, which must ship in the display's public bundle. So the three
-name-bearing events (`checkin`, `recap`, `birthdays`) are **encrypted** with
-AES-256-GCM before publish; the other seven ride in the clear on purpose.
+the app key, which must ship in the display's public bundle. So the four
+name-bearing events (`checkin`, `recap`, `birthdays`, `checkout`) and the
+operator-authored `slides` deck are **encrypted** with AES-256-GCM before
+publish; the remaining events ride in the clear on purpose.
 
 This is a **transport** layer, strictly outside the contract above:
 
