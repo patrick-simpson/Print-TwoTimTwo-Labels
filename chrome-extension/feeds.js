@@ -127,9 +127,9 @@
   }
 
   // One shared POST helper for every print-server write in this file —
-  // /feed/*, /update-households, /print-award, /print-pdf. Silent on any
-  // failure (connection refused, timeout, or a 404 from an older server
-  // build that doesn't have these routes yet).
+  // /feed/*, /print-award, /print-pdf. Silent on any failure (connection
+  // refused, timeout, or a 404 from an older server build that doesn't have
+  // these routes yet).
   function postFeed(path, body) {
     return fetch(PRINT_SERVER + path, {
       method: 'POST',
@@ -568,15 +568,6 @@
     });
   }
 
-  // ── Authoritative household map ─────────────────────────────────────────────
-
-  function runHouseholds() {
-    fetchText('/household/csv').then(function(text) {
-      if (!text || isLoginPage(text) || !looksLikeCsv(text)) return;
-      postFeed('/update-households', { csv: text });
-    });
-  }
-
   // ── Leader worksheets (opt-in, once per club night) ─────────────────────────
 
   var WORKSHEETS_FLAG_KEY = 'awana_autoWorksheets';
@@ -748,8 +739,6 @@
   // keeping its own last-run time and cadence so a slow fetch can't stack. ──
 
   var TICK_MS = 15000;
-  var HOUSEHOLDS_INITIAL_DELAY_MS = 20 * 1000;
-  var startedAt = Date.now();
 
   var lastRun = {
     tonight: 0,
@@ -757,7 +746,6 @@
     schedule: 0,
     notice: 0,
     checkout: 0,
-    households: 0,
     worksheets: 0
   };
 
@@ -767,7 +755,6 @@
     schedule: runSchedule,
     notice: runNotice,
     checkout: runCheckout,
-    households: runHouseholds,
     worksheets: runWorksheets
   };
 
@@ -785,8 +772,6 @@
         return 60 * 60 * 1000;
       case 'notice':
         return isInClubWindow() ? 5 * 60 * 1000 : 30 * 60 * 1000;
-      case 'households':
-        return 30 * 60 * 1000;
       case 'worksheets':
         return 5 * 60 * 1000; // internal guards decide whether it actually fires
       default:
@@ -795,9 +780,6 @@
   }
 
   function isDue(task, now) {
-    if (task === 'households' && lastRun.households === 0) {
-      return now - startedAt >= HOUSEHOLDS_INITIAL_DELAY_MS;
-    }
     return now - lastRun[task] >= intervalFor(task);
   }
 

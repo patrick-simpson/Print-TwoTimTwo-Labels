@@ -51,12 +51,6 @@ const SERVER_VERSION = require('./package.json').version;
 // because a packaged app must never write inside resources/.
 const DATA_DIR = process.env.AWANA_DATA_DIR || __dirname;
 const CSV_FILE = path.join(DATA_DIR, 'clubbers.csv');
-// The household export (GET /household/csv per docs/TWOTIMTWO.md §3.3) is the
-// authoritative sibling map — its "Active Clubbers" column lists a whole
-// household's children directly, unlike the roster CSV which has no
-// household id at all. Persisted the same way as clubbers.csv so a restart
-// mid-event doesn't silently fall back to the phone/address heuristics.
-const HOUSEHOLDS_CSV_FILE = path.join(DATA_DIR, 'households.csv');
 
 // ── Load configuration ────────────────────────────────────────────────────────
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
@@ -244,13 +238,6 @@ const TEXT_W      = BX + BW - TEXT_X; // right text zone width
 // clubbers.csv (e.g. added mid-event) are picked up automatically.
 let clubbers = [];
 
-// ── In-memory household snapshot ──────────────────────────────────────────────
-// Populated at startup from households.csv (if synced) and replaced wholesale
-// by POST /update-households. householdSiblingIndex is the authoritative
-// lowercased-full-name → [sibling full names] map GET /siblings prefers.
-let households = [];
-let householdSiblingIndex = new Map();
-
 // ── CSV parser ────────────────────────────────────────────────────────────────
 // Parses a raw CSV string into an array of plain objects keyed by canonical
 // field names.  Handles both the TwoTimTwo export (quoted fields, spaces in
@@ -301,42 +288,6 @@ const HEADER_MAP = {
   'clubberid':      'ClubberID',
   'inactive':       'Inactive',
   'book':           'Book',
-  // Family / household identifiers used by TwoTimTwo and similar systems
-  'primarycontact':  'PrimaryContact',
-  'primary contact': 'PrimaryContact',
-  'guardian':        'Guardian',
-  'guardians':       'Guardian',
-  'parent':          'Guardian',
-  'parents':         'Guardian',
-  // The real TwoTimTwo /clubber/csv export carries the guardians as
-  // "Parent/Guardian#1" / "Parent/Guardian#2" (no household id column at all)
-  // — without these mappings the family index silently degrades to
-  // last-name-only grouping.
-  'parent/guardian#1':  'PrimaryContact',
-  'parent/guardian #1': 'PrimaryContact',
-  'parent/guardian1':   'PrimaryContact',
-  'parent/guardian#2':  'Guardian',
-  'parent/guardian #2': 'Guardian',
-  'parent/guardian2':   'Guardian',
-  'householdid':     'HouseholdID',
-  'household id':    'HouseholdID',
-  'familyid':        'HouseholdID',
-  'family id':       'HouseholdID',
-  'family':          'HouseholdID',
-  // GET /household/csv's "Active Clubbers" column — a comma-separated
-  // "First Last" list of that household's children (docs/TWOTIMTWO.md §3.3).
-  // This is what builds the authoritative sibling map.
-  'active clubbers': 'ActiveClubbers',
-  'activeclubbers':  'ActiveClubbers',
-  'address':         'Address',
-  'address1':        'Address',
-  'address 1':       'Address',
-  'streetaddress':   'Address',
-  'street address':  'Address',
-  'homeaddress':     'Address',
-  'home address':    'Address',
-  'primary phone':   'PrimaryPhone',
-  'primaryphone':    'PrimaryPhone',
   'share balance':   'ShareBalance',
   'sharebalance':    'ShareBalance',
   'leader notes':    'LeaderNotes',
@@ -503,28 +454,6 @@ function loadClubbers() {
   }
 }
 
-// ── Load households from disk ─────────────────────────────────────────────────
-// Same failure-tolerance shape as loadClubbers(): a missing/busy/malformed
-// file must never crash startup — it just means no authoritative household
-// map yet, and GET /siblings falls back to the CSV heuristics.
-function loadHouseholds() {
-  try {
-    const raw = fs.readFileSync(HOUSEHOLDS_CSV_FILE, 'utf8');
-    const rows = parseCSV(raw);
-    if (rows.length > 0) {
-      console.log(`[households] Loaded ${rows.length} household(s) from households.csv`);
-    }
-    return rows;
-  } catch (e) {
-    if (e.code === 'ENOENT') {
-      console.warn('[households] households.csv not found — /siblings will use CSV heuristics only');
-    } else {
-      console.warn('[households] Failed to read/parse households.csv:', e.message);
-    }
-    return households; // last-known-good, same rationale as loadClubbers()
-  }
-}
-
 // ── Duplicate-print suppression ───────────────────────────────────────────────
 // A cold printer plus PowerShell startup can push a print past the client's
 // request timeout; the client then aborts and retries even though the first
@@ -572,101 +501,6 @@ function findClubberIn(rows, firstName, lastName, clubberId) {
 
 function findClubber(firstName, lastName, clubberId) {
   return findClubberIn(clubbers, firstName, lastName, clubberId);
-}
-
-// ── Family index for sibling lookup ──────────────────────────────────────────
-// Groups clubbers by the best available family identifier and builds a reverse
-// map: lowercased full-name → array of sibling full-names. Priority:
-//   HouseholdID → Primary Phone → PrimaryContact/Guardian → Address → LastName.
-// Manual/template rosters that carry a real HouseholdID keep grouping on it.
-// The real TwoTimTwo export has NO household id, so the primary phone is the
-// strongest signal it carries; contact name comes before address so a family
-// whose address is inconsistently filled across siblings still groups (matching
-// the pre-phone behavior that grouped on PrimaryContact alone).
-// Called on-demand by GET /siblings so it always reflects the current roster.
-
-// A phone is only trustworthy as a family key if it isn't a placeholder or a
-// shared office/ministry number typed into many rows. Reject anything with
-// fewer than 3 distinct digits (0000000, 1111111, 5555555, 123-4567 repeats)
-// and require a plausible length; such numbers otherwise merge dozens of
-// unrelated families into one giant "sibling" group.
-function usablePhoneKey(rawPhone) {
-  const digits = String(rawPhone || '').replace(/\D+/g, '');
-  if (digits.length < 10 || digits.length > 15) return null; // full US/intl number
-  if (new Set(digits).size < 3) return null;                 // 000..., 5555..., etc.
-  return digits.slice(-10);                                  // last 10 = the line
-}
-
-function buildFamilyIndex(rows) {
-  const groups = new Map(); // groupKey → [fullName, ...]
-
-  rows.forEach(r => {
-    const full = ((r.FirstName || '') + ' ' + (r.LastName || '')).trim();
-    if (!full) return;
-    // Pick the most specific available key (order = priority). Keys are
-    // type-prefixed so a phone number can never collide with a name/address.
-    const phoneKey = usablePhoneKey(r.PrimaryPhone);
-    const contact = (r.PrimaryContact || r.Guardian || '').trim().toLowerCase();
-    const address = (r.Address || '').trim().toLowerCase();
-    const household = (r.HouseholdID || '').trim();
-    const groupKey =
-      household ? 'hh:' + household :
-      phoneKey  ? 'ph:' + phoneKey :
-      contact   ? 'pc:' + contact :
-      address   ? 'ad:' + address :
-      (r.LastName || '').trim() ? 'ln:' + r.LastName.trim().toLowerCase() :
-      '';
-    if (!groupKey) return;
-    if (!groups.has(groupKey)) groups.set(groupKey, []);
-    groups.get(groupKey).push(full);
-  });
-
-  // Reverse map: fullName.toLowerCase() → [sibling full-names]
-  const index = new Map();
-  groups.forEach(members => {
-    if (members.length < 2) return; // no siblings in this group
-    members.forEach(name => {
-      index.set(name.toLowerCase(), members.filter(m => m !== name));
-    });
-  });
-  return index;
-}
-
-// ── Authoritative household sibling map (from POST /update-households) ──────
-// GET /household/csv's "Active Clubbers" column already IS the sibling group
-// for that household — no phone/address/contact heuristics needed. Each row
-// is a comma-separated "First Last" list; every name in it is a sibling of
-// every other name in the same row.
-function buildHouseholdSiblingIndex(rows) {
-  const index = new Map();
-  (Array.isArray(rows) ? rows : []).forEach(r => {
-    const raw = (r && (r.ActiveClubbers || r['Active Clubbers'])) || '';
-    if (!raw) return;
-    const members = String(raw).split(',').map(s => s.trim()).filter(Boolean);
-    if (members.length < 2) return; // only child in this household — no siblings
-    members.forEach(name => {
-      const key = name.toLowerCase();
-      const additions = members.filter(m => m.toLowerCase() !== key);
-      if (!additions.length) return;
-      const existing = index.get(key) || [];
-      // Set-dedupe in case the same child's name is repeated across rows
-      // (shouldn't happen with a clean export, but stay defensive).
-      index.set(key, Array.from(new Set([...existing, ...additions])));
-    });
-  });
-  return index;
-}
-
-// GET /siblings' resolution rule: the authoritative household map wins when
-// it has an entry for this child; otherwise fall back to the CSV heuristics
-// (phone/contact/address/last-name via buildFamilyIndex). Pure + exported so
-// the precedence rule itself is unit-testable without booting Express.
-function siblingsFor(fullName, siblingIndex, csvRows) {
-  const key = String(fullName == null ? '' : fullName).toLowerCase().trim();
-  if (!key) return [];
-  const fromHousehold = siblingIndex && typeof siblingIndex.get === 'function' ? siblingIndex.get(key) : undefined;
-  if (fromHousehold) return fromHousehold;
-  return buildFamilyIndex(Array.isArray(csvRows) ? csvRows : []).get(key) || [];
 }
 
 // ── Step Up Night eligibility ─────────────────────────────────────────────────
@@ -2746,38 +2580,7 @@ app.use(express.static(path.join(__dirname, 'public')));  // serve static files 
 // Health endpoint defined below with enhanced warnings
 
 app.get('/roster-status', (req, res) => {
-  res.json({ count: clubbers.length, householdCount: households.length });
-});
-
-// Returns siblings (family members) of a given child. Prefers the
-// authoritative household map (POST /update-households, GET /household/csv's
-// "Active Clubbers" column) and falls back to buildFamilyIndex()'s CSV
-// heuristics (HouseholdID / PrimaryContact / Guardian / Address / LastName)
-// for churches that haven't synced a household export yet.
-//
-// An optional `clubberId` resolves the SUBJECT child exactly (via
-// findClubberIn, same id TwoTimTwo puts on `.clubber[recid]`) before falling
-// back to name matching, so two kids with the same name resolve correctly.
-//
-// Response: { siblings: ["Jane Smith", "John Smith"] }
-// The extension matches returned names against DOM elements on the check-in
-// page; an empty array causes it to fall back to DOM last-name detection.
-app.get('/siblings', (req, res) => {
-  const rawName = String(req.query.name == null ? '' : req.query.name).trim();
-  const clubberId = req.query.clubberId != null ? String(req.query.clubberId).trim() : '';
-
-  let subjectName = rawName;
-  if (clubberId) {
-    const record = findClubberIn(clubbers, '', '', clubberId);
-    if (record) {
-      const full = `${record.FirstName || ''} ${record.LastName || ''}`.trim();
-      if (full) subjectName = full;
-    }
-  }
-
-  if (!subjectName) return res.status(400).json({ error: 'name or clubberId query param required' });
-
-  res.json({ siblings: siblingsFor(subjectName, householdSiblingIndex, clubbers) });
+  res.json({ count: clubbers.length });
 });
 
 app.get('/printers', (req, res) => {
@@ -2849,43 +2652,6 @@ app.post('/update-csv', (req, res) => {
     console.error('[csv] Failed to write clubbers.csv:', e.message);
     fs.unlink(tmpPath, () => {});
     res.status(500).json({ error: 'Failed to write CSV' });
-  }
-});
-
-// ── Receive the household export (authoritative sibling map) ────────────────
-// GET /household/csv, posted the same way the roster CSV is: the bookmarklet
-// fetches it same-origin (session cookies) and POSTs the raw text here. Its
-// "Active Clubbers" column IS the sibling group for that household directly —
-// no phone/address heuristics needed once this is loaded.
-app.post('/update-households', (req, res) => {
-  const { csv } = req.body || {};
-  if (!csv || typeof csv !== 'string' || !csv.trim()) {
-    return res.status(400).json({ error: 'csv field is required (string)' });
-  }
-
-  // Same defensive rule as /update-csv: a sync that yields zero households
-  // (login redirect, export format change, truncated download) must not wipe
-  // out a household map we know is good.
-  const rows = parseCSV(csv);
-  if (rows.length === 0 && households.length > 0) {
-    console.warn(`[households] Rejected household sync: posted CSV parsed to 0 rows — keeping the ${households.length} household(s) already loaded`);
-    return res.status(422).json({ error: 'CSV parsed to 0 rows — household map not replaced', count: households.length });
-  }
-
-  const csvPath = HOUSEHOLDS_CSV_FILE;
-  const tmpPath = csvPath + '.tmp';
-  try {
-    // Atomic write, same rationale as clubbers.csv.
-    fs.writeFileSync(tmpPath, csv, 'utf8');
-    fs.renameSync(tmpPath, csvPath);
-    households = rows;
-    householdSiblingIndex = buildHouseholdSiblingIndex(rows);
-    console.log(`[households] Updated households.csv from browser (${rows.length} household(s))`);
-    res.json({ ok: true, count: rows.length });
-  } catch (e) {
-    console.error('[households] Failed to write households.csv:', e.message);
-    fs.unlink(tmpPath, () => {});
-    res.status(500).json({ error: 'Failed to write households CSV' });
   }
 });
 
@@ -4745,10 +4511,6 @@ app.get('/health', async (req, res) => {
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
   } catch { /* no CSV yet */ }
-  let householdsUpdatedAt = null;
-  try {
-    householdsUpdatedAt = fs.statSync(HOUSEHOLDS_CSV_FILE).mtime.toISOString();
-  } catch { /* no household export synced yet */ }
   res.json({
     status: 'ok',
     printer: PRINTER_NAME || '(default)',
@@ -4784,7 +4546,6 @@ app.get('/health', async (req, res) => {
     lastCanary,
     printFailures: printFailures.length,
     csv: { count: clubbers.length, updatedAt: csvUpdatedAt },
-    households: { count: households.length, updatedAt: householdsUpdatedAt },
     // Freshness per POST /feed/* so the dashboard can show whether the
     // extension's tonight/points/schedule/notice scrapes are still landing.
     feeds: feeds.getFeedsHealth(),
@@ -5481,8 +5242,6 @@ function startListening(attempt = 1) {
     sweepOrphanedTempFiles();
     // Load clubbers before accepting requests so the first print has data ready.
     clubbers = loadClubbers();
-    households = loadHouseholds();
-    householdSiblingIndex = buildHouseholdSiblingIndex(households);
     startClubNightTimers();
     // Publish the birthday roster once at startup so displays that boot before
     // the first club-night interval still get the list. Delayed a few seconds
@@ -5539,9 +5298,9 @@ module.exports = {
   applySavedConfig, setPrinterName,
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
-  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto, noPhotoFor,
+  parseCSV, normalizeHeader, findClubberIn, parseNoPhoto, noPhotoFor,
   isSafePrinterName,
-  parseAllergies, buildHouseholdSiblingIndex, siblingsFor,
+  parseAllergies,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
   shouldSendUpdateBeacon, parseLatestChangeEntry, extensionSkew,

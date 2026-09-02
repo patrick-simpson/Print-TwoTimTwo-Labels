@@ -1,4 +1,14 @@
-﻿## [6.0.0] - 2026-09-01
+﻿## [6.1.0] - 2026-09-02
+Removed the "sibling check-in" feature (operator request). The "Also here tonight?" panel that offered a checked-in child's siblings for a one-tap batch check-in — plus the already-disabled Quick Mode auto-batch variant behind it — is gone, along with everything that only existed to serve it:
+
+- **Extension**: `findSiblings`, `showSiblingPanel`, `batchCheckInSiblings`, and the panel-trigger call after a local check-in.
+- **Server**: `GET /siblings`, `POST /update-households`, the CSV phone/contact/address/last-name family-grouping heuristic (`buildFamilyIndex`), and the authoritative household-export index (`buildHouseholdSiblingIndex`) it preferred. `households.csv` is no longer read, written, or reported on `/health` or `/roster-status`.
+- **Feed bridge**: the 30-minute `/household/csv` → `/update-households` sync task in `chrome-extension/feeds.js` is gone — nothing consumes that data anymore.
+- **CSV header mapping**: the now-unused `PrimaryContact` / `Guardian` / `Address` / `PrimaryPhone` / `HouseholdID` / `ActiveClubbers` aliases dropped from `HEADER_MAP`.
+
+The retry/verify machinery those flows shared with phone check-in and Quick Mode (`pollForCheckinButton`, `verifyBatchCheckin`, the direct-POST `tryDirectCheckin` path) stays — it never was sibling-specific, just threaded a now-always-empty batch list through. The **driven check-in** kill switch (`enableDrivenCheckin`, dashboard: "Allow driven check-ins") is unchanged and still gates the phone check-in page's direct-POST path; its label no longer mentions sibling suggestions. `/household/csv` remains a documented-but-unused TwoTimTwo export (docs/TWOTIMTWO.md, Capabilities page) in case a future feature wants it.
+
+## [6.0.0] - 2026-09-01
 Version 6.0 — the slide-sync milestone. This re-versions the line at the operator's request: the 5.33.0 lobby slide sync (a new sealed, chunked wire event and a second publish surface for the whole display fleet) is the biggest protocol change since the encrypted transport itself landed, and it deserves the major number. **No functional changes since 5.33.0** — same code, same contract v5, same tests (16/16 suites green); only the version identifiers moved. Auto-update picks this up like any other release.
 
 ## [5.33.0] - 2026-09-01

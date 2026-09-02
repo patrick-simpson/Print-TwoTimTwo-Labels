@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.0.0';
+  const EXTENSION_VERSION = '6.1.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -453,221 +453,6 @@
     }
   }
 
-  // ── Sibling detection ─────────────────────────────────────────────────────
-  // Tries the print server's CSV-based family index first (handles blended
-  // families / different last names).  Falls back to DOM last-name matching
-  // if the server is unreachable or returns no results.
-  async function findSiblings(fullName) {
-    // 1. Try server CSV family-index lookup.
-    // If the server responds (even with an empty list), trust it — the CSV family
-    // index uses HouseholdID / PrimaryContact / Guardian / Address before falling
-    // back to LastName, so it correctly separates families that share a last name
-    // (e.g. two unrelated Miller families).  Only fall back to DOM last-name
-    // matching when the server is unreachable or times out.
-    var serverReachable = false;
-    // R-4: pass along TwoTimTwo's own clubber id for this kid when known — the
-    // server accepts it for an exact-identity lookup and ignores it otherwise.
-    var selfMeta = rosterLookupByName(fullName);
-    var clubberIdParam = (selfMeta && selfMeta.recid) ? ('&clubberId=' + encodeURIComponent(selfMeta.recid)) : '';
-    try {
-      var resp = await fetch(PRINT_SERVER + '/siblings?name=' + encodeURIComponent(fullName) + clubberIdParam,
-        { signal: AbortSignal.timeout(2000) });
-      if (resp.ok) {
-        serverReachable = true;
-        var data = await resp.json();
-        if (data.siblings && data.siblings.length > 0) {
-          var serverSiblings = [];
-          var clubberEls = document.querySelectorAll('.clubber');
-          data.siblings.forEach(function(sibName) {
-            for (var i = 0; i < clubberEls.length; i++) {
-              var nameEl = clubberEls[i].querySelector('.name');
-              if (!nameEl) continue;
-              var domName = nameEl.innerText.trim();
-              if (domName.toLowerCase() === sibName.toLowerCase()) {
-                var imgEl = clubberEls[i].querySelector('.club img');
-                var clubName = imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
-                serverSiblings.push({ name: domName, clubName: clubName, element: clubberEls[i] });
-                break;
-              }
-            }
-          });
-          return serverSiblings; // may be empty if none found in DOM
-        }
-        // Server responded with empty siblings — respect that; do NOT fall back
-        // to last-name DOM matching, which would incorrectly group separate families.
-        return [];
-      }
-    } catch (_e) { /* server unavailable or timed out — fall through */ }
-
-    // 2. Fallback: match by shared last name in the DOM.
-    // Only used when the server could not be reached (offline / not running).
-    if (serverReachable) return [];
-    var parts = fullName.trim().split(/\s+/);
-    if (parts.length < 2) return [];
-    var lastName = parts.slice(1).join(' ').toLowerCase();
-    var siblings = [];
-    var clubbers = document.querySelectorAll('.clubber');
-    for (var i = 0; i < clubbers.length; i++) {
-      var nameEl = clubbers[i].querySelector('.name');
-      if (!nameEl) continue;
-      var name = nameEl.innerText.trim();
-      if (name === fullName) continue; // skip self
-      var nameParts = name.split(/\s+/);
-      if (nameParts.length < 2) continue;
-      var sibLast = nameParts.slice(1).join(' ').toLowerCase();
-      if (sibLast === lastName) {
-        var imgEl = clubbers[i].querySelector('.club img');
-        var clubName = imgEl ? (imgEl.getAttribute('alt') || '').trim().replace(/&amp;/g, '&') : '';
-        siblings.push({ name: name, clubName: clubName, element: clubbers[i] });
-      }
-    }
-    return siblings;
-  }
-
-  function showSiblingPanel(siblings, checkedInName) {
-    // Remove existing panel
-    var existing = document.getElementById('awana-sibling-panel');
-    if (existing) existing.remove();
-
-    var overlay = document.createElement('div');
-    overlay.id = 'awana-sibling-panel';
-    Object.assign(overlay.style, {
-      position: 'fixed', top: '55px', right: '12px', zIndex: '100000',
-      background: '#fff', border: '1px solid #c8e6c9', borderRadius: '10px',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.15)', minWidth: '260px',
-      fontFamily: 'system-ui, -apple-system, sans-serif', fontSize: '13px'
-    });
-
-    var header = document.createElement('div');
-    Object.assign(header.style, {
-      padding: '10px 14px', background: '#4caf50', color: '#fff',
-      borderRadius: '10px 10px 0 0', display: 'flex', alignItems: 'center',
-      justifyContent: 'space-between', fontWeight: '700', fontSize: '13px'
-    });
-    header.textContent = 'Also here tonight?';
-
-    var closeX = document.createElement('button');
-    Object.assign(closeX.style, {
-      background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff',
-      width: '22px', height: '22px', borderRadius: '50%', cursor: 'pointer',
-      fontSize: '14px', lineHeight: '22px', textAlign: 'center', padding: '0'
-    });
-    closeX.innerHTML = '&#x2715;';
-    closeX.addEventListener('click', function() { overlay.remove(); });
-    header.appendChild(closeX);
-
-    var body = document.createElement('div');
-    Object.assign(body.style, { padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' });
-
-    var subtitle = document.createElement('div');
-    Object.assign(subtitle.style, { fontSize: '11px', color: '#64748b', marginBottom: '4px' });
-    subtitle.textContent = 'Siblings of ' + checkedInName + ':';
-    body.appendChild(subtitle);
-
-    // Puggles and Cubbies don't have Bible or Friend check-in options.
-    function isYoungClub(clubName) {
-      var n = (clubName || '').toLowerCase();
-      return n.includes('puggle') || n.includes('cubbie');
-    }
-
-    var checkboxes = [];
-    siblings.forEach(function(sib) {
-      var row = document.createElement('div');
-      Object.assign(row.style, {
-        display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px',
-        background: '#f8fafc', borderRadius: '6px'
-      });
-      var includeCb = document.createElement('input');
-      includeCb.type = 'checkbox';
-      includeCb.checked = true;
-      includeCb.style.flexShrink = '0';
-      var nameSpan = document.createElement('span');
-      nameSpan.style.fontWeight = '600';
-      nameSpan.style.flex = '1';
-      nameSpan.textContent = sib.name;
-      var clubSpan = document.createElement('span');
-      Object.assign(clubSpan.style, { fontSize: '11px', color: '#64748b' });
-      clubSpan.textContent = sib.clubName || '';
-
-      // Puggles / Cubbies have no Bible or Friend check-in option
-      var young = isYoungClub(sib.clubName);
-      var bibleCb = { checked: false };
-      var friendCb = { checked: false };
-
-      if (!young) {
-        // Per-sibling checkboxes on the right
-        var bibleLbl = document.createElement('label');
-        Object.assign(bibleLbl.style, {
-          display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
-          cursor: 'pointer', flexShrink: '0'
-        });
-        var realBibleCb = document.createElement('input');
-        realBibleCb.type = 'checkbox';
-        realBibleCb.checked = true;
-        bibleCb = realBibleCb;
-        var bibleSpan = document.createElement('span');
-        bibleSpan.textContent = 'Bible';
-        bibleLbl.append(realBibleCb, bibleSpan);
-
-        var friendLbl = document.createElement('label');
-        Object.assign(friendLbl.style, {
-          display: 'flex', alignItems: 'center', gap: '3px', fontSize: '11px',
-          cursor: 'pointer', flexShrink: '0'
-        });
-        var realFriendCb = document.createElement('input');
-        realFriendCb.type = 'checkbox';
-        realFriendCb.checked = false;
-        friendCb = realFriendCb;
-        var friendSpan = document.createElement('span');
-        friendSpan.textContent = 'Friend';
-        friendLbl.append(realFriendCb, friendSpan);
-
-        row.append(includeCb, nameSpan, clubSpan, bibleLbl, friendLbl);
-      } else {
-        row.append(includeCb, nameSpan, clubSpan);
-      }
-
-      body.appendChild(row);
-      checkboxes.push({ checkbox: includeCb, sibling: sib, bibleCb: bibleCb, friendCb: friendCb });
-    });
-
-    var btnRow = document.createElement('div');
-    Object.assign(btnRow.style, { display: 'flex', gap: '8px', marginTop: '6px' });
-
-    var checkInBtn = document.createElement('button');
-    checkInBtn.textContent = 'Check In Selected';
-    Object.assign(checkInBtn.style, {
-      flex: '1', padding: '8px', background: '#4caf50', color: '#fff',
-      border: 'none', borderRadius: '6px', cursor: 'pointer',
-      fontWeight: '700', fontSize: '12px'
-    });
-    checkInBtn.addEventListener('click', function() {
-      var selected = checkboxes
-        .filter(function(c) { return c.checkbox.checked; })
-        .map(function(c) {
-          return Object.assign({}, c.sibling, { options: { Bible: c.bibleCb.checked, Friend: c.friendCb.checked } });
-        });
-      overlay.remove();
-      if (selected.length > 0) {
-        batchCheckInSiblings(selected);
-      }
-    });
-
-    var skipBtn = document.createElement('button');
-    skipBtn.textContent = 'Skip';
-    Object.assign(skipBtn.style, {
-      padding: '8px 14px', background: '#f1f5f9', color: '#475569',
-      border: '1px solid #e2e8f0', borderRadius: '6px', cursor: 'pointer',
-      fontWeight: '600', fontSize: '12px'
-    });
-    skipBtn.addEventListener('click', function() { overlay.remove(); });
-
-    btnRow.append(checkInBtn, skipBtn);
-    body.appendChild(btnRow);
-    overlay.append(header, body);
-    document.body.appendChild(overlay);
-  }
-
   function applyCheckinOptions(modalContainer, options) {
     if (!options || !modalContainer) return;
     // Map panel option keys to regex patterns that match modal checkbox labels
@@ -701,8 +486,8 @@
   // ── F-2: direct check-in API ─────────────────────────────────────────────
   // Mirrors TwoTimTwo's own POST /clubber/checkinclubber (docs/TWOTIMTWO.md
   // §2.2/§2.3) instead of clicking the .clubber row and polling for the
-  // modal's button#checkin. Used by batchCheckInSiblings / executePhoneAction /
-  // Quick Mode; each falls back to the original click-and-poll dance whenever
+  // modal's button#checkin. Used by executePhoneAction / Quick Mode; each
+  // falls back to the original click-and-poll dance whenever
   // the calendar id or CSRF token can't be found, or the POST doesn't verify —
   // a TwoTimTwo redesign must degrade check-in, never break it outright.
   function findCsrfToken() {
@@ -816,16 +601,11 @@
   // after the verify window, re-click the row once before giving up. This
   // protects against modal races where the click landed but TwoTimTwo
   // dismissed the modal without recording the check-in.
-  function verifyBatchCheckin(sib, remaining, options, pollAttempt, retriesLeft) {
-    if (!findClubberElByName(sib.name)) {
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-      }
-      return;
-    }
+  function verifyBatchCheckin(sib, options, pollAttempt, retriesLeft) {
+    if (!findClubberElByName(sib.name)) return;
     if (pollAttempt < 20) { // up to 2 s for TwoTimTwo to update the DOM
       setTimeout(function() {
-        verifyBatchCheckin(sib, remaining, options, pollAttempt + 1, retriesLeft);
+        verifyBatchCheckin(sib, options, pollAttempt + 1, retriesLeft);
       }, 100);
       return;
     }
@@ -835,26 +615,20 @@
       if (freshEl) {
         freshEl.click();
         setTimeout(function() {
-          pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+          pollForCheckinButton(sib, options, 30, retriesLeft - 1);
         }, 200);
         return;
       }
       // Race: row vanished between attempts → success
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-      }
       return;
     }
     console.log('[Awana] Batch: ' + sib.name + ' could not be verified as checked in (retries exhausted)');
     recordUnverified(sib.name,
       (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null,
       sib.clubName || '');
-    if (remaining.length > 0) {
-      setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-    }
   }
 
-  function pollForCheckinButton(sib, remaining, options, attempts, retriesLeft) {
+  function pollForCheckinButton(sib, options, attempts, retriesLeft) {
     // Retry budget is 2 (operator's pick for #2) — was 1 since v3.0.4.
     if (typeof retriesLeft !== 'number') retriesLeft = 2;
     if (attempts <= 0) {
@@ -865,7 +639,7 @@
         if (freshEl) {
           freshEl.click();
           setTimeout(function() {
-            pollForCheckinButton(sib, remaining, options, 30, retriesLeft - 1);
+            pollForCheckinButton(sib, options, 30, retriesLeft - 1);
           }, 200);
           return;
         }
@@ -874,9 +648,6 @@
       recordUnverified(sib.name,
         (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null,
         sib.clubName || '');
-      if (remaining.length > 0) {
-        setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-      }
       return;
     }
     var checkinBtn = null;
@@ -935,65 +706,13 @@
       checkinBtn.click();
 
       // Verify the click actually checked the kid in (row disappears)
-      // before moving to the next sibling. Retry once on failure.
-      verifyBatchCheckin(sib, remaining, options, 0, retriesLeft);
+      // before giving up. Retry once on failure.
+      verifyBatchCheckin(sib, options, 0, retriesLeft);
     } else {
       setTimeout(function() {
-        pollForCheckinButton(sib, remaining, options, attempts - 1, retriesLeft);
+        pollForCheckinButton(sib, options, attempts - 1, retriesLeft);
       }, 100);
     }
-  }
-
-  function batchCheckInSiblings(siblings) {
-    if (siblings.length === 0) return;
-
-    var sib = siblings[0];
-    var remaining = siblings.slice(1);
-    var options = sib.options || {};
-
-    console.log('[Awana] Batch check-in: clicking ' + sib.name);
-    setStatus('\u23F3');
-
-    // Fire print in background immediately — don't wait for check-in to complete.
-    // batchPrintedNames (8 s window) guards against onCheckin double-printing.
-    var club = lookupClub(sib.name);
-    var sibRecid = (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('recid') : null;
-    var sibClubId = (sib.element && sib.element.getAttribute) ? sib.element.getAttribute('club_id') : null;
-    var sibKey = resolveIdentityKey(sib.name, sibRecid);
-    batchPrintedNames.add(sibKey);
-    setTimeout(function() { batchPrintedNames.delete(sibKey); }, 8000);
-    markPrinted(sib.name, sibRecid); // record in session dedup so remote scan won't reprint
-    doPrint(sib.name, club.clubName || sib.clubName, club.clubImageData, undefined, sibRecid);
-
-    // F-2: try the direct check-in POST first — no modal, no click-timing
-    // dance. Fall back to the original click + poll-for-#checkin flow when
-    // the direct path is unavailable or doesn't verify.
-    tryDirectCheckin(sibRecid, sib.name, sibClubId, options).then(function(ok) {
-      if (ok) {
-        console.log('[Awana] Batch: ' + sib.name + ' checked in via direct API');
-        if (remaining.length > 0) {
-          setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-        }
-        return;
-      }
-      // Re-query the clubber element by name. The reference captured at
-      // findSiblings() time goes stale after the previous sibling's check-in
-      // re-renders the roster — clicking a detached node is a silent no-op.
-      var freshEl = findClubberElByName(sib.name);
-      if (!freshEl || !freshEl.isConnected) {
-        console.log('[Awana] Batch: ' + sib.name + ' not in current DOM — skipping page check-in');
-        recordUnverified(sib.name, sibRecid, sib.clubName || '');
-        if (remaining.length > 0) {
-          setTimeout(function() { batchCheckInSiblings(remaining); }, BATCH_DELAY);
-        }
-        return;
-      }
-      sib.element = freshEl;
-      freshEl.click();
-
-      // Poll for the modal's check-in button (up to 3s)
-      pollForCheckinButton(sib, remaining, options, 30);
-    });
   }
 
   function getClubImageDataUrl(img) {
@@ -2074,7 +1793,7 @@
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
           el.click();
           setTimeout(function() {
-            pollForCheckinButton({ name: name, element: el }, [], {}, 30);
+            pollForCheckinButton({ name: name, element: el }, {}, 30);
           }, 150);
         }
       } else {
@@ -2551,7 +2270,7 @@
       var el = findClubberElByName(item.name);
       if (el && el.isConnected) {
         el.click();
-        pollForCheckinButton({ name: item.name, element: el }, [], {}, 30, 0);
+        pollForCheckinButton({ name: item.name, element: el }, {}, 30, 0);
       } else if (item.clubberId) {
         tryDirectCheckin(item.clubberId, item.name, null, {});
       }
@@ -2890,10 +2609,10 @@
   }
 
   // Re-query a .clubber row by display name. Element references captured
-  // at findSiblings() time go stale once TwoTimTwo re-renders the roster
-  // after a check-in, so batchCheckInSiblings must re-resolve before each
-  // .click() — otherwise the click hits a detached node and the modal
-  // never opens (label prints, page check-in silently fails).
+  // earlier go stale once TwoTimTwo re-renders the roster after a check-in,
+  // so callers must re-resolve before each .click() — otherwise the click
+  // hits a detached node and the modal never opens (label prints, page
+  // check-in silently fails).
   function findClubberElByName(name) {
     var target = (name || '').trim();
     if (!target) return null;
@@ -2938,18 +2657,6 @@
     markPrinted(name, cachedMeta && cachedMeta.recid);
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData, 'local', cachedMeta && cachedMeta.recid);
-
-    // Sibling suggest (#26): panel-only — NEVER auto-batch. The volunteer
-    // confirms "Also here tonight?" chips; kill switch: enableDrivenCheckin
-    // in the server config.
-    if (CHURCH_CFG.enableDrivenCheckin !== false) {
-      setTimeout(function() {
-        findSiblings(name).then(function(siblings) {
-          if (siblings.length === 0) return;
-          showSiblingPanel(siblings, name);
-        }).catch(function() { /* sibling lookup is best-effort */ });
-      }, 500);
-    }
   }
 
   function doPrint(fullName, clubName, imageData, source, explicitClubberId) {
@@ -3222,7 +2929,7 @@
   // TwoTimTwo.com doesn't push updates of remote check-ins, so during the
   // busiest window (5:40 PM - 6:00 PM) we reload the page every 30 seconds
   // so the .clubber-list diff sees the latest state.  Suppressed while the
-  // user is mid-action (modal open, sibling panel open, typing).
+  // user is mid-action (modal open, typing).
   function autoRefresh() {
     try {
       if (document.hidden) return;
@@ -3236,8 +2943,7 @@
       var WINDOW_END   = 18 * 60;      // 6:00 PM
       if (mins < WINDOW_START || mins >= WINDOW_END) return;
 
-      // Suppress reload if any modal / panel is open or user is typing
-      if (document.getElementById('awana-sibling-panel')) return;
+      // Suppress reload if any modal is open or user is typing
       if (document.getElementById('checkin-modal')) return;
       var active = document.activeElement;
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
@@ -3397,7 +3103,7 @@
         return;
       }
       el.click();
-      pollForCheckinButton({ name: action.name, element: el }, [], {}, 30);
+      pollForCheckinButton({ name: action.name, element: el }, {}, 30);
       verifyAndReport();
     });
   }
@@ -3800,19 +3506,6 @@
     var club = lookupClub(name);
     doPrint(name, club.clubName, club.clubImageData, undefined, recid);
 
-    // SIBLING CHECK-IN DISABLED — re-enable by uncommenting this block.
-    // setTimeout(function() {
-    //   findSiblings(name).then(function(siblings) {
-    //     if (siblings && siblings.length > 0) {
-    //       console.log("[Awana] Quick Mode: automatically checking in " + siblings.length + " sibling(s)");
-    //       var autoSibs = siblings.map(function(sib) {
-    //         return Object.assign({}, sib, { options: {} });
-    //       });
-    //       batchCheckInSiblings(autoSibs);
-    //     }
-    //   });
-    // }, 500);
-
     // F-2: try the direct check-in POST first — this blocks TwoTimTwo's own
     // click handler from ever opening a modal at all. Only if the direct path
     // is unavailable/fails do we replay the click and fall back to the
@@ -3826,7 +3519,7 @@
         _quickModeProcessing = true;
         clubberEl.click();
         setTimeout(function() {
-          pollForCheckinButton({ name: name, element: clubberEl }, [], {}, 30);
+          pollForCheckinButton({ name: name, element: clubberEl }, {}, 30);
           setTimeout(function() { _quickModeProcessing = false; }, 500);
         }, 150);
       });
@@ -3836,7 +3529,7 @@
     // Let native click open the modal, then auto-dismiss after 150ms
     setTimeout(function() {
       _quickModeProcessing = true;
-      pollForCheckinButton({ name: name, element: clubberEl }, [], {}, 30);
+      pollForCheckinButton({ name: name, element: clubberEl }, {}, 30);
       setTimeout(function() { _quickModeProcessing = false; }, 500);
     }, 150);
   }, true); // capture phase
