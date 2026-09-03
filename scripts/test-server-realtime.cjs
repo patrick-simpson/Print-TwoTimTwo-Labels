@@ -97,7 +97,7 @@ const sealedFrames = (event) => wire.filter((w) => w.event === event);
 const isSealed = (b) => Boolean(b && b.v === events.ENVELOPE_VERSION && typeof b.ct === 'string');
 
 function isNonCheckinRowLike(r) {
-  return !!(r && (r.isAward || r.isConnectCard));
+  return !!(r && (r.isAward || r.isConnectCard || r.isLeader));
 }
 
 async function main() {
@@ -321,6 +321,61 @@ async function main() {
     check('every print was recorded', rows.length >= 4, `history has ${rows.length} rows`);
   }
 
+  // ── 6b. Leader name tags: a print that is never a check-in ────────────────
+  // Placed before R-1 on purpose: that phase's opening "4 checked in" assertion
+  // then doubles as proof the leader tag below did not count.
+  console.log('realtime: leader tag prints without counting');
+  {
+    const statsBefore = (await j('/stats/tonight')).body;
+    const wireBefore = wire.length;
+    const bufferBefore = JSON.parse(fs.readFileSync(path.join(dataDir, 'events-buffer.json'), 'utf8') || '[]').length;
+    const ledgerBefore = fs.existsSync(path.join(dataDir, 'attendance.json'))
+      ? fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8') : '';
+    const rosterBefore = JSON.stringify((await post('/phone/roster', {})).body);
+
+    const res = await post('/print-leader', { name: 'Pat Leader', clubName: 'Sparks' });
+    check('a leader tag prints', res.status === 200 && res.body && res.body.success === true && !res.body.duplicate, JSON.stringify(res.body));
+
+    const rows = (await j('/history')).body || [];
+    const leaderRows = rows.filter((r) => r.isLeader === true);
+    check('exactly one isLeader history row, with the name and club',
+      leaderRows.length === 1 && leaderRows[0].firstName === 'Pat' && leaderRows[0].lastName === 'Leader' && leaderRows[0].clubName === 'Sparks',
+      JSON.stringify(leaderRows));
+
+    const statsAfter = (await j('/stats/tonight')).body;
+    check('checkedIn is unchanged', statsAfter.checkedIn === statsBefore.checkedIn, `${statsBefore.checkedIn} → ${statsAfter.checkedIn}`);
+    check('byClub.Sparks is unchanged', (statsAfter.byClub || {}).Sparks === (statsBefore.byClub || {}).Sparks, JSON.stringify(statsAfter.byClub));
+    const fresh = wire.slice(wireBefore);
+    check('NO checkin frame went on the wire', fresh.filter((w) => w.event === 'checkin').length === 0, JSON.stringify(fresh.map((w) => w.event)));
+    check('NO tally went on the wire', fresh.filter((w) => w.event === 'tally').length === 0, JSON.stringify(fresh.map((w) => w.event)));
+    check('the recap buffer is untouched',
+      JSON.parse(fs.readFileSync(path.join(dataDir, 'events-buffer.json'), 'utf8') || '[]').length === bufferBefore);
+    const ledgerAfter = fs.existsSync(path.join(dataDir, 'attendance.json'))
+      ? fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8') : '';
+    check('the season ledger is untouched (no "pat" key)', ledgerAfter === ledgerBefore && !/pat leader/i.test(ledgerAfter));
+    check('the phone roster is unchanged', JSON.stringify((await post('/phone/roster', {})).body) === rosterBefore);
+    const csv = await fetch(BASE + '/checkin-csv-export').then((r) => r.text());
+    check('the TwoTimTwo write-back CSV does not list the leader', !/Pat/.test(csv));
+
+    const dup = await post('/print-leader', { name: 'Pat Leader', clubName: 'Sparks' });
+    check('an immediate second tap is a duplicate, not a second row',
+      dup.body && dup.body.duplicate === true && ((await j('/history')).body || []).filter((r) => r.isLeader).length === 1,
+      JSON.stringify(dup.body));
+    check('a leader tag without a name is a 400', (await post('/print-leader', {})).status === 400);
+    const badPrinter = await post('/print-leader', { name: 'Q Leader', printerName: 'x"; rm -rf /' });
+    check('an unsafe printer name is refused', badPrinter.status === 400, JSON.stringify(badPrinter.body));
+
+    // Reprint by index keeps a leader a leader (the kid path would record an
+    // unflagged, counted row for the same name).
+    const today = (await j('/history/today')).body || [];
+    const idx = today.findIndex((r) => r.isLeader);
+    const rp = await post('/reprint', { index: idx });
+    check('reprinting a leader row by index re-prints a leader tag', rp.status === 200 && rp.body && rp.body.leader === true, JSON.stringify(rp.body));
+    check('and records another isLeader row, still counting nobody',
+      ((await j('/history')).body || []).filter((r) => r.isLeader).length === 2
+        && (await j('/stats/tonight')).body.checkedIn === statsBefore.checkedIn);
+  }
+
   // ── 7. R-1 undo detection: mark, decrement, roster, re-check-in, guards ────
   // content.js's runReconcile() already polls /clubber/checkin_report every
   // ~60s (R-1, since v5.2) to catch check-ins the roster-diff detector
@@ -361,6 +416,8 @@ async function main() {
     const afterUndo = (await j('/stats/tonight')).body;
     check('checkedIn decrements immediately', afterUndo.checkedIn === before.checkedIn - 1,
       `before=${before.checkedIn} afterUndo=${afterUndo.checkedIn}`);
+    check('the leader tag rows are invisible to reconcile (never marked undone)',
+      ((await j('/history')).body || []).filter((r) => r.isLeader).every((r) => r.undone === undefined));
 
     const tallyFrames = wire.slice(wireBefore).filter((w) => w.event === 'tally');
     check('a tally is republished immediately — not waiting for the 60s tick', tallyFrames.length >= 1);
@@ -552,6 +609,96 @@ async function main() {
     check('the warning clears once the extension reports the synced version',
       !warningTexts(h.body.warnings).some((w) => /Restart Chrome/i.test(w)), JSON.stringify(h.body.warnings));
     server.setExtensionInfo(null);
+  }
+
+  // ── 11b. Phone Tonight tab: the list behind the number, Remove, Add back, visitor ──
+  console.log('\nrealtime: phone Tonight list + manual undo/restore + visitor label');
+  {
+    const shape = (e) => JSON.stringify(Object.keys(e).sort());
+    const WANT_SHAPE = JSON.stringify(['at', 'clubName', 'clubberId', 'firstName', 'key', 'lastName', 'visitor']);
+
+    const stats0 = (await j('/stats/tonight')).body;
+    const t0 = await post('/phone/tonight', {});
+    check('/phone/tonight answers', t0.status === 200 && t0.body && Array.isArray(t0.body.entries), JSON.stringify(t0.body).slice(0, 160));
+    check('its total is the SAME number the tally uses', t0.body.checkedIn === stats0.checkedIn && t0.body.entries.length === stats0.checkedIn,
+      `list=${t0.body.entries.length} checkedIn=${t0.body.checkedIn} stats=${stats0.checkedIn}`);
+    check('byClub matches /stats/tonight', JSON.stringify(t0.body.byClub) === JSON.stringify(stats0.byClub));
+    const names0 = t0.body.entries.map((e) => e.firstName).sort();
+    check('it lists Amy, Bella, Cody and Dana', JSON.stringify(names0) === JSON.stringify(['Amy', 'Bella', 'Cody', 'Dana']), JSON.stringify(names0));
+    check('every entry is the explicit whitelist — no clubImageData, no allergies',
+      t0.body.entries.every((e) => shape(e) === WANT_SHAPE), t0.body.entries.map(shape).join(' | '));
+    check('the leader tag is not on the list', !t0.body.entries.some((e) => e.lastName === 'Leader'));
+
+    // Remove Bella from a phone (local only).
+    const wireBefore = wire.length;
+    const undo = await post('/phone/undo', { firstName: 'Bella', lastName: 'Tester' });
+    check('/phone/undo succeeds and reports one row undone', undo.status === 200 && undo.body.ok === true && undo.body.undone === 1, JSON.stringify(undo.body));
+    check('and answers with the new count', undo.body.checkedIn === stats0.checkedIn - 1, JSON.stringify(undo.body));
+    check('checkedIn decrements', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+    const tallies = wire.slice(wireBefore).filter((w) => w.event === 'tally');
+    check('a tally is republished immediately with the decremented total',
+      tallies.length >= 1 && tallies[tallies.length - 1].payload.total === stats0.checkedIn - 1, JSON.stringify(tallies.map((w) => w.payload.total)));
+    const roster = (await post('/phone/roster', {})).body.kids.find((k) => k.name === 'Bella Tester');
+    check('the phone roster frees Bella and marks her removed-here', roster && roster.checkedIn === false && roster.removedHere === true, JSON.stringify(roster));
+    check('/phone/tonight no longer lists her', !(await post('/phone/tonight', {})).body.entries.some((e) => e.firstName === 'Bella'));
+    const bellaRows = ((await j('/history')).body || []).filter((r) => r.firstName === 'Bella');
+    check('her history row is flagged, not deleted',
+      bellaRows.length === 1 && bellaRows[0].undone === true && bellaRows[0].undoneBy === 'phone' && typeof bellaRows[0].undoneAt === 'string', JSON.stringify(bellaRows));
+    const todayLocal = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    const ledger1 = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
+    check('tonight comes out of Bella\'s season ledger', ledger1['bella tester'] && !ledger1['bella tester'].dates.includes(todayLocal), JSON.stringify(ledger1['bella tester']));
+
+    // The kid is still on TwoTimTwo's report — reconcile must NOT re-count her.
+    feeds._resetForTests();
+    const rep = await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' },
+      { name: 'Cody Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('a report still listing the removed kid changes nothing', rep.status === 200 && rep.body.changed === 0, JSON.stringify(rep.body));
+    check('she stays removed', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+
+    check('removing nobody is a 404', (await post('/phone/undo', { firstName: 'Nobody', lastName: 'Here' })).status === 404);
+    check('removing with no identity is a 400', (await post('/phone/undo', {})).status === 400);
+
+    // Add back.
+    const restore = await post('/phone/restore', { firstName: 'Bella', lastName: 'Tester' });
+    check('/phone/restore succeeds', restore.status === 200 && restore.body.ok === true && restore.body.restored === 1, JSON.stringify(restore.body));
+    check('the count is back', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn);
+    const bellaBack = ((await j('/history')).body || []).filter((r) => r.firstName === 'Bella');
+    check('still one Bella row, no longer undone, markers gone',
+      bellaBack.length === 1 && !bellaBack[0].undone && !('undoneBy' in bellaBack[0]) && !('undoneAt' in bellaBack[0]), JSON.stringify(bellaBack));
+    const ledger2 = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
+    check('tonight is back in her ledger', ledger2['bella tester'] && ledger2['bella tester'].dates.includes(todayLocal), JSON.stringify(ledger2['bella tester']));
+    check('a second Add back is a 404', (await post('/phone/restore', { firstName: 'Bella', lastName: 'Tester' })).status === 404);
+
+    // A reconcile-detected undo is TwoTimTwo's truth: not restorable from a phone.
+    feeds._resetForTests();
+    await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('Cody is undone by the report', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+    check('a TwoTimTwo undo cannot be overridden from a phone', (await post('/phone/restore', { firstName: 'Cody', lastName: 'Tester' })).status === 404);
+    feeds._resetForTests();
+    await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' },
+      { name: 'Cody Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('Cody is back once the report lists him again', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn);
+
+    // Visitor label straight from the phone.
+    const ckBefore = sealedFrames('checkin').length;
+    const vis = await post('/phone/visitor', { name: 'Vera Visitor', clubName: 'Cubbies' });
+    check('/phone/visitor prints', vis.status === 200 && vis.body && vis.body.success === true && !vis.body.duplicate, JSON.stringify(vis.body));
+    const ck = sealedFrames('checkin');
+    check('it publishes one checkin, sealed (the key is set)', ck.length === ckBefore + 1 && isSealed(ck[ck.length - 1].payload));
+    const t1 = (await post('/phone/tonight', {})).body;
+    const vera = t1.entries.find((e) => e.firstName === 'Vera');
+    check('the visitor is on the list, flagged, in her club', vera && vera.visitor === true && vera.clubName === 'Cubbies', JSON.stringify(vera));
+    check('byClub and visitors reflect her', t1.byClub.Cubbies === 1 && t1.visitors === 1, JSON.stringify(t1));
+    check('a double-tap is a duplicate', (await post('/phone/visitor', { name: 'Vera Visitor', clubName: 'Cubbies' })).body.duplicate === true);
+    const onRoster = await post('/phone/visitor', { name: 'Dana Tester' });
+    check('a roster name is refused with 409 and pointed at Check in', onRoster.status === 409 && /Check in/.test(onRoster.body.error || ''), JSON.stringify(onRoster.body));
+    check('no name is a 400', (await post('/phone/visitor', {})).status === 400);
   }
 
   // ── 12. Reset tonight: the operator's zero button ─────────────────────────

@@ -213,6 +213,11 @@ const CASES = [
   // Footer stacked under a routing line — pins the bottom-left draw order
   // (footer at the very bottom, goTo above it).
   { name: 'footer-with-go-to', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { goToLine: 'Go to: Music, Rm 4' } } },
+  // Leader name tags: the LEADER pill in the visitor-pill slot plus the
+  // "<Club> Leader" greeting, club line suppressed so the club is not printed
+  // twice; and the club-less variant (no icon panel, plain "Leader").
+  { name: 'leader',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isLeader: true, greeting: 'Sparks Leader', template: { showClubLine: false } } },
+  { name: 'leader-no-club',   model: { firstName: 'Pat', lastName: 'Sample', clubName: '', isLeader: true, greeting: 'Leader' } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
   { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
   // Per-club templates: switches OFF what the stock label shows. no-icon pins

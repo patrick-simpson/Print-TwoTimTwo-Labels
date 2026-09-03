@@ -206,6 +206,7 @@ async function main() {
   {
     check('award slips are non-check-in rows', isNonCheckinRow({ isAward: true }) === true);
     check('connect cards are non-check-in rows', isNonCheckinRow({ isConnectCard: true }) === true);
+    check('leader name tags are non-check-in rows', isNonCheckinRow({ isLeader: true }) === true);
     check('a plain row is a check-in', isNonCheckinRow({ firstName: 'A' }) === false);
     check('null-safe', isNonCheckinRow(null) === false);
   }

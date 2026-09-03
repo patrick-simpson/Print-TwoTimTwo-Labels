@@ -138,6 +138,14 @@
       }
     },
     {
+      "step": "print-leader",
+      "label": "volunteer name tag \u2014 prints, never counts",
+      "body": {
+        "name": "Sol Nebula",
+        "clubName": "Sparks"
+      }
+    },
+    {
       "step": "checkin-report-undo",
       "label": "reconcile: Nova was undone on TwoTimTwo",
       "reportEntries": [
@@ -177,7 +185,8 @@
     }
   ],
   "expectedAggregates": {
-    "historyRows": 7,
+    "historyRows": 8,
+    "leaderRows": 1,
     "checkedIn": 6,
     "tally": {
       "total": 6,

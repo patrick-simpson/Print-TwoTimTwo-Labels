@@ -171,6 +171,18 @@ async function main() {
         checkinFrames().length === before);
       continue;
     }
+    if (step.step === 'print-leader') {
+      // An adult's name tag: prints, is recorded (flagged), and moves NOTHING
+      // that counts children — no checkin frame, no tally.
+      const checkinsBefore = checkinFrames().length;
+      const talliesBefore = wire.filter((w) => w.event === 'tally').length;
+      const res = await post('/print-leader', step.body);
+      check(`leader tag (${step.label}) succeeds`, res.status === 200 && res.body && res.body.success === true,
+        `status ${res.status} ${JSON.stringify(res.body)}`);
+      check(`leader tag (${step.label}) publishes NO checkin event`, checkinFrames().length === checkinsBefore);
+      check(`leader tag (${step.label}) publishes NO tally`, wire.filter((w) => w.event === 'tally').length === talliesBefore);
+      continue;
+    }
     if (step.step === 'checkin-report-undo') {
       const res = await post('/feed/checkin-report', { ok: true, entries: step.reportEntries });
       check(`reconcile (${step.label}) applies exactly ${step.expect.changed} undo`,
@@ -191,6 +203,9 @@ async function main() {
       history.length === agg.historyRows, `saw ${history.length}`);
     check('the undone kid keeps their history row, marked undone (history is a log)',
       history.some((r) => r.firstName === 'Nova' && r.undone === true), JSON.stringify(history.map((r) => [r.firstName, r.undone])));
+    const leaderRows = history.filter((r) => r.isLeader === true);
+    check(`history holds ${agg.leaderRows} leader row(s), never undone`,
+      leaderRows.length === agg.leaderRows && leaderRows.every((r) => !r.undone), JSON.stringify(leaderRows));
 
     const stats = (await j('/stats/tonight')).body || {};
     check(`tonight's stats settle at ${agg.checkedIn} checked in`,
