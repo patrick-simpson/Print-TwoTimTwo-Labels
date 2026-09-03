@@ -250,6 +250,63 @@ console.log('envelope: key validation and fail-closed behaviour');
 }
 
 // ── 5. publish() integration ─────────────────────────────────────────────────
+// ── 4b. Display login: the passphrase-derived provision frame ─────────────────
+// The KDF is implemented twice (Node crypto here, WebCrypto on the display), so
+// the fixture pins a deterministic passphrase+salt → derived key → kid, and a
+// sealed frame both sides must open to the same bundle.
+console.log('envelope: display login (provision) derives, seals and opens per the fixture');
+{
+  const P = FIXTURE.provision;
+  check('the fixture carries a provision section', P && P.frame && P.kdf, 'regenerate with scripts/gen-envelope-fixture.cjs AND mirror it');
+  check('fixture declares this build\'s KDF parameters',
+    P.event === events.PROVISION_EVENT && P.kdf.name === events.PROVISION_KDF_NAME
+    && P.kdf.iterations === events.PROVISION_KDF_ITERATIONS && P.kdf.saltBytes === events.PROVISION_SALT_BYTES);
+
+  const derived = events.deriveLoginKey(P.testPassphrase, P.testSalt, P.kdf.iterations);
+  check('PBKDF2-SHA256 derivation matches the fixture byte for byte', derived.toString('base64') === P.derivedKey);
+  check('kid = first 8 hex of SHA-256(derived key), and it is what the frame carries',
+    events.kidFor(derived) === P.kid && P.frame.envelope.kid === P.kid);
+  let opened = null;
+  try { opened = events.openProvisionForTest(P.testPassphrase, P.frame); } catch (e) { /* reported */ }
+  check('the fixture frame opens to the fixture bundle', opened && JSON.stringify(opened) === JSON.stringify(P.bundle), JSON.stringify(opened));
+  rejects('the wrong passphrase does not open it', () => events.openProvisionForTest('wrong-passphrase-here', P.frame));
+
+  // Normalisation: both sides trim, NFKC, then UTF-8 — so a fullwidth letter or
+  // stray whitespace typed on a TV remote still logs in.
+  const fullwidth = P.testPassphrase.replace('a', '\uff41');   // 'ａ'
+  check('NFKC: a fullwidth letter derives the same key', events.deriveLoginKey(fullwidth, P.testSalt).toString('base64') === P.derivedKey);
+  check('whitespace around the passphrase is ignored', events.deriveLoginKey(`  ${P.testPassphrase}\n`, P.testSalt).toString('base64') === P.derivedKey);
+  check('a different salt derives a different key', events.deriveLoginKey(P.testPassphrase, Buffer.alloc(16, 9).toString('base64')).toString('base64') !== P.derivedKey);
+
+  // buildProvisionFrame fails closed.
+  events.setDisplayLogin('', '');
+  check('with no login configured, no frame', events.buildProvisionFrame({ displayKey: KEY, slidesPublishToken: '' }) === null);
+  check('setDisplayLogin refuses a short passphrase', events.setDisplayLogin('short', P.testSalt) === false && events.getDisplayLoginState().configured === false);
+  check('setDisplayLogin refuses a bad salt', events.setDisplayLogin(P.testPassphrase, 'AAAA') === false);
+  check('setDisplayLogin accepts the fixture pair', events.setDisplayLogin(P.testPassphrase, P.testSalt) === true && events.getDisplayLoginState().kid === P.kid);
+  check('an invalid display key yields no frame (never an authenticated downgrade)', events.buildProvisionFrame({ displayKey: 'nope', slidesPublishToken: '' }) === null);
+  check('an empty display key yields no frame', events.buildProvisionFrame({ displayKey: '', slidesPublishToken: 'tok_AbCdEfGhIjKlMnOpQrStUvWx' }) === null);
+  const junkTok = events.openProvisionForTest(P.testPassphrase, events.buildProvisionFrame({ displayKey: KEY, slidesPublishToken: 'not a token!' }));
+  check('a junk token is coerced to the empty string, not shipped', junkTok.slidesPublishToken === '');
+  const frame = events.buildProvisionFrame({ displayKey: KEY, slidesPublishToken: '' });
+  check('the frame carries exactly v, kdf, envelope', JSON.stringify(Object.keys(frame).sort()) === JSON.stringify(['envelope', 'kdf', 'v']));
+  check('the frame stays under Pusher\'s ceiling', Buffer.byteLength(JSON.stringify(frame)) < events.PUSHER_MAX_BYTES);
+  check('a provision bundle pads onto the first ladder rung (2048)', events.paddedSize('provision', 200) === 2048);
+  check('provision is NOT one of the display-key-sealed events', !events.ENCRYPTED_EVENTS.has('provision'));
+  check('the frame never carries the display key in the clear', !JSON.stringify(frame).includes(KEY));
+
+  // Passphrase generator/validator.
+  const g1 = events.generateLoginPassphrase();
+  const g2 = events.generateLoginPassphrase();
+  check('generated passphrases are 4x4 from the unambiguous alphabet', /^[a-z3-9]{4}(-[a-z3-9]{4}){3}$/.test(g1) && !/[l012]/.test(g1));
+  check('two generated passphrases differ', g1 !== g2);
+  check('validator: 11 chars rejected, 12 accepted', events.isValidLoginPassphrase('abcdefghijk') === false && events.isValidLoginPassphrase('abcdefghijkl') === true);
+  check('validator: control characters rejected', events.isValidLoginPassphrase('abcdefghijkl\u0007') === false);
+  check('validator: 129 chars rejected', events.isValidLoginPassphrase('a'.repeat(129)) === false);
+  check('provisionChannelFor derives the cache channel name', events.provisionChannelFor('awana-channel') === 'cache-awana-channel-provision');
+  events.setDisplayLogin('', '');
+}
+
 console.log('envelope: publish() seals the right events and only those');
 {
   const sent = [];

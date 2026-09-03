@@ -29,6 +29,7 @@ const {
   parseCSV, normalizeHeader, findClubberIn, parseNoPhoto, noPhotoFor,
   parseAllergies, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
+  tonightCheckins, markManualUndo, clearManualUndo, computeTonightStats, isNonCheckinRow, splitFullName,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -484,6 +485,42 @@ console.log('reconcileHistoryWithReport — R-1 undo detection: mark, decrement,
     check('a visitor reappearing in the report still clears an existing undone flag', out.changed === 1 && out.history[0].undone === undefined);
   }
 
+  // ── A phone Remove survives the kid reappearing on TwoTimTwo's report ─────
+  // Remove is local-only by design, so the child is EXPECTED to still be on the
+  // report; without this rule the very next pass would re-count them.
+  {
+    const history = [row({ clubberId: '1', undone: true, undoneAt: iso('19'), undoneBy: 'phone' })];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '1', name: 'Amy Zephyr', club: 'Sparks' }], Date.parse(iso('20')));
+    check('a phone-undone kid still on the report stays undone', out.changed === 0 && out.history[0].undone === true && out.history[0].undoneBy === 'phone');
+  }
+  {
+    // ...and is not part of the mass-undo denominator (they are already out).
+    const history = [
+      row({ clubberId: '1', firstName: 'Amy', undone: true, undoneAt: iso('19'), undoneBy: 'phone' }),
+      row({ clubberId: '2', firstName: 'Ben' }),
+      row({ clubberId: '3', firstName: 'Cal' }),
+    ];
+    const out = reconcileHistoryWithReport(history, [{ clubberId: '2', name: 'Ben', club: 'Sparks' }], Date.parse(iso('20')));
+    check('phone-undone rows are outside the mass-undo denominator (Cal alone is 1 of 2, allowed)',
+      out.skipped === false && out.changed === 1 && out.history[2].undone === true && out.history[0].undoneBy === 'phone');
+  }
+
+  // ── Leader tags are invisible to reconcile ────────────────────────────────
+  {
+    const leader = row({ firstName: 'Pat', lastName: 'Leader', isLeader: true });
+    const history = [leader, row({ clubberId: '1' }), ...others()];
+    const out = reconcileHistoryWithReport(history, othersInReport(), Date.parse(iso('19')));
+    check('a leader tag is never marked undone (it is not on any report, and is not a check-in)',
+      out.changed === 1 && out.history[0].undone === undefined && out.history[1].undone === true);
+  }
+  {
+    // Denominator proof: with the leader row wrongly counted, Amy would be 1 of
+    // 2 (allowed); excluded, she is 1 of 1 (>half → skipped).
+    const history = [row({ firstName: 'Pat', lastName: 'Leader', isLeader: true }), row({ clubberId: '1' })];
+    const out = reconcileHistoryWithReport(history, [], Date.parse(iso('19')));
+    check('a leader tag is outside the mass-undo denominator', out.skipped === true && out.changed === 0);
+  }
+
   // ── Mass-undo guard: a bad/partial scrape must never wipe most of the night ─
   {
     const history = [
@@ -512,6 +549,86 @@ console.log('reconcileHistoryWithReport — R-1 undo detection: mark, decrement,
     const out = reconcileHistoryWithReport([], [], Date.parse(iso('19')));
     check('empty history + empty report changes nothing', out.changed === 0 && out.skipped === false);
   }
+}
+
+console.log('isNonCheckinRow — one predicate for every non-check-in print');
+{
+  check('award slips', isNonCheckinRow({ isAward: true }) === true);
+  check('connect cards', isNonCheckinRow({ isConnectCard: true }) === true);
+  check('leader name tags', isNonCheckinRow({ isLeader: true }) === true);
+  check('a plain check-in row is a check-in', isNonCheckinRow({ firstName: 'A', success: true }) === false);
+}
+
+console.log('splitFullName — everything after the first token is the last name');
+{
+  check('two tokens', JSON.stringify(splitFullName('Amy Zephyr')) === JSON.stringify({ firstName: 'Amy', lastName: 'Zephyr' }));
+  check('middle names stay in the last name', JSON.stringify(splitFullName('  Mary  Ann   van Dyke ')) === JSON.stringify({ firstName: 'Mary', lastName: 'Ann van Dyke' }));
+  check('a single token has no last name', JSON.stringify(splitFullName('Cher')) === JSON.stringify({ firstName: 'Cher', lastName: '' }));
+  check('null-safe', JSON.stringify(splitFullName(null)) === JSON.stringify({ firstName: '', lastName: '' }));
+}
+
+console.log('tonightCheckins — THE definition of who is checked in tonight');
+{
+  const today = '2026-08-02';
+  const iso = (h, m = '00') => `${today}T${h}:${m}:00.000Z`;
+  const row = (over) => Object.assign({ firstName: 'Amy', lastName: 'Zephyr', clubName: 'Sparks', success: true, timestamp: iso('18') }, over);
+  // newest-first, as history is stored
+  const history = [
+    row({ clubberId: '1', timestamp: iso('19', '30') }),                                  // Amy re-check-in (active)
+    row({ clubberId: '1', timestamp: iso('19'), undone: true, undoneAt: iso('19') }),    // Amy's earlier undone row
+    row({ clubberId: '2', firstName: 'Ben', timestamp: iso('19'), undone: true, undoneBy: 'phone' }), // Ben removed on a phone
+    row({ clubberId: '3', firstName: 'Cal', timestamp: iso('18', '45'), visitor: true }),
+    row({ clubberId: '3', firstName: 'Cal', timestamp: iso('18', '40'), visitor: true }), // Cal's reprint
+    row({ firstName: 'Pat', lastName: 'Leader', isLeader: true, timestamp: iso('18', '30') }),
+    row({ clubberId: '4', firstName: 'Dee', timestamp: iso('18', '20'), success: false }),
+    row({ clubberId: '5', firstName: 'Eve', timestamp: iso('18', '10'), isAward: true, award: 'Book 1' }),
+    row({ clubberId: '6', firstName: 'Fay', timestamp: '2026-08-01T19:00:00.000Z' }),  // last night
+  ];
+  const t = tonightCheckins(history, today);
+  const names = t.active.map((e) => e.firstName);
+  check('active = one row per identity, newest wins, undone dropped', JSON.stringify(names) === JSON.stringify(['Amy', 'Cal']), JSON.stringify(names));
+  check('Amy\'s ACTIVE row is her newest one', t.active[0].timestamp === iso('19', '30'));
+  check('a phone-removed kid is not active', !names.includes('Ben'));
+  check('leader tags, award slips, failed prints and other nights are out of entries too',
+    t.entries.every((e) => !e.isLeader && !e.isAward && e.success !== false && e.firstName !== 'Fay'), JSON.stringify(t.entries.map((e) => e.firstName)));
+  check('entries keeps reprints (it is the labels-printed population)', t.entries.filter((e) => e.firstName === 'Cal').length === 2);
+  const st = computeTonightStats(t);
+  check('computeTonightStats counts exactly the active set', st.checkedIn === 2 && st.visitors === 1 && st.byClub.Sparks === 2 && st.prints === t.entries.length, JSON.stringify(st));
+}
+
+console.log('markManualUndo / clearManualUndo — the phone Remove and its Add back');
+{
+  const today = '2026-08-02';
+  const iso = (h, m = '00') => `${today}T${h}:${m}:00.000Z`;
+  const row = (over) => Object.assign({ firstName: 'Amy', lastName: 'Zephyr', clubName: 'Sparks', success: true, timestamp: iso('18') }, over);
+  const history = [
+    row({ clubberId: '1', timestamp: iso('19') }),   // Amy newest
+    row({ clubberId: '1', timestamp: iso('18') }),   // Amy's same-night reprint
+    row({ clubberId: '2', firstName: 'Ben' }),
+    row({ clubberId: '1', timestamp: '2026-08-01T19:00:00.000Z' }),   // Amy last night
+    row({ firstName: 'Amy', lastName: 'Zephyr', isAward: true, award: 'Book 1' }),
+    row({ clubberId: '1', timestamp: iso('17'), undone: true, undoneAt: iso('17') }), // reconcile-undone earlier row
+  ];
+  const now = Date.parse(iso('20'));
+  const out = markManualUndo(history, { firstName: 'Amy', lastName: 'Zephyr', clubberId: '1' }, now);
+  check('marks EVERY active row for the identity tonight (both same-night rows)', out.changed === 2 && out.history[0].undone === true && out.history[1].undone === true);
+  check('stamps undoneAt and undoneBy', out.history[0].undoneAt === new Date(now).toISOString() && out.history[0].undoneBy === 'phone');
+  check('another kid is untouched', out.history[2].undone === undefined);
+  check('another night is untouched', out.history[3].undone === undefined);
+  check('an award row is untouched', out.history[4].undone === undefined);
+  check('an already-undone row is untouched (keeps its reconcile provenance)', out.history[5].undoneBy === undefined && out.history[5].undoneAt === iso('17'));
+  check('copy-on-write', history[0].undone === undefined && out.history !== history);
+  check('id-first: a same-named kid with a different id is a different child',
+    markManualUndo(history, { firstName: 'Amy', lastName: 'Zephyr', clubberId: '99' }, now).changed === 0);
+  check('name fallback when the caller has no id', markManualUndo(history, { firstName: 'amy', lastName: 'ZEPHYR' }, now).changed === 2);
+  check('nobody matching → unchanged, same array back',
+    markManualUndo(history, { firstName: 'Zed', lastName: 'Nobody' }, now).changed === 0 && markManualUndo(history, { firstName: 'Zed', lastName: 'Nobody' }, now).history === history);
+
+  const back = clearManualUndo(out.history, { firstName: 'Amy', lastName: 'Zephyr', clubberId: '1' });
+  check('Add back clears exactly the phone-undone rows', back.changed === 2 && back.history[0].undone === undefined && back.history[1].undone === undefined);
+  check('and removes all three marker fields', !('undoneAt' in back.history[0]) && !('undoneBy' in back.history[0]));
+  check('a reconcile-undone row is NOT restorable from a phone', back.history[5].undone === true);
+  check('Add back on a kid nobody removed → unchanged', clearManualUndo(history, { firstName: 'Ben', lastName: 'Zephyr', clubberId: '2' }).changed === 0);
 }
 
 console.log('isSafePrinterName — a printer name reaches PowerShell, so it is validated not escaped');

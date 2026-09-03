@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.1.0';
+  const EXTENSION_VERSION = '6.2.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -2343,10 +2343,11 @@
       .then(function(allEntries) {
         // Count only LIVE check-ins: history is a log, so an undone kid's row
         // stays in it forever — counting raw rows was why the number never
-        // went back down after an undo. Failed prints, award slips and
-        // connect cards never counted as check-ins either.
+        // went back down after an undo. Failed prints, award slips, connect
+        // cards and leader name tags never counted as check-ins either
+        // (mirrors the server's isNonCheckinRow()).
         var entries = (allEntries || []).filter(function(e) {
-          return e && e.success !== false && !e.undone && !e.isAward && !e.isConnectCard;
+          return e && e.success !== false && !e.undone && !e.isAward && !e.isConnectCard && !e.isLeader;
         });
         if (count) count.textContent = entries.length ? entries.length + ' printed' : '';
         while (list.firstChild) list.removeChild(list.firstChild);

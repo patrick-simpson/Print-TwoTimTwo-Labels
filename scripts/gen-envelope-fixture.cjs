@@ -65,6 +65,51 @@ cases.push({
   envelope: events.seal('recap', { entries: [], at: '2026-08-01T23:30:00.000Z' }),
 });
 
+// ── Display login (device provisioning) ──────────────────────────────────────
+// A deterministic passphrase + salt pin the KDF (PBKDF2-SHA256, the iteration
+// count, trim → NFKC → UTF-8 normalisation) between the Node derivation here
+// and the display's WebCrypto derivation. Lives OUTSIDE `cases`: every case is
+// sealed under testKey, and both repos' loops assert exactly that; this frame
+// is sealed under the passphrase-derived key instead.
+const TEST_PASSPHRASE = 'abcd-efgh-ijkm-npqr';
+const TEST_SALT = Buffer.from(Array.from({ length: 16 }, (_, i) => 0x10 + i)).toString('base64');
+if (!events.setDisplayLogin(TEST_PASSPHRASE, TEST_SALT)) {
+  console.error('The fixed test passphrase was rejected by setDisplayLogin.');
+  process.exit(1);
+}
+const derivedKey = events.deriveLoginKey(TEST_PASSPHRASE, TEST_SALT);
+const provisionBundle = {
+  v: 1,
+  displayKey: TEST_KEY,
+  slidesPublishToken: 'tok_AbCdEfGhIjKlMnOpQrStUvWx',
+  issuedAt: '2026-09-16T22:00:00.000Z',
+};
+const provisionFrame = events.buildProvisionFrame(provisionBundle);
+if (!provisionFrame) {
+  console.error('Could not build the provision frame — refusing to write a partial fixture.');
+  process.exit(1);
+}
+const provision = {
+  channel: 'cache-<pusherChannel>-provision',
+  event: events.PROVISION_EVENT,
+  aad: `utf8("${events.ENVELOPE_VERSION}:${events.PROVISION_EVENT}")`,
+  kdf: {
+    name: events.PROVISION_KDF_NAME,
+    iterations: events.PROVISION_KDF_ITERATIONS,
+    saltBytes: events.PROVISION_SALT_BYTES,
+    passphraseNormalization: 'trim, then Unicode NFKC, then UTF-8',
+    keyBytes: 32,
+  },
+  bundleShape: '{ v:1, displayKey (base64 32 B), slidesPublishToken (\'\' or 24-64 [A-Za-z0-9_-]), issuedAt (ISO 8601) }',
+  replayRule: 'a display ignores a bundle whose issuedAt is older than the last one it applied',
+  testPassphrase: TEST_PASSPHRASE,
+  testSalt: TEST_SALT,
+  derivedKey: derivedKey.toString('base64'),
+  kid: events.kidFor(derivedKey),
+  bundle: provisionBundle,
+  frame: provisionFrame,
+};
+
 const out = {
   note: [
     'Cross-implementation interop fixture for the sealed-envelope transport.',
@@ -87,6 +132,7 @@ const out = {
   slidesPadLadder: events.SLIDES_PAD_LADDER,
   testKey: TEST_KEY,
   cases,
+  provision,
 };
 
 const canonical = path.join(__dirname, '..', 'envelope-vectors.json');

@@ -228,6 +228,13 @@ async function main() {
     check('an armed-rehearsal print writes NO history row',
       countRows(readJson(dataDir, 'print-history.json')) === historyBefore);
 
+    // A leader tag under rehearsal follows the same rule: TEST band, no row.
+    const leaderArmed = await post('/print-leader', { name: 'Rehearsal Leader', clubName: 'Sparks' });
+    check('an armed-rehearsal leader tag is flagged demo',
+      leaderArmed.status === 200 && leaderArmed.json && leaderArmed.json.demo === true, JSON.stringify(leaderArmed.json));
+    check('an armed-rehearsal leader tag writes NO history row',
+      countRows(readJson(dataDir, 'print-history.json')) === historyBefore);
+
     const disarm = await post('/rehearsal', { on: false });
     check('disarming succeeds', disarm.status === 200 && disarm.json && disarm.json.rehearsal === false, JSON.stringify(disarm.json));
 
@@ -241,6 +248,21 @@ async function main() {
       real.status === 200 && !(real.json && real.json.demo)
         && countRows(readJson(dataDir, 'print-history.json')) === historyBefore + 1,
       JSON.stringify(real.json));
+
+    // After disarm a leader tag records a flagged row and still moves no count.
+    const statsBeforeLeader = (await get('/stats/tonight')).json || {};
+    const leaderReal = await post('/print-leader', { name: 'Real Leader', clubName: 'Sparks' });
+    check('a leader tag after disarm prints for real',
+      leaderReal.status === 200 && leaderReal.json && leaderReal.json.success === true && !leaderReal.json.demo,
+      JSON.stringify(leaderReal.json));
+    const rowsAfterLeader = readJson(dataDir, 'print-history.json') || [];
+    check('the leader tag is recorded as an isLeader row',
+      rowsAfterLeader.length === historyBefore + 2 && rowsAfterLeader[0].isLeader === true && rowsAfterLeader[0].firstName === 'Real',
+      JSON.stringify(rowsAfterLeader[0]));
+    const statsAfterLeader = (await get('/stats/tonight')).json || {};
+    check('and tonight\'s checkedIn did not move',
+      statsAfterLeader.checkedIn === statsBeforeLeader.checkedIn,
+      `${statsBeforeLeader.checkedIn} → ${statsAfterLeader.checkedIn}`);
   }
 
   // ── 4. A failing demo print stays silent ──────────────────────────────────

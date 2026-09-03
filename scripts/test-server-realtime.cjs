@@ -97,7 +97,7 @@ const sealedFrames = (event) => wire.filter((w) => w.event === event);
 const isSealed = (b) => Boolean(b && b.v === events.ENVELOPE_VERSION && typeof b.ct === 'string');
 
 function isNonCheckinRowLike(r) {
-  return !!(r && (r.isAward || r.isConnectCard));
+  return !!(r && (r.isAward || r.isConnectCard || r.isLeader));
 }
 
 async function main() {
@@ -211,6 +211,82 @@ async function main() {
       events.getDisplayKeyState().configured === true);
   }
 
+  // ── 2b. Display login: one passphrase provisions every screen ─────────────
+  console.log('realtime: display login publishes a sealed provision frame');
+  let PASSPHRASE;
+  {
+    const provisionFrames = () => wire.filter((w) => w.event === 'provision');
+    let h = await j('/health');
+    check('/health reports no display login yet', h.body.displayLogin && h.body.displayLogin.configured === false, JSON.stringify(h.body.displayLogin));
+    check('nothing was provisioned before a passphrase existed', provisionFrames().length === 0, `saw ${provisionFrames().length}`);
+
+    const gen = await post('/config/display-login/generate');
+    PASSPHRASE = gen.body && gen.body.passphrase;
+    check('generate returns a 4x4 passphrase from the unambiguous alphabet',
+      gen.status === 200 && /^[a-z3-9]{4}(-[a-z3-9]{4}){3}$/.test(PASSPHRASE || ''), JSON.stringify(gen.body));
+    check('generate does not save it', !onDisk().displayLoginPassphrase);
+    check('a too-short passphrase is refused with 400', (await post('/config', { displayLoginPassphrase: 'short' })).status === 400);
+    check('a refused passphrase leaves login unconfigured', events.getDisplayLoginState().configured === false);
+
+    const framesBefore = provisionFrames().length;
+    check('saving the passphrase is accepted', (await post('/config', { displayLoginPassphrase: PASSPHRASE })).status === 200);
+    const disk1 = onDisk();
+    check('the passphrase is persisted', disk1.displayLoginPassphrase === PASSPHRASE);
+    check('a 16-byte salt was minted alongside it',
+      typeof disk1.displayLoginSalt === 'string' && Buffer.from(disk1.displayLoginSalt, 'base64').length === 16, JSON.stringify(disk1.displayLoginSalt));
+    check('and it takes effect immediately, with no restart', events.getDisplayLoginState().configured === true);
+
+    // applySavedConfig republishes; the wire is synchronous through FakePusher.
+    await new Promise((r) => setTimeout(r, 50));
+    const frames = provisionFrames();
+    check('a provision frame went out on the cache channel', frames.length === framesBefore + 1 && frames[frames.length - 1].channel === 'cache-awana-channel-provision',
+      JSON.stringify(frames.map((f) => f.channel)));
+    const frame = frames[frames.length - 1].payload;
+    check('the frame carries exactly kdf + envelope (nothing in the clear)',
+      JSON.stringify(Object.keys(frame).sort()) === JSON.stringify(['envelope', 'kdf', 'v']), JSON.stringify(Object.keys(frame)));
+    check('the kdf block names PBKDF2-SHA256 with the salt on disk',
+      frame.kdf.name === 'PBKDF2-SHA256' && frame.kdf.salt === disk1.displayLoginSalt && frame.kdf.iterations === events.PROVISION_KDF_ITERATIONS, JSON.stringify(frame.kdf));
+    let opened = null;
+    try { opened = events.openProvisionForTest(PASSPHRASE, frame); } catch (e) { opened = { error: e.message }; }
+    check('the passphrase opens it to the display key (and no token yet)',
+      opened && opened.displayKey === KEY && opened.slidesPublishToken === '' && typeof opened.issuedAt === 'string', JSON.stringify(opened));
+    let wrong = null;
+    try { wrong = events.openProvisionForTest('not-the-passphrase-at-all', frame); } catch (e) { wrong = e.message; }
+    check('the wrong passphrase does NOT open it', typeof wrong === 'string' && /kid mismatch/.test(wrong), JSON.stringify(wrong));
+    check('the frame body never contains the display key or passphrase in the clear',
+      !JSON.stringify(frame).includes(KEY) && !JSON.stringify(frame).includes(PASSPHRASE));
+
+    // Re-saving the same passphrase (the Settings form does this) must not rotate the salt.
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
+    check('re-saving the same passphrase keeps the salt byte-identical', onDisk().displayLoginSalt === disk1.displayLoginSalt);
+
+    // A token save re-provisions with the token inside the bundle.
+    const tok = await post('/config/slides-token/generate');
+    const before2 = provisionFrames().length;
+    await post('/config', { slidesPublishToken: tok.body.token });
+    await new Promise((r) => setTimeout(r, 50));
+    const f2 = provisionFrames();
+    let opened2 = null;
+    try { opened2 = events.openProvisionForTest(PASSPHRASE, f2[f2.length - 1].payload); } catch (e) { opened2 = { error: e.message }; }
+    check('saving a publish token republishes a bundle carrying it',
+      f2.length === before2 + 1 && opened2 && opened2.slidesPublishToken === tok.body.token, JSON.stringify(opened2));
+    check('issuedAt is fresh per publish (newer than the first frame)',
+      opened && opened2 && Date.parse(opened2.issuedAt) >= Date.parse(opened.issuedAt));
+
+    h = await j('/health');
+    check('/health reports display login configured with a kid, never the passphrase',
+      h.body.displayLogin.configured === true && /^[0-9a-f]{8}$/.test(h.body.displayLogin.kid) && typeof h.body.displayLogin.lastPublishedAt === 'string'
+        && !JSON.stringify(h.body).includes(PASSPHRASE), JSON.stringify(h.body.displayLogin));
+
+    // A different passphrase rotates the salt.
+    const gen2 = await post('/config/display-login/generate');
+    await post('/config', { displayLoginPassphrase: gen2.body.passphrase });
+    check('a different passphrase mints a new salt', onDisk().displayLoginSalt !== disk1.displayLoginSalt);
+    // ...and put the first one back so later phases can keep using it.
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
+    await post('/config', { slidesPublishToken: '' });
+  }
+
   // ── 3. Names leave this process as ciphertext ──────────────────────────────
   console.log('realtime: names are sealed on the wire');
   {
@@ -280,6 +356,18 @@ async function main() {
     check('AND gone from the live publisher, not just the file',
       events.getDisplayKeyState().configured === false,
       'this is the Object.assign-cannot-delete bug');
+    // Fail closed: with no display key the provision frame must NOT go out (a
+    // bundle with an empty key would make every logged-in screen drop its key).
+    {
+      const before = wire.filter((w) => w.event === 'provision').length;
+      await post('/config', { lateGraceMin: 11 });
+      await new Promise((r) => setTimeout(r, 50));
+      check('with the display key cleared, config saves publish NO provision frame',
+        wire.filter((w) => w.event === 'provision').length === before);
+      const h = await j('/health');
+      check('/health warns that the passphrase is set but there is no key to provision',
+        warningTexts(h.body.warnings).some((w) => /display passphrase is set but there is no display key/i.test(w)), JSON.stringify(h.body.warnings));
+    }
 
     const before = wire.length;
     await post('/print', { firstName: 'Cody', lastName: 'Tester', clubName: 'Sparks' });
@@ -307,6 +395,18 @@ async function main() {
       'the old PIN would still have been accepted until a restart');
   }
 
+  // ── 5b. Clearing the passphrase clears it live and removes the salt ────────
+  console.log('realtime: clearing the display passphrase');
+  {
+    await post('/config', { displayLoginPassphrase: '' });
+    const d = onDisk();
+    check('the passphrase and its salt are both gone from disk', !d.displayLoginPassphrase && !d.displayLoginSalt, JSON.stringify(d));
+    check('AND the live login state is cleared', events.getDisplayLoginState().configured === false);
+    check('/health reports login unconfigured', (await j('/health')).body.displayLogin.configured === false);
+    // Restore it for the remaining phases (phase 6 restores the key).
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
+  }
+
   // ── 6. Encryption never blocks a label ─────────────────────────────────────
   console.log('realtime: printing is never gated on the realtime pipe');
   {
@@ -319,6 +419,61 @@ async function main() {
     const hist = await j('/history');
     const rows = Array.isArray(hist.body) ? hist.body : (hist.body && hist.body.history) || [];
     check('every print was recorded', rows.length >= 4, `history has ${rows.length} rows`);
+  }
+
+  // ── 6b. Leader name tags: a print that is never a check-in ────────────────
+  // Placed before R-1 on purpose: that phase's opening "4 checked in" assertion
+  // then doubles as proof the leader tag below did not count.
+  console.log('realtime: leader tag prints without counting');
+  {
+    const statsBefore = (await j('/stats/tonight')).body;
+    const wireBefore = wire.length;
+    const bufferBefore = JSON.parse(fs.readFileSync(path.join(dataDir, 'events-buffer.json'), 'utf8') || '[]').length;
+    const ledgerBefore = fs.existsSync(path.join(dataDir, 'attendance.json'))
+      ? fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8') : '';
+    const rosterBefore = JSON.stringify((await post('/phone/roster', {})).body);
+
+    const res = await post('/print-leader', { name: 'Pat Leader', clubName: 'Sparks' });
+    check('a leader tag prints', res.status === 200 && res.body && res.body.success === true && !res.body.duplicate, JSON.stringify(res.body));
+
+    const rows = (await j('/history')).body || [];
+    const leaderRows = rows.filter((r) => r.isLeader === true);
+    check('exactly one isLeader history row, with the name and club',
+      leaderRows.length === 1 && leaderRows[0].firstName === 'Pat' && leaderRows[0].lastName === 'Leader' && leaderRows[0].clubName === 'Sparks',
+      JSON.stringify(leaderRows));
+
+    const statsAfter = (await j('/stats/tonight')).body;
+    check('checkedIn is unchanged', statsAfter.checkedIn === statsBefore.checkedIn, `${statsBefore.checkedIn} → ${statsAfter.checkedIn}`);
+    check('byClub.Sparks is unchanged', (statsAfter.byClub || {}).Sparks === (statsBefore.byClub || {}).Sparks, JSON.stringify(statsAfter.byClub));
+    const fresh = wire.slice(wireBefore);
+    check('NO checkin frame went on the wire', fresh.filter((w) => w.event === 'checkin').length === 0, JSON.stringify(fresh.map((w) => w.event)));
+    check('NO tally went on the wire', fresh.filter((w) => w.event === 'tally').length === 0, JSON.stringify(fresh.map((w) => w.event)));
+    check('the recap buffer is untouched',
+      JSON.parse(fs.readFileSync(path.join(dataDir, 'events-buffer.json'), 'utf8') || '[]').length === bufferBefore);
+    const ledgerAfter = fs.existsSync(path.join(dataDir, 'attendance.json'))
+      ? fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8') : '';
+    check('the season ledger is untouched (no "pat" key)', ledgerAfter === ledgerBefore && !/pat leader/i.test(ledgerAfter));
+    check('the phone roster is unchanged', JSON.stringify((await post('/phone/roster', {})).body) === rosterBefore);
+    const csv = await fetch(BASE + '/checkin-csv-export').then((r) => r.text());
+    check('the TwoTimTwo write-back CSV does not list the leader', !/Pat/.test(csv));
+
+    const dup = await post('/print-leader', { name: 'Pat Leader', clubName: 'Sparks' });
+    check('an immediate second tap is a duplicate, not a second row',
+      dup.body && dup.body.duplicate === true && ((await j('/history')).body || []).filter((r) => r.isLeader).length === 1,
+      JSON.stringify(dup.body));
+    check('a leader tag without a name is a 400', (await post('/print-leader', {})).status === 400);
+    const badPrinter = await post('/print-leader', { name: 'Q Leader', printerName: 'x"; rm -rf /' });
+    check('an unsafe printer name is refused', badPrinter.status === 400, JSON.stringify(badPrinter.body));
+
+    // Reprint by index keeps a leader a leader (the kid path would record an
+    // unflagged, counted row for the same name).
+    const today = (await j('/history/today')).body || [];
+    const idx = today.findIndex((r) => r.isLeader);
+    const rp = await post('/reprint', { index: idx });
+    check('reprinting a leader row by index re-prints a leader tag', rp.status === 200 && rp.body && rp.body.leader === true, JSON.stringify(rp.body));
+    check('and records another isLeader row, still counting nobody',
+      ((await j('/history')).body || []).filter((r) => r.isLeader).length === 2
+        && (await j('/stats/tonight')).body.checkedIn === statsBefore.checkedIn);
   }
 
   // ── 7. R-1 undo detection: mark, decrement, roster, re-check-in, guards ────
@@ -361,6 +516,8 @@ async function main() {
     const afterUndo = (await j('/stats/tonight')).body;
     check('checkedIn decrements immediately', afterUndo.checkedIn === before.checkedIn - 1,
       `before=${before.checkedIn} afterUndo=${afterUndo.checkedIn}`);
+    check('the leader tag rows are invisible to reconcile (never marked undone)',
+      ((await j('/history')).body || []).filter((r) => r.isLeader).every((r) => r.undone === undefined));
 
     const tallyFrames = wire.slice(wireBefore).filter((w) => w.event === 'tally');
     check('a tally is republished immediately — not waiting for the 60s tick', tallyFrames.length >= 1);
@@ -552,6 +709,96 @@ async function main() {
     check('the warning clears once the extension reports the synced version',
       !warningTexts(h.body.warnings).some((w) => /Restart Chrome/i.test(w)), JSON.stringify(h.body.warnings));
     server.setExtensionInfo(null);
+  }
+
+  // ── 11b. Phone Tonight tab: the list behind the number, Remove, Add back, visitor ──
+  console.log('\nrealtime: phone Tonight list + manual undo/restore + visitor label');
+  {
+    const shape = (e) => JSON.stringify(Object.keys(e).sort());
+    const WANT_SHAPE = JSON.stringify(['at', 'clubName', 'clubberId', 'firstName', 'key', 'lastName', 'visitor']);
+
+    const stats0 = (await j('/stats/tonight')).body;
+    const t0 = await post('/phone/tonight', {});
+    check('/phone/tonight answers', t0.status === 200 && t0.body && Array.isArray(t0.body.entries), JSON.stringify(t0.body).slice(0, 160));
+    check('its total is the SAME number the tally uses', t0.body.checkedIn === stats0.checkedIn && t0.body.entries.length === stats0.checkedIn,
+      `list=${t0.body.entries.length} checkedIn=${t0.body.checkedIn} stats=${stats0.checkedIn}`);
+    check('byClub matches /stats/tonight', JSON.stringify(t0.body.byClub) === JSON.stringify(stats0.byClub));
+    const names0 = t0.body.entries.map((e) => e.firstName).sort();
+    check('it lists Amy, Bella, Cody and Dana', JSON.stringify(names0) === JSON.stringify(['Amy', 'Bella', 'Cody', 'Dana']), JSON.stringify(names0));
+    check('every entry is the explicit whitelist — no clubImageData, no allergies',
+      t0.body.entries.every((e) => shape(e) === WANT_SHAPE), t0.body.entries.map(shape).join(' | '));
+    check('the leader tag is not on the list', !t0.body.entries.some((e) => e.lastName === 'Leader'));
+
+    // Remove Bella from a phone (local only).
+    const wireBefore = wire.length;
+    const undo = await post('/phone/undo', { firstName: 'Bella', lastName: 'Tester' });
+    check('/phone/undo succeeds and reports one row undone', undo.status === 200 && undo.body.ok === true && undo.body.undone === 1, JSON.stringify(undo.body));
+    check('and answers with the new count', undo.body.checkedIn === stats0.checkedIn - 1, JSON.stringify(undo.body));
+    check('checkedIn decrements', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+    const tallies = wire.slice(wireBefore).filter((w) => w.event === 'tally');
+    check('a tally is republished immediately with the decremented total',
+      tallies.length >= 1 && tallies[tallies.length - 1].payload.total === stats0.checkedIn - 1, JSON.stringify(tallies.map((w) => w.payload.total)));
+    const roster = (await post('/phone/roster', {})).body.kids.find((k) => k.name === 'Bella Tester');
+    check('the phone roster frees Bella and marks her removed-here', roster && roster.checkedIn === false && roster.removedHere === true, JSON.stringify(roster));
+    check('/phone/tonight no longer lists her', !(await post('/phone/tonight', {})).body.entries.some((e) => e.firstName === 'Bella'));
+    const bellaRows = ((await j('/history')).body || []).filter((r) => r.firstName === 'Bella');
+    check('her history row is flagged, not deleted',
+      bellaRows.length === 1 && bellaRows[0].undone === true && bellaRows[0].undoneBy === 'phone' && typeof bellaRows[0].undoneAt === 'string', JSON.stringify(bellaRows));
+    const todayLocal = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    const ledger1 = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
+    check('tonight comes out of Bella\'s season ledger', ledger1['bella tester'] && !ledger1['bella tester'].dates.includes(todayLocal), JSON.stringify(ledger1['bella tester']));
+
+    // The kid is still on TwoTimTwo's report — reconcile must NOT re-count her.
+    feeds._resetForTests();
+    const rep = await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' },
+      { name: 'Cody Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('a report still listing the removed kid changes nothing', rep.status === 200 && rep.body.changed === 0, JSON.stringify(rep.body));
+    check('she stays removed', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+
+    check('removing nobody is a 404', (await post('/phone/undo', { firstName: 'Nobody', lastName: 'Here' })).status === 404);
+    check('removing with no identity is a 400', (await post('/phone/undo', {})).status === 400);
+
+    // Add back.
+    const restore = await post('/phone/restore', { firstName: 'Bella', lastName: 'Tester' });
+    check('/phone/restore succeeds', restore.status === 200 && restore.body.ok === true && restore.body.restored === 1, JSON.stringify(restore.body));
+    check('the count is back', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn);
+    const bellaBack = ((await j('/history')).body || []).filter((r) => r.firstName === 'Bella');
+    check('still one Bella row, no longer undone, markers gone',
+      bellaBack.length === 1 && !bellaBack[0].undone && !('undoneBy' in bellaBack[0]) && !('undoneAt' in bellaBack[0]), JSON.stringify(bellaBack));
+    const ledger2 = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
+    check('tonight is back in her ledger', ledger2['bella tester'] && ledger2['bella tester'].dates.includes(todayLocal), JSON.stringify(ledger2['bella tester']));
+    check('a second Add back is a 404', (await post('/phone/restore', { firstName: 'Bella', lastName: 'Tester' })).status === 404);
+
+    // A reconcile-detected undo is TwoTimTwo's truth: not restorable from a phone.
+    feeds._resetForTests();
+    await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('Cody is undone by the report', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn - 1);
+    check('a TwoTimTwo undo cannot be overridden from a phone', (await post('/phone/restore', { firstName: 'Cody', lastName: 'Tester' })).status === 404);
+    feeds._resetForTests();
+    await post('/feed/checkin-report', { ok: true, entries: [
+      { name: 'Amy Tester', club: 'Sparks' }, { name: 'Bella Tester', club: 'Sparks' },
+      { name: 'Cody Tester', club: 'Sparks' }, { name: 'Dana Tester', club: 'Sparks' },
+    ] });
+    check('Cody is back once the report lists him again', (await j('/stats/tonight')).body.checkedIn === stats0.checkedIn);
+
+    // Visitor label straight from the phone.
+    const ckBefore = sealedFrames('checkin').length;
+    const vis = await post('/phone/visitor', { name: 'Vera Visitor', clubName: 'Cubbies' });
+    check('/phone/visitor prints', vis.status === 200 && vis.body && vis.body.success === true && !vis.body.duplicate, JSON.stringify(vis.body));
+    const ck = sealedFrames('checkin');
+    check('it publishes one checkin, sealed (the key is set)', ck.length === ckBefore + 1 && isSealed(ck[ck.length - 1].payload));
+    const t1 = (await post('/phone/tonight', {})).body;
+    const vera = t1.entries.find((e) => e.firstName === 'Vera');
+    check('the visitor is on the list, flagged, in her club', vera && vera.visitor === true && vera.clubName === 'Cubbies', JSON.stringify(vera));
+    check('byClub and visitors reflect her', t1.byClub.Cubbies === 1 && t1.visitors === 1, JSON.stringify(t1));
+    check('a double-tap is a duplicate', (await post('/phone/visitor', { name: 'Vera Visitor', clubName: 'Cubbies' })).body.duplicate === true);
+    const onRoster = await post('/phone/visitor', { name: 'Dana Tester' });
+    check('a roster name is refused with 409 and pointed at Check in', onRoster.status === 409 && /Check in/.test(onRoster.body.error || ''), JSON.stringify(onRoster.body));
+    check('no name is a 400', (await post('/phone/visitor', {})).status === 400);
   }
 
   // ── 12. Reset tonight: the operator's zero button ─────────────────────────

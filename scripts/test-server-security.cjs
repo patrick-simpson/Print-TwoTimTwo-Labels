@@ -104,6 +104,8 @@ async function main() {
     pusherSecret: 'SECRET-MUST-NOT-LEAK',
     pusherKey: 'key-abc',
     pusherAppId: '12345',
+    displayLoginPassphrase: 'PASSPHRASE-MUST-NOT-LEAK',
+    displayLoginSalt: Buffer.alloc(16, 7).toString('base64'),
   }, null, 2));
   // One roster row and one history row so the PII endpoints have something to
   // leak if the gate fails — a test that passes because the file was empty
@@ -116,6 +118,12 @@ async function main() {
     printer: '', success: true, visitor: false, isAward: false, award: '',
     timestamp: new Date().toISOString(),
   }], null, 2));
+
+  // printImage() shells out to `powershell`, absent on a Linux runner — stub it
+  // so the leader-tag happy path below exercises a real 200, not a print error.
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'awana-sec-bin-'));
+  fs.writeFileSync(path.join(binDir, 'powershell'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH}`;
 
   process.env.AWANA_DATA_DIR = dataDir;
   process.env.AWANA_PORT = String(PORT);     // don't collide with a real install on 3456
@@ -141,7 +149,7 @@ async function main() {
     const res = await request({ host: '127.0.0.1', pathname: '/config' });
     const cfg = json(res) || {};
     check('loopback GET /config exposes secrets to the dashboard',
-      cfg.pusherSecret === 'SECRET-MUST-NOT-LEAK' && cfg.phonePin === PIN,
+      cfg.pusherSecret === 'SECRET-MUST-NOT-LEAK' && cfg.phonePin === PIN && cfg.displayLoginPassphrase === 'PASSPHRASE-MUST-NOT-LEAK',
       'the dashboard could not read its own settings');
   }
 
@@ -175,6 +183,30 @@ async function main() {
       });
       check('LAN GET /stats/tonight succeeds with the PIN header', res.status === 200, `status ${res.status}`);
     }
+    // The phone's Tonight tab and its actions: through the gate with the PIN,
+    // then refused by validation with no side effect where the body is empty.
+    {
+      const res = await request({ host: lan, method: 'POST', pathname: '/phone/tonight', body: { pin: PIN } });
+      const body = json(res) || {};
+      check('LAN POST /phone/tonight succeeds with the right PIN', res.status === 200, `status ${res.status}`);
+      check('LAN /phone/tonight lists the checked-in kid (so there IS something to leak)',
+        Array.isArray(body.entries) && body.entries.length === 1 && body.entries[0].lastName === 'Leakcanary',
+        JSON.stringify(body).slice(0, 160));
+      check('LAN /phone/tonight entries carry no allergy or image data',
+        !res.body.includes('peanut') && !res.body.includes('clubImageData'));
+    }
+    {
+      const undo = await request({ host: lan, method: 'POST', pathname: '/phone/undo', body: { pin: PIN } });
+      check('LAN POST /phone/undo with no identity is a 400 (through the gate, refused by validation)', undo.status === 400, `status ${undo.status}`);
+      const restore = await request({ host: lan, method: 'POST', pathname: '/phone/restore', body: { pin: PIN } });
+      check('LAN POST /phone/restore with no identity is a 400', restore.status === 400, `status ${restore.status}`);
+      const visitor = await request({ host: lan, method: 'POST', pathname: '/phone/visitor', body: { pin: PIN } });
+      check('LAN POST /phone/visitor with no name is a 400', visitor.status === 400, `status ${visitor.status}`);
+      const leader = await request({ host: lan, method: 'POST', pathname: '/print-leader', body: { pin: PIN, name: 'Lan Leader', clubName: 'Sparks' } });
+      check('LAN POST /print-leader succeeds with the right PIN', leader.status === 200, `status ${leader.status} ${leader.body.slice(0, 120)}`);
+      const stats = json(await request({ host: '127.0.0.1', pathname: '/stats/tonight' })) || {};
+      check('a leader tag from the LAN moved nothing that counts children', stats.checkedIn === 1, JSON.stringify(stats));
+    }
 
     // Secrets stay on the machine even for an authenticated LAN caller.
     {
@@ -182,6 +214,7 @@ async function main() {
       check('LAN GET /config is allowed with the PIN', res.status === 200, `status ${res.status}`);
       check('LAN GET /config withholds the Pusher secret', !res.body.includes('SECRET-MUST-NOT-LEAK'));
       check('LAN GET /config withholds the PIN itself', !res.body.includes(PIN));
+      check('LAN GET /config withholds the display passphrase', !res.body.includes('PASSPHRASE-MUST-NOT-LEAK'));
     }
     // ...and a LAN caller cannot WRITE them either.
     {
@@ -190,6 +223,13 @@ async function main() {
         headers: { 'X-Awana-Pin': PIN }, body: { pin: PIN, pusherSecret: 'attacker' },
       });
       check('LAN POST /config refuses to set the Pusher secret', res.status === 403, `status ${res.status}`);
+      const pp = await request({
+        host: lan, method: 'POST', pathname: '/config',
+        headers: { 'X-Awana-Pin': PIN }, body: { pin: PIN, displayLoginPassphrase: 'attacker-chosen-passphrase' },
+      });
+      check('LAN POST /config refuses to set the display passphrase', pp.status === 403, `status ${pp.status}`);
+      const mint = await request({ host: lan, method: 'POST', pathname: '/config/display-login/generate', headers: { 'X-Awana-Pin': PIN } });
+      check('LAN cannot mint a display passphrase even with the PIN', mint.status === 403, `status ${mint.status}`);
     }
 
     // ── Refusal sweep ─────────────────────────────────────────────────────────
@@ -216,11 +256,27 @@ async function main() {
       check(`LAN GET ${p} leaks no roster name`, !res.body.includes('Leakcanary'),
         'response contained a child name');
     }
-    {
-      const res = await request({ host: lan, method: 'POST', pathname: '/phone/roster', body: {} });
-      check('LAN POST /phone/roster is refused without a PIN',
+    const PII_POST_PATHS = [
+      ['/phone/roster', {}],
+      ['/phone/tonight', {}],
+      ['/phone/undo', { firstName: 'Testkid', lastName: 'Leakcanary' }],
+      ['/phone/restore', { firstName: 'Testkid', lastName: 'Leakcanary' }],
+      ['/phone/visitor', { name: 'Stranger Danger' }],
+      ['/print-leader', { name: 'Stranger Leader' }],
+    ];
+    for (const [p, body] of PII_POST_PATHS) {
+      const res = await request({ host: lan, method: 'POST', pathname: p, body });
+      check(`LAN POST ${p} is refused without a PIN`,
         res.status === 403 || res.status === 429, `status ${res.status}`);
-      check('LAN POST /phone/roster leaks no roster name', !res.body.includes('Leakcanary'));
+      check(`LAN POST ${p} leaks no roster name`, !res.body.includes('Leakcanary'));
+    }
+    {
+      // None of those refused writes may have touched anything.
+      const stats = json(await request({ host: '127.0.0.1', pathname: '/stats/tonight' })) || {};
+      check('an unauthenticated undo/visitor/leader attempt mutated nothing', stats.checkedIn === 1, JSON.stringify(stats));
+      const hist = json(await request({ host: '127.0.0.1', pathname: '/history' })) || [];
+      check('no history row was added by the refused writes',
+        Array.isArray(hist) && !hist.some((r) => /Stranger/.test(r.firstName || '')), JSON.stringify(hist.map((r) => r.firstName)));
     }
 
     // ── Brute force ───────────────────────────────────────────────────────────
@@ -422,6 +478,7 @@ async function main() {
   }
 
   try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  try { fs.rmSync(binDir, { recursive: true, force: true }); } catch { /* best effort */ }
 
   // ── Static check: the dashboard escapes untrusted values ────────────────────
   // The stored-XSS chain ran through print-history.json into the dashboard's

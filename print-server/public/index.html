@@ -148,6 +148,30 @@
     </div>
   </div>
 
+  <!-- Leader name tag -->
+  <div class="card" id="leader-card">
+    <div class="card-header">
+      <span>Leader Name Tag</span>
+      <span style="font-weight:400;font-size:12px;color:#64748b">never counts toward tonight</span>
+    </div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="leader-name" maxlength="80" placeholder="Leader's name" autocomplete="off" style="flex:2;min-width:160px">
+        <select id="leader-club" style="flex:1;min-width:120px">
+          <option value="">No club</option>
+          <option>Puggles</option>
+          <option>Cubbies</option>
+          <option>Sparks</option>
+          <option>T&amp;T</option>
+          <option>Trek</option>
+          <option>Journey</option>
+        </select>
+        <button type="button" class="btn btn-primary btn-sm" onclick="printLeaderTag()">Print</button>
+      </div>
+      <div id="leader-note" style="font-size:12px;color:#64748b">For adult volunteers: prints the name, a LEADER pill and "&lt;Club&gt; Leader". The phone check-in page has the same button.</div>
+    </div>
+  </div>
+
   <!-- Realtime privacy — top level on purpose. This used to live only inside
        the Settings tab, below Pusher, where you had to already know it existed
        to find it. Whether children's names go out encrypted is a front-page
@@ -385,6 +409,24 @@
               </div>
               <p id="display-key-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
             </div>
+            <div id="display-login-section" style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label style="color:#4caf50">Display login &mdash; one passphrase for every screen</label>
+              <p style="font-size:11px; color:#64748b; margin-bottom:8px">
+                Instead of pasting the display key into each screen, a volunteer types this passphrase once
+                (Display Settings &rarr; Log in). The screen then receives the display key and the slide-publish
+                token automatically, and keeps working when you rotate either. Changing the passphrase logs
+                every screen out. The screen needs the print server running to log in; pasting keys by hand
+                still works under the screen's <em>Advanced</em> section.
+              </p>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                <input type="text" id="settings-display-login" placeholder="none &mdash; screens paste keys by hand" autocomplete="off" style="flex:1 1 240px">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="generateDisplayLogin()">Generate</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="saveDisplayLogin()">Save passphrase</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="copyDisplayLogin()">Copy</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="clearDisplayLogin()">Clear</button>
+              </div>
+              <p id="display-login-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
+            </div>
             <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Check-in Features</label>
               <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:8px">
@@ -572,9 +614,20 @@ function jumpToDisplayKey() {
 
 // http://localhost:3456/#display-key — the deep link the extension points at,
 // so "where is this thing?" is answerable by clicking rather than by explaining.
+function jumpToDisplayLogin() {
+  showTab('settings');
+  var section = document.getElementById('display-login-section');
+  if (!section) return;
+  section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  section.classList.remove('flash');
+  void section.offsetWidth;
+  section.classList.add('flash');
+}
+
 function applyHashRoute() {
   var hash = (location.hash || '').replace('#', '');
   if (hash === 'display-key' || hash === 'privacy') jumpToDisplayKey();
+  else if (hash === 'display-login') jumpToDisplayLogin();
   else if (hash === 'extension') { showTab('diagnostics'); }
   else if (hash) showTab(hash);
 }
@@ -784,11 +837,13 @@ function loadHistory() {
         '<td><strong>' + esc(e.firstName || '') + ' ' + esc(e.lastName || '') + '</strong>' +
           (e.success === false ? ' <span style="color:#dc2626;font-size:10px;font-weight:700">FAILED</span>' : '') +
           (e.isConnectCard ? ' <span style="color:#16a34a;font-size:10px;font-weight:700">CONNECT CARD</span>' : '') +
-          (e.isAward ? ' <span style="color:#b45309;font-size:10px;font-weight:700">AWARD</span>' : '') + '</td>' +
+          (e.isAward ? ' <span style="color:#b45309;font-size:10px;font-weight:700">AWARD</span>' : '') +
+          (e.isLeader ? ' <span style="color:#0369a1;font-size:10px;font-weight:700">LEADER</span>' : '') +
+          (e.undone ? ' <span style="color:#64748b;font-size:10px;font-weight:700">UNDONE' + (e.undoneBy === 'phone' ? ' (PHONE)' : '') + '</span>' : '') + '</td>' +
         '<td>' + esc(e.clubName || '--') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(e.printer || 'default') + '</td>' +
         '<td style="font-size:11px;color:#64748b">' + esc(formatTime(e.timestamp)) + '</td>' +
-        '<td><button class="btn btn-secondary btn-sm" onclick="reprint(' + Number(i) + ')">Reprint</button></td>' +
+        '<td><button class="btn btn-secondary btn-sm" onclick="' + (e.isLeader ? 'reprintLeader' : 'reprint') + '(' + Number(i) + ')">Reprint</button></td>' +
         '</tr>';
     }).join('');
   }).catch(function() {
@@ -810,6 +865,47 @@ function reprint(index) {
     if (r && r.ok) { alert('Reprint sent!'); loadHistory(); }
     else alert('Reprint failed');
   }).catch(function() { alert('Reprint failed'); });
+}
+
+// A leader row reprints as a leader tag (POST /print-leader), never through the
+// kid path — the server's index-based /reprint guards this too, but the
+// dashboard posts by name, and a name lookup excludes non-check-in rows.
+function reprintLeader(index) {
+  if (!confirm('Reprint this leader tag?')) return;
+  fetch(BASE + '/history/today').then(function(r) { return r.json(); }).then(function(entries) {
+    var entry = entries[index];
+    if (!entry) return alert('Entry not found');
+    return fetch(BASE + '/print-leader', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: (entry.firstName + ' ' + entry.lastName).trim(), clubName: entry.clubName || '' })
+    });
+  }).then(function(r) {
+    if (r && r.ok) { alert('Reprint sent!'); loadHistory(); }
+    else alert('Reprint failed');
+  }).catch(function() { alert('Reprint failed'); });
+}
+
+// Leader name tag card: an adult volunteer's tag. Never a check-in — see the
+// server's /print-leader comment for everything it deliberately does not touch.
+function printLeaderTag() {
+  var nameEl = document.getElementById('leader-name');
+  var note = document.getElementById('leader-note');
+  var name = nameEl.value.trim();
+  if (!name) { note.textContent = 'Type the leader\'s name first.'; return; }
+  note.textContent = 'Printing…';
+  fetch(BASE + '/print-leader', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, clubName: document.getElementById('leader-club').value })
+  }).then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b || {} }; }); })
+    .then(function(res) {
+      if (!res.ok) { note.textContent = 'Print failed: ' + (res.body.error || 'see the server log'); return; }
+      note.textContent = res.body.duplicate ? 'Already printed a moment ago.' : 'Printed ' + name + '.';
+      if (!res.body.duplicate) nameEl.value = '';
+      loadHistory();
+    })
+    .catch(function() { note.textContent = 'Print failed — is the server running?'; });
 }
 
 // Preview
@@ -1005,6 +1101,7 @@ function loadSettings() {
     // STATE rather than its value. Showing a fake masked string would invite
     // someone to "copy" it into a screen.
     setDisplayKeyState(config.displayKey || '');
+    setDisplayLoginState(config.displayLoginPassphrase || '');
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
     (config.schedule || []).forEach(addScheduleRow);
@@ -1233,6 +1330,78 @@ function clearDisplayKey() {
   setDisplayKeyState('');
 }
 
+// ── Display login ─────────────────────────────────────────────────────────────
+// The one passphrase a volunteer types on each screen to receive the display key
+// and publish token. Shown in full for the same reason the display key is: this
+// page is loopback-only and someone has to read it aloud across a lobby.
+function setDisplayLoginState(value) {
+  var input = document.getElementById('settings-display-login');
+  var note = document.getElementById('display-login-note');
+  input.value = value || '';
+  if (value) {
+    note.textContent = 'Set. Screens log in with this passphrase (Display Settings → Log in). Keep it with the Wi-Fi password; rotate it — and the display key — if it leaks.';
+    note.style.color = '#16a34a';
+  } else {
+    note.textContent = 'Not set: each screen needs the display key and publish token pasted by hand. Press Generate (or type a 12+ character sentence) and Save passphrase.';
+    note.style.color = '#b45309';
+  }
+}
+
+function postDisplayLogin(value, okNote) {
+  var note = document.getElementById('display-login-note');
+  return fetch(BASE + '/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ displayLoginPassphrase: value }),
+  }).then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b || {} }; }); })
+    .then(function(res) {
+      if (!res.ok) { note.textContent = res.body.error || 'Save failed'; note.style.color = '#dc2626'; return false; }
+      setDisplayLoginState(value);
+      if (okNote) { note.textContent = okNote; note.style.color = '#16a34a'; }
+      loadHealth();
+      return true;
+    })
+    .catch(function() { note.textContent = 'Could not save — is the server running on this computer?'; note.style.color = '#dc2626'; return false; });
+}
+
+function generateDisplayLogin() {
+  var input = document.getElementById('settings-display-login');
+  if (input.value && !confirm('Replace the display passphrase?\n\nEvery screen will be logged out and will ask for the new passphrase (names and slides on those screens stop until someone types it).')) return;
+  fetch(BASE + '/config/display-login/generate', { method: 'POST' })
+    .then(function(r) { if (!r.ok) throw new Error('generate failed'); return r.json(); })
+    .then(function(d) {
+      return postDisplayLogin(d.passphrase, 'Saved. Type it on each screen: Display Settings → Log in. Screens then receive the display key and publish token by themselves.');
+    })
+    .catch(function() {
+      var note = document.getElementById('display-login-note');
+      note.textContent = 'Could not generate a passphrase — is the server running on this computer?'; note.style.color = '#dc2626';
+    });
+}
+
+function saveDisplayLogin() {
+  var value = document.getElementById('settings-display-login').value.trim();
+  if (!value) { clearDisplayLogin(); return; }
+  postDisplayLogin(value, 'Saved. Type it on each screen: Display Settings → Log in.');
+}
+
+function copyDisplayLogin() {
+  var input = document.getElementById('settings-display-login');
+  var note = document.getElementById('display-login-note');
+  if (!input.value) { note.textContent = 'Nothing to copy yet — press Generate first.'; note.style.color = '#b45309'; return; }
+  var done = function() { note.textContent = 'Copied.'; note.style.color = '#16a34a'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).then(done, function() { input.select(); });
+  } else {
+    input.select();
+    try { document.execCommand('copy'); done(); } catch (e) { /* leave it selected */ }
+  }
+}
+
+function clearDisplayLogin() {
+  if (!confirm('Clear the display passphrase?\n\nScreens already logged in keep their keys; no new screen can log in until you set one again.')) return;
+  postDisplayLogin('', 'Cleared — screens paste keys by hand until a passphrase is set.');
+}
+
 function saveSettings() {
   var printerName = document.getElementById('settings-printer').value;
   var checkinUrl = document.getElementById('settings-url').value.trim();
@@ -1264,7 +1433,8 @@ function saveSettings() {
       connectCardGreeting: document.getElementById('settings-connect-greeting').value.trim(),
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
       lanAccess: document.getElementById('settings-lan-access').checked,
-      displayKey: document.getElementById('settings-display-key').value.trim()
+      displayKey: document.getElementById('settings-display-key').value.trim(),
+      displayLoginPassphrase: document.getElementById('settings-display-login').value.trim()
     })
   }).then(function(r) {
     if (!r.ok) throw new Error('config save failed');
@@ -1424,6 +1594,14 @@ function renderNightStatus(h) {
     rows += statusRow(ageH > 24 ? '🟡' : '✅', 'Roster CSV', h.csv.count + ' kids, updated ' + (ageH < 1 ? 'under an hour ago' : Math.round(ageH) + 'h ago'));
   } else {
     rows += statusRow('❌', 'Roster CSV', 'missing');
+  }
+  if (h.displayLogin && h.displayLogin.configured) {
+    rows += statusRow(h.displayLogin.lastPublishedAt ? '🔑' : '🟡', 'Display login',
+      'passphrase set (key ' + (h.displayLogin.kid || '?') + ')'
+      + (h.displayLogin.lastPublishedAt ? ' — login frame published ' + formatTime(h.displayLogin.lastPublishedAt)
+        : ' — no login frame yet (needs the display key and Pusher)'));
+  } else {
+    rows += statusRow('⚪', 'Display login', 'not set — screens paste the display key by hand');
   }
 
   el.innerHTML = rows;

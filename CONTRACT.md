@@ -209,3 +209,35 @@ This is a **transport** layer, strictly outside the contract above:
 
 See the display repo's SECURITY.md for what remains exposed (timing and
 headcount, irreducibly) and for the operator-facing setup and rollback.
+
+### `provision` — display login (device provisioning, NOT a display event)
+
+A second, separate channel carries one more sealed frame so a screen can be
+provisioned by typing a passphrase instead of pasting keys:
+
+- **Channel:** `cache-<channel>-provision` (a Pusher *cache* channel — a new
+  subscriber receives the last published frame immediately, or
+  `pusher:cache_miss`). With the default channel that is
+  `cache-awana-channel-provision`.
+- **Event:** `provision`. Published at startup, on every config save that
+  touches the display key / publish token / passphrase, and every 5 minutes
+  (Pusher's cache keeps a frame ~30 minutes, so the heartbeat is the delivery
+  path). Published **only** when both a passphrase and a display key exist.
+- **Frame:** `{ v: 1, kdf: { name: "PBKDF2-SHA256", iterations, salt },
+  envelope: { v: 1, kid, iv, ct } }`. The envelope is the standard framing
+  above, sealed under `PBKDF2-SHA256(NFKC(trim(passphrase)), salt,
+  iterations, 32 bytes)` with AAD `utf8("1:provision")`, padded on the
+  standard ladder; `kid` is the wrapping key's fingerprint.
+- **Bundle (inside `ct`):** `{ v: 1, displayKey, slidesPublishToken, issuedAt }`
+  — `displayKey` base64 of 32 bytes, `slidesPublishToken` either `""` or
+  24–64 URL-safe characters, `issuedAt` ISO 8601. A display rejects any bundle
+  that fails those shapes and applies nothing; it ignores a bundle whose
+  `issuedAt` is older than the last one it applied (replay).
+- **It is not one of the display-contract events.** It is never routed through
+  the event sanitizers, never rendered, and not in the encrypted-events set
+  (it is sealed under the wrapping key, not the display key). Opening it only
+  ever writes the display key and publish token into their own storage on the
+  device. Displays that predate it never subscribe to the channel.
+- **Fixture:** the `provision` section of `envelope-vectors.json` pins the
+  KDF parameters and a deterministic passphrase → derived key → kid vector plus
+  a sealed frame both implementations must open to the same bundle.

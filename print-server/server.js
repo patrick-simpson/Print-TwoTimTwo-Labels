@@ -77,6 +77,15 @@ if (events.setDisplayKey(config.displayKey)) {
   console.warn('[realtime] No display key set — children\'s first names are published UNENCRYPTED on a public channel. Generate one in the dashboard (Realtime).');
 }
 
+// Display login: one church passphrase provisions every screen with the key
+// above (and the slides publish token) over a Pusher cache channel — see the
+// display-login block in events.js and publishProvision() below.
+if (events.setDisplayLogin(config.displayLoginPassphrase, config.displayLoginSalt)) {
+  console.log(`[login] Display login configured (kid ${events.getDisplayLoginState().kid}) — screens can log in with the passphrase`);
+} else if (config.displayLoginPassphrase) {
+  console.warn('[login] config.displayLoginPassphrase is INVALID (12–128 characters, with its salt) — screens cannot log in until it is fixed');
+}
+
 // Brute-force protection for the phone PIN. Lives at module scope so the
 // failure counts survive across requests but not across restarts — a restart
 // mid-event must never leave a volunteer locked out.
@@ -116,6 +125,9 @@ try {
   console.warn('[church] Failed to load church-config.json — using baked defaults:', e.message);
 }
 const EVENT_CHANNEL = churchConfig.pusherChannel || 'awana-channel';
+// Device provisioning rides a separate CACHE channel so a screen that has just
+// been switched on receives the last frame at once (see publishProvision()).
+const PROVISION_CHANNEL = events.provisionChannelFor(EVENT_CHANNEL);
 
 const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret)
   ? new Pusher({
@@ -1433,7 +1445,7 @@ async function generateLabel(input) {
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
     streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
-    collectibleIndex = null, extras = {},
+    collectibleIndex = null, extras = {}, isLeader = false,
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1465,6 +1477,7 @@ async function generateLabel(input) {
   isBirthday    = !!isBirthday;
   stepUp        = !!stepUp;
   noPhoto       = !!noPhoto;
+  isLeader      = !!isLeader;
   // null / undefined / non-finite → no badge. Negative numbers are coerced
   // to nothing as well so a malformed payload doesn't print "🪙 -3".
   if (awanaShares !== null && awanaShares !== undefined) {
@@ -1802,11 +1815,15 @@ async function generateLabel(input) {
     y += fs4;
   }
 
-  // ── Visitor badge ─────────────────────────────────────────────────────────
-  if (isVisitor && tplOn('showVisitorPill')) {
+  // ── Visitor / leader badge ────────────────────────────────────────────────
+  // Same top-right pill, one string swap. The LEADER pill is the identity of a
+  // leader name tag, not a decoration, so it is not subject to the per-club
+  // template's showVisitorPill switch.
+  const pillText = isLeader ? 'LEADER' : ((isVisitor && tplOn('showVisitorPill')) ? 'VISITOR' : '');
+  if (pillText) {
     const visitorFont = `bold ${fs5}px ${fontFamily}`;
     ctx.font = visitorFont;
-    const vText = 'VISITOR';
+    const vText = pillText;
     const vWidth = ctx.measureText(vText).width;
     const vPad = 4;
     const vX = BX + BW - vPad - vWidth - 8;
@@ -2420,8 +2437,12 @@ function labelTemplateFor(clubName) {
 // A phone on the LAN posts a check-in request; the extension (which has the
 // authenticated TwoTimTwo session) long-polls for pending actions and drives
 // the real check-in in the browser. The label then flows through the normal
-// detection path — the phone page NEVER prints directly, so the existing
-// dedup guarantees a single label. PIN-over-HTTP is LAN-trust only.
+// detection path — for a ROSTER kid the phone page never prints directly, so
+// the existing dedup guarantees a single label. The two exceptions are
+// deliberate and cannot double-print: a visitor label (POST /phone/visitor)
+// is for a child with no TwoTimTwo row, whom roster-diff, reconcile and the
+// last-check-in observer can therefore never see; a leader tag (POST
+// /print-leader) is not a check-in at all. PIN-over-HTTP is LAN-trust only.
 let pendingActions = [];      // { id, name, at, status, detail }
 let pendingWaiters = [];      // long-poll responders
 const PENDING_MAX = 100;
@@ -2744,11 +2765,22 @@ app.post('/label', async (req, res) => {
   }
 });
 
-app.post('/print', async (req, res) => {
+// Splits a free-typed "First Last" into its parts; everything after the first
+// token is the last name (middle names, suffixes and hyphenated pairs stay put).
+function splitFullName(name) {
+  const parts = String(name == null ? '' : name).trim().split(/\s+/).filter(Boolean);
+  return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
+}
+
+// The check-in print, factored out of POST /print so POST /phone/visitor can
+// run the exact same pipeline — dedup window, roster enrichment, season
+// ledger, checkin event, history row, tally — without looping an HTTP request
+// back into this process. Returns { status, body } for the caller to send.
+// Never throws: a jammed printer or a corrupt PNG is a 500 body, not a crash.
+async function performCheckinPrint(input) {
   const {
-    name,
-    firstName: reqFirst,
-    lastName:  reqLast,
+    firstName,
+    lastName,
     clubName      = '',
     clubImageData = null,
     printerName   = '',
@@ -2757,7 +2789,7 @@ app.post('/print', async (req, res) => {
     awanaShares   = null,
     clubberId     = null,
     demo          = false
-  } = req.body || {};
+  } = input || {};
 
   // ── Demo / training mode ────────────────────────────────────────────────────
   // A demo check-in prints a REAL label (so a volunteer sees the actual output)
@@ -2778,18 +2810,6 @@ app.post('/print', async (req, res) => {
 
   const effectivePrinter = (printerName && printerName.trim()) ? printerName.trim() : PRINTER_NAME;
 
-  let firstName, lastName;
-  if (reqFirst !== undefined) {
-    firstName = String(reqFirst || '').trim();
-    lastName  = String(reqLast  || '').trim();
-  } else if (name) {
-    const parts = String(name).trim().split(/\s+/);
-    firstName = parts[0] || '';
-    lastName  = parts.slice(1).join(' ') || '';
-  } else {
-    return res.status(400).json({ error: 'name or firstName is required' });
-  }
-
   // Duplicate check-in retry (client timeout/retry, double-tap, overlapping
   // detection paths) — the label already printed, so just acknowledge it.
   // Keyed on the clubber id when the client knows it: a name-only key means two
@@ -2802,7 +2822,7 @@ app.post('/print', async (req, res) => {
   // child twice in a row is the normal case, not a double-tap to suppress.
   if (!isDemo && isDuplicatePrint(dupKey)) {
     console.log(`[print] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
-    return res.json({ success: true, duplicate: true });
+    return { status: 200, body: { success: true, duplicate: true } };
   }
 
   // Reload CSV on every request so mid-event additions are always picked up.
@@ -2991,7 +3011,7 @@ app.post('/print', async (req, res) => {
       // no tally, no ledger. Deliberately logged so a demo run is obvious when
       // reading the console after a training session.
       console.log(`[demo] Printed a TEST label for '${firstName} ${lastName}' (${effectiveClubName || 'no club'}) — nothing recorded or broadcast`);
-      res.json({ success: true, demo: true });
+      return { status: 200, body: { success: true, demo: true } };
     } else {
       // Event bus: checkin (v2 — id + at for replay dedup), buffered for recap,
       // plus a fresh tally so displays update within seconds of the check-in.
@@ -3010,7 +3030,7 @@ app.post('/print', async (req, res) => {
 
       publishTally();
 
-      res.json({ success: true });
+      return { status: 200, body: { success: true } };
     }
   } catch (err) {
     // Log the error but keep the server alive — the next check-in must still work.
@@ -3026,11 +3046,31 @@ app.post('/print', async (req, res) => {
       });
       recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
     }
-    res.status(500).json({ error: err.message, ...(isDemo ? { demo: true } : {}) });
+    return { status: 500, body: { error: err.message, ...(isDemo ? { demo: true } : {}) } };
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
     if (connectPngPath) fs.unlink(connectPngPath, () => {});
   }
+}
+
+app.post('/print', async (req, res) => {
+  const body = req.body || {};
+  let firstName, lastName;
+  if (body.firstName !== undefined) {
+    firstName = String(body.firstName || '').trim();
+    lastName  = String(body.lastName  || '').trim();
+  } else if (body.name) {
+    ({ firstName, lastName } = splitFullName(body.name));
+  } else {
+    return res.status(400).json({ error: 'name or firstName is required' });
+  }
+  const out = await performCheckinPrint({
+    firstName, lastName,
+    clubName: body.clubName, clubImageData: body.clubImageData, printerName: body.printerName,
+    visitor: body.visitor, stepUpNight: body.stepUpNight, awanaShares: body.awanaShares,
+    clubberId: body.clubberId, demo: body.demo,
+  });
+  res.status(out.status).json(out.body);
 });
 
 // ── Print history ────────────────────────────────────────────────────────────
@@ -3151,6 +3191,11 @@ function reportEntryIdentityKey(entry) {
 //     comes back unchanged) rather than trusted partially — that ratio is far
 //     more consistent with a broken/partial scrape (wrong table, filtered
 //     view, login bounce mid-parse) than with a real mass walkout.
+//   - A row a PERSON undid (`undoneBy`, set by the phone page's Remove) is never
+//     cleared by a reappearance. Remove is local-only by design — the child is
+//     expected to still be on TwoTimTwo's report — so without this the very
+//     next pass would re-count them within a minute of the volunteer's tap.
+//     Rows this function itself marks never carry `undoneBy`.
 function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
   const today = localDayISO(new Date(now));
   const reportKeys = new Set(
@@ -3177,7 +3222,7 @@ function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
     if (!row.undone) checkedInBefore++;
     const inReport = reportKeys.has(historyIdentityKey(row));
     if (!inReport && !row.undone && !row.visitor) toUndo.push(i);
-    else if (inReport && row.undone) toClear.push(i);
+    else if (inReport && row.undone && !row.undoneBy) toClear.push(i);
   });
 
   if (checkedInBefore > 0 && toUndo.length > checkedInBefore / 2) {
@@ -3206,13 +3251,81 @@ function reconcileHistoryWithReport(history, reportEntries, now = Date.now()) {
   return { history: next, changed: toUndo.length + toClear.length, skipped: false, reason: null };
 }
 
-// A history row that is a PRINT but not a CHECK-IN: award slips and connect
-// cards. One predicate, used by every consumer that counts check-ins (tonight's
-// stats, the CSV write-back into TwoTimTwo, undo reconciliation, milestones,
-// name-based reprint lookup) — a missed exclusion at any of those sites means a
-// recognition print double-counts a child, so they must all share this test.
+// Manual undo from the phone page's Tonight tab. Marks EVERY active row for
+// this identity tonight — not just the newest — so an older same-night reprint
+// can never be read as "still here" once the volunteer has said otherwise.
+// Rows carry `undoneBy` so reconcileHistoryWithReport() never clears them:
+// Remove is local by design, the child is very likely still listed on
+// TwoTimTwo's report, and without the marker the next pass would re-count them
+// within 60 s. Pure and copy-on-write, like reconcile; the caller owns
+// load/save, the ledger strip and publishTally().
+function markManualUndo(history, ident, now = Date.now(), by = 'phone') {
+  const today = localDayISO(new Date(now));
+  const nowIso = new Date(now).toISOString();
+  const { firstName, lastName, clubberId } = ident || {};
+  let changed = 0;
+  const next = history.map((row) => {
+    if (!row || row.success === false || isNonCheckinRow(row) || row.undone) return row;
+    if (!isOnLocalDay(row.timestamp, today)) return row;
+    if (!historyRowMatches(row, firstName, lastName, clubberId)) return row;
+    changed++;
+    return { ...row, undone: true, undoneAt: nowIso, undoneBy: by };
+  });
+  return { history: changed ? next : history, changed };
+}
+
+// The reverse, restricted to rows THIS surface undid (`undoneBy === by`): a
+// reconcile-detected undo is TwoTimTwo's truth, and a phone must not be able to
+// override it — that path is "check the kid in again", not "un-undo".
+function clearManualUndo(history, ident, by = 'phone') {
+  const { firstName, lastName, clubberId } = ident || {};
+  let changed = 0;
+  const next = history.map((row) => {
+    if (!row || !row.undone || row.undoneBy !== by) return row;
+    if (!historyRowMatches(row, firstName, lastName, clubberId)) return row;
+    changed++;
+    const { undone, undoneAt, undoneBy, ...rest } = row;
+    return rest;
+  });
+  return { history: changed ? next : history, changed };
+}
+
+// The season-ledger keys a child may be filed under — see recordAttendance():
+// id-first with the legacy lowercased-name key kept for rows that predate ids.
+function ledgerKeysFor(firstName, lastName, clubberId) {
+  const keys = [];
+  const idRaw = clubberId == null ? '' : String(clubberId).trim();
+  if (idRaw) keys.push(`id:${idRaw.toLowerCase()}`);
+  const nameKey = `${firstName || ''} ${lastName || ''}`.toLowerCase().trim();
+  if (nameKey) keys.push(nameKey);
+  return keys;
+}
+
+// Takes one day out of one child's ledger so a removed check-in does not keep a
+// streak or milestone night. Same per-entry shape /reset-tonight applies to
+// every key at once. Returns whether anything changed.
+function stripDayFromLedger(keys, day) {
+  const ledger = loadAttendance();
+  let touched = false;
+  for (const key of keys) {
+    const dates = ledger[key] && Array.isArray(ledger[key].dates) ? ledger[key].dates : null;
+    if (dates && dates.includes(day)) {
+      ledger[key].dates = dates.filter((d) => d !== day);
+      touched = true;
+    }
+  }
+  if (touched) saveAttendance(ledger);
+  return touched;
+}
+
+// A history row that is a PRINT but not a CHECK-IN: award slips, connect cards
+// and leader name tags. One predicate, used by every consumer that counts
+// check-ins (tonight's stats and the tally, the CSV write-back into TwoTimTwo,
+// undo reconciliation, the checkout board's printed count, name-based reprint
+// lookup, the phone roster) — a missed exclusion at any of those sites means a
+// recognition print counts as a child, so they must all share this test.
 function isNonCheckinRow(e) {
-  return !!(e && (e.isAward || e.isConnectCard));
+  return !!(e && (e.isAward || e.isConnectCard || e.isLeader));
 }
 
 function addHistoryEntry(entry) {
@@ -3240,6 +3353,9 @@ function addHistoryEntry(entry) {
     // they show in /history so the operator can see the card went out, but
     // isNonCheckinRow() keeps them out of every place that counts check-ins.
     isConnectCard: !!entry.isConnectCard,
+    // Leader name tags (POST /print-leader): an adult volunteer's tag, never a
+    // child's check-in. Same exclusion everywhere via isNonCheckinRow().
+    isLeader: !!entry.isLeader,
     // TwoTimTwo's own clubber id, when the caller knew it. Everything here was
     // keyed on a lowercased "first last" string, so two children who share a
     // name merged into one row — the same defect the extension already fixed on
@@ -3268,48 +3384,57 @@ app.get('/history/today', (req, res) => {
   res.json(todayEntries);
 });
 
-// ── Tonight at a glance ───────────────────────────────────────────────────────
-// Aggregates today's print history + the roster into the numbers a director
-// needs during the event: kids checked in per club, visitors, and the safety
-// flags for everyone currently in the building (allergies, birthdays,
-// no-photo kids). Each child counts once no matter how many reprints.
-function computeTonightStats() {
-  const history = loadHistory();
-  const today = localDayISO();
-  // Failed prints stay in history for the dashboard but never count a kid in.
-  // Award slips and connect cards are excluded — they're a recognition/welcome
-  // print, not a check-in, and must never inflate tonight's counts.
-  const entries = history.filter(e => isOnLocalDay(e.timestamp, today) && e.success !== false && !isNonCheckinRow(e));
-
-  const byClub = {};
+// ── Who is checked in tonight ─────────────────────────────────────────────────
+// THE single definition. computeTonightStats() (→ the `tally` on every lobby
+// screen and the dashboard's Tonight card), POST /phone/tonight and POST
+// /phone/roster all read this, so the phone's list can never disagree with
+// the number on the wall. Returns:
+//   entries — every successful check-in print today, newest-first (the raw
+//             "labels printed" population; reprints included)
+//   active  — one row per child identity, newest row wins, undone rows dropped
+// Failed prints, award slips, connect cards and leader tags never count a kid
+// in (isNonCheckinRow), so they are out of both lists.
+function tonightCheckins(history = loadHistory(), today = localDayISO()) {
+  const entries = history.filter(e => e && isOnLocalDay(e.timestamp, today) && e.success !== false && !isNonCheckinRow(e));
   const seen = new Set();
+  const active = [];
+  for (const e of entries) {
+    if (!`${e.firstName || ''} ${e.lastName || ''}`.trim()) continue;
+    // Keyed on the clubber id when the row has one, so two children who share a
+    // name count as two. Older rows without an id keep the name key.
+    const key = historyIdentityKey(e);
+    // The FIRST row seen per identity is the newest (history is newest-first) —
+    // the same row R-1 reconciliation and the phone's Remove are allowed to
+    // mark `undone`. Marking `seen` here, BEFORE the undone check, is what stops
+    // an older duplicate row (a same-night reprint, or a stale pre-undo print)
+    // from being read next and reviving a status the newest row has already
+    // settled — "latest record wins", deterministically.
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // `undone` is set by R-1 reconciliation (TwoTimTwo's own report no longer
+    // lists the child) or by a volunteer's Remove on the phone page. Either way
+    // the next `tally` decrements instead of keeping the stale number all night.
+    if (e.undone) continue;
+    active.push(e);
+  }
+  return { date: today, entries, active };
+}
+
+// ── Tonight at a glance ───────────────────────────────────────────────────────
+// Aggregates tonight's active check-ins + the roster into the numbers a
+// director needs during the event: kids checked in per club, visitors, and the
+// safety flags for everyone currently in the building (allergies, birthdays,
+// no-photo kids). Each child counts once no matter how many reprints.
+function computeTonightStats(tonight = tonightCheckins()) {
+  const byClub = {};
   let checkedIn = 0;
   let visitors = 0;
   const allergyKids = [];
   const birthdayKids = [];
   const noPhotoKids = [];
 
-  entries.forEach(e => {
+  tonight.active.forEach(e => {
     const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
-    if (!name) return;
-    // Keyed on the clubber id when the row has one, so two children who share a
-    // name count as two. Older rows without an id keep the name key, which is
-    // the previous behaviour.
-    const key = historyIdentityKey(e);
-    // The FIRST row seen per identity is the newest (history/entries are
-    // newest-first) — the same row R-1 reconciliation is allowed to mark
-    // `undone`. Marking `seen` here, before the undone check, is what stops an
-    // older duplicate row (a same-night reprint, or a stale pre-undo print)
-    // from being read next and reviving/re-hiding a status the newest row has
-    // already settled — "latest record wins", deterministically.
-    if (seen.has(key)) return;
-    seen.add(key);
-    // R-1 reconciliation (POST /feed/checkin-report) marks a row `undone` when
-    // TwoTimTwo's own authoritative check-in report no longer lists the
-    // child — an undo made on the site itself. Excluded from every count
-    // below so the next `tally` broadcast decrements instead of keeping the
-    // stale higher number all night.
-    if (e.undone) return;
     checkedIn++;
     const club = (e.clubName || '').trim() || 'No club';
     byClub[club] = (byClub[club] || 0) + 1;
@@ -3324,8 +3449,8 @@ function computeTonightStats() {
   });
 
   return {
-    date: today,
-    prints: entries.length,
+    date: tonight.date,
+    prints: tonight.entries.length,
     checkedIn,
     visitors,
     byClub,
@@ -3437,6 +3562,36 @@ app.post('/reprint', async (req, res) => {
   }
 
   const effectivePrinter = (req.body.printerName && req.body.printerName.trim()) || entry.printer || PRINTER_NAME;
+
+  // A leader tag reprinted by index must come back out as a leader tag: the
+  // kid path below would render allergy/birthday enrichment for a same-named
+  // child and record an UNFLAGGED row — turning an adult's name tag into a
+  // counted check-in, the exact thing isLeader exists to prevent.
+  if (entry.isLeader) {
+    let leaderPng = null;
+    try {
+      const result = await renderLeaderLabel({ firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName });
+      leaderPng = result.pngPath;
+      playTuneIfEnabled(effectivePrinter);
+      printImage(leaderPng, effectivePrinter);
+      addHistoryEntry({
+        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+        printer: effectivePrinter, success: true, isLeader: true,
+      });
+      console.log(`[reprint] leader tag ${entry.firstName} ${entry.lastName}`);
+      return res.json({ success: true, name: `${entry.firstName} ${entry.lastName}`, leader: true });
+    } catch (err) {
+      console.error('[reprint] Error:', err.message);
+      addHistoryEntry({
+        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+        printer: effectivePrinter, success: false, isLeader: true,
+      });
+      recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
+      return res.status(500).json({ error: err.message });
+    } finally {
+      if (leaderPng) fs.unlink(leaderPng, () => {});
+    }
+  }
 
   let pngPath = null;
   try {
@@ -3594,6 +3749,89 @@ app.post('/print-award', async (req, res) => {
       clubberId,
     });
     recordPrintFailure(`${firstName} ${lastName}`.trim(), effectiveClubName, err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
+// ── Leader name tags ──────────────────────────────────────────────────────────
+// A name tag for an adult volunteer: name, a LEADER pill in the visitor-pill
+// slot, "<Club> Leader" on the greeting line, the club monogram in the icon
+// panel. Same renderer and printer as every other label. Deliberately plain:
+// no allergy/birthday/streak/season art (those are a child's), no inverted
+// palette (black already means step-up, first-timer or award).
+//
+// A leader tag is a PRINT, never a CHECK-IN. It carries `isLeader` on its
+// history row, which isNonCheckinRow() excludes from tonight's stats and the
+// lobby tally, the checkin event and recap buffer, the season ledger, the
+// checkout board's printed count, the TwoTimTwo write-back CSV, R-1 undo
+// reconciliation (and its mass-undo denominator), /reset-tonight and the phone
+// roster. This route never calls recordAttendance, events.publish,
+// pushEventToBuffer or publishTally.
+//
+// Reachable from the phone page (PIN-gated on the LAN like every other route).
+// The phone-never-prints-directly rule exists to keep a KID's label from
+// double-printing through the extension's detection paths; a leader has
+// nothing to drive on TwoTimTwo, so there is nothing to double.
+function renderLeaderLabel({ firstName, lastName, clubName, testBanner = false }) {
+  const club = String(clubName == null ? '' : clubName).trim();
+  return generateLabel({
+    firstName, lastName, clubName: club,
+    isLeader: true,
+    greeting: club ? `${club} Leader` : 'Leader',
+    // The greeting carries the club; the club text line would print it twice.
+    template: { showClubLine: false },
+    testBanner,
+    footerText: labelFooterText(),
+  });
+}
+
+app.post('/print-leader', async (req, res) => {
+  const b = req.body || {};
+  let firstName, lastName;
+  if (b.firstName !== undefined) {
+    firstName = security.sanitizeStoredText(b.firstName || '', 80);
+    lastName  = security.sanitizeStoredText(b.lastName  || '', 80);
+  } else {
+    ({ firstName, lastName } = splitFullName(security.sanitizeStoredText(b.name || '', 160)));
+  }
+  if (!firstName && !lastName) return res.status(400).json({ error: 'name is required' });
+  const clubName = security.sanitizeStoredText(b.clubName || '', 40);
+  if (!isSafePrinterName(b.printerName)) return res.status(400).json({ error: 'invalid printer name' });
+  const effectivePrinter = (b.printerName && String(b.printerName).trim()) || PRINTER_NAME;
+  // Rehearsal/demo: a real label with the TEST band, nothing recorded — same
+  // rule as /print, so a training night leaves no trace in the print log.
+  const isDemo = b.demo === true || b.demo === 'true' || isRehearsalActive();
+
+  // Namespaced so it can never collide with a child's check-in key in the
+  // same recentPrints map; absorbs a phone double-tap.
+  const dupKey = `leader:${firstName} ${lastName}`.toLowerCase().trim();
+  if (!isDemo && isDuplicatePrint(dupKey)) {
+    console.log(`[print-leader] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
+    return res.json({ success: true, duplicate: true });
+  }
+
+  let pngPath = null;
+  try {
+    const result = await renderLeaderLabel({ firstName, lastName, clubName, testBanner: isDemo });
+    pngPath = result.pngPath;
+    playTuneIfEnabled(effectivePrinter);
+    printImage(pngPath, effectivePrinter);
+    if (isDemo) {
+      console.log(`[print-leader] Printed a TEST leader tag for '${firstName} ${lastName}' — nothing recorded`);
+      return res.json({ success: true, demo: true });
+    }
+    recordPrint(dupKey);
+    addHistoryEntry({ firstName, lastName, clubName, printer: effectivePrinter, success: true, isLeader: true });
+    console.log(`[print-leader] ${firstName} ${lastName}${clubName ? ' — ' + clubName : ''}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[print-leader] Error:', err.message);
+    if (!isDemo) {
+      addHistoryEntry({ firstName, lastName, clubName, printer: effectivePrinter, success: false, isLeader: true });
+      recordPrintFailure(`${firstName} ${lastName}`.trim(), clubName, err.message);
+    }
     res.status(500).json({ error: err.message });
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
@@ -4169,10 +4407,49 @@ function onClubNight(fn) {
 // Club-night publish timers are started by startListening() so a bare
 // require() of this module never spins up background work — but embedders
 // (the Electron shell) still get them the moment the server actually starts.
+// Display login (device provisioning): the display key + slides publish
+// token, sealed under the passphrase-derived key, on the cache channel. No-op
+// (nothing published, fail closed) unless Pusher, a passphrase AND a display
+// key are all configured — a bundle carrying an empty key would tell every
+// logged-in screen to drop its key. Pusher keeps the cached frame ~30 min, so
+// the 5-minute heartbeat below is what lets a screen log in at all; every
+// config save republishes too, so a rotated key or token reaches logged-in
+// screens within seconds.
+let lastProvisionAt = null;
+let provisionQuietReason = null;
+async function publishProvision() {
+  const reason = !pusher ? 'no pusher'
+    : !events.getDisplayLoginState().configured ? 'no passphrase'
+      : !events.getDisplayKeyState().configured ? 'no display key' : null;
+  if (reason) {
+    if (provisionQuietReason !== reason) console.log(`[login] Provision frame not published (${reason})`);
+    provisionQuietReason = reason;
+    return false;
+  }
+  const frame = events.buildProvisionFrame({
+    displayKey: config.displayKey,
+    slidesPublishToken: config.slidesPublishToken || '',
+    issuedAt: new Date().toISOString(),
+  });
+  if (!frame) return false;
+  const ok = await events.publish(pusher, PROVISION_CHANNEL, events.PROVISION_EVENT, frame);
+  if (ok) {
+    lastProvisionAt = new Date().toISOString();
+    if (provisionQuietReason !== null) console.log(`[login] Provision frame published on ${PROVISION_CHANNEL} (kid ${events.getDisplayLoginState().kid})`);
+    provisionQuietReason = null;
+  }
+  return ok;
+}
+
 function startClubNightTimers() {
   setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
   setInterval(onClubNight(publishTally), 60 * 1000);
   setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+  // Provision heartbeat: NOT club-night-gated and load-bearing — Pusher's cache
+  // holds the last frame for ~30 minutes, so this is what a screen switched on
+  // at 5 pm on a Saturday logs in against. Startup publish included.
+  setInterval(() => { publishProvision().catch(() => {}); }, 5 * 60 * 1000);
+  publishProvision().catch(() => {});
   // Slides heartbeat is deliberately NOT club-night-gated: this server mostly
   // runs around club time anyway, and while it IS running, a screen that
   // reboots (or a brand-new one) must converge on the current deck within
@@ -4454,6 +4731,13 @@ app.get('/health', async (req, res) => {
   // unencrypted channel is not broken, so it cannot be an error — but it must
   // never be INVISIBLE, or "we set that up" becomes a belief rather than a fact.
   const keyState = events.getDisplayKeyState();
+  const loginState = events.getDisplayLoginState();
+  if (loginState.configured && !keyState.configured) {
+    warnings.push({
+      type: 'displayLoginNeedsKey',
+      message: 'A display passphrase is set but there is no display key, so screens cannot be logged in. Generate the display key (Settings → Realtime privacy) and Save.',
+    });
+  }
   if (pusher && !keyState.configured) {
     warnings.push({
       type: 'displayKeyMissing',
@@ -4558,6 +4842,14 @@ app.get('/health', async (req, res) => {
       slideCount: lobbySlides.slides.length,
       tokenConfigured: Boolean(config.slidesPublishToken),
     },
+    // Display login: whether screens can log in with the passphrase, and the
+    // fingerprint of the wrapping key — never the passphrase, never the key.
+    displayLogin: {
+      configured: loginState.configured,
+      kid: loginState.kid,
+      iterations: loginState.iterations,
+      lastPublishedAt: lastProvisionAt,
+    },
   });
 });
 
@@ -4604,7 +4896,7 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken', 'displayLoginPassphrase'];
 
 // Operator text that ends up printed on a label (labelFooter, the connect-card
 // greeting). Not secrets, but they go onto paper and into config.json, so only
@@ -4638,6 +4930,11 @@ function applySavedConfig(next) {
   // volunteer fixing a name outage mid-event must not have to restart the server
   // that is currently printing labels.
   events.setDisplayKey(config.displayKey);
+  // Same for the display login; and any change to the key, the token or the
+  // passphrase re-provisions every logged-in screen right away (the Electron
+  // shell calls this directly, so the hook lives here, not in the route).
+  events.setDisplayLogin(config.displayLoginPassphrase, config.displayLoginSalt);
+  publishProvision().catch(() => {});
 }
 
 function isTrustedConfigOrigin(req) {
@@ -4691,7 +4988,7 @@ app.post('/config/display-key/generate', (req, res) => {
 // present to POST /api/lobby-slides from its https origin. Same loopback-only
 // mint rule as the display key — a phone on the venue Wi-Fi must not be able
 // to create the credential that writes to every lobby screen.
-const SLIDES_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+const SLIDES_TOKEN_RE = events.SLIDES_TOKEN_RE;
 
 app.post('/config/slides-token/generate', (req, res) => {
   if (!isTrustedConfigOrigin(req)) {
@@ -4702,6 +4999,20 @@ app.post('/config/slides-token/generate', (req, res) => {
   res.json({ token });
 });
 
+// The display login passphrase: what a volunteer types once on each screen.
+// Loopback-only mint like the other two — this is the one string that unlocks
+// the display key. Not saved here; the dashboard saves it via POST /config
+// (save-on-generate, like the slides token: rotating it can never lock a
+// screen out of names it already holds, it only asks screens to log in again).
+app.post('/config/display-login/generate', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The display passphrase can only be generated from the dashboard on this computer' });
+  }
+  const passphrase = events.generateLoginPassphrase();
+  console.log('[login] Generated a new display passphrase (not yet saved)');
+  res.json({ passphrase });
+});
+
 app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
@@ -4709,10 +5020,10 @@ app.post('/config', (req, res) => {
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
-    musicalPrinter, updateBeacon, slidesPublishToken,
+    musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
-    return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
+    return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
   }
   try {
     const next = {};
@@ -4780,6 +5091,26 @@ app.post('/config', (req, res) => {
         });
       } else {
         next.slidesPublishToken = wanted;
+      }
+    }
+    // The display login passphrase (see publishProvision). A NEW salt is
+    // minted only when the passphrase actually changes, so re-saving the
+    // Settings form never silently rotates the wrapping key under every
+    // screen; clearing it removes both and stops the provision frames.
+    if (displayLoginPassphrase !== undefined) {
+      const wanted = events.normalizePassphrase(displayLoginPassphrase);
+      if (wanted === '') {
+        delete next.displayLoginPassphrase;
+        delete next.displayLoginSalt;
+      } else if (!events.isValidLoginPassphrase(wanted)) {
+        return res.status(400).json({
+          error: `Display passphrase must be ${events.LOGIN_PASSPHRASE_MIN}–${events.LOGIN_PASSPHRASE_MAX} characters — use Generate, or type a sentence`,
+        });
+      } else {
+        if (wanted !== next.displayLoginPassphrase || !events.isValidLoginSalt(next.displayLoginSalt)) {
+          next.displayLoginSalt = events.generateLoginSalt();
+        }
+        next.displayLoginPassphrase = wanted;
       }
     }
     // Binding beyond loopback is an explicit choice, not a default. Takes
@@ -4985,21 +5316,126 @@ app.get('/phone', (req, res) => {
 app.post('/phone/roster', (req, res) => {
   // PIN already verified by the auth gate for every non-loopback caller.
   clubbers = loadClubbers();
-  const checkedIn = new Set(
-    loadHistory()
-      // !e.undone: R-1 reconciliation (POST /feed/checkin-report) marks a row
-      // undone when the child is no longer on TwoTimTwo's own authoritative
-      // check-in report — an undo made on the website itself. Without this a
-      // kid who was undone stayed "checkedIn: true" here forever, so a phone
-      // volunteer could never re-check them in.
-      .filter(e => isOnLocalDay(e.timestamp, localDayISO()) && e.success !== false && !e.undone)
-      .map(e => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim())
+  // Same active set the tally counts (tonightCheckins): an undo made on
+  // TwoTimTwo (R-1) or on a phone (Remove) frees the kid for re-check-in here
+  // instead of leaving them "checkedIn: true" all night.
+  const t = tonightCheckins();
+  const nameOf = (e) => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().trim();
+  const checkedIn = new Set(t.active.map(nameOf));
+  // Kids a phone removed tonight (and who have not been checked in again
+  // since) get an "Add back" affordance instead of "Check in": a driven
+  // check-in for a kid still on TwoTimTwo would be short-circuited by the
+  // station as already-checked-in, printing and counting nothing.
+  const removedHere = new Set(
+    t.entries.filter(e => e.undone && e.undoneBy === 'phone').map(nameOf).filter(n => !checkedIn.has(n))
   );
   const kids = clubbers.map(r => {
     const name = `${r.FirstName || ''} ${r.LastName || ''}`.trim();
-    return { name, club: r.Club || '', checkedIn: checkedIn.has(name.toLowerCase()) };
+    const key = name.toLowerCase();
+    return { name, club: r.Club || '', checkedIn: checkedIn.has(key), removedHere: removedHere.has(key) };
   }).filter(k => k.name);
   res.json({ kids });
+});
+
+// The identity a phone request names: `clubberId` when the phone knows it (it
+// does not today — the roster it sees is name-keyed — but the shape is ready),
+// else first + last. Bounded like every other stored string.
+function phoneIdentity(body) {
+  const b = body || {};
+  let firstName = security.sanitizeStoredText(b.firstName || '', 80);
+  let lastName = security.sanitizeStoredText(b.lastName || '', 80);
+  if (!firstName && !lastName && b.name) ({ firstName, lastName } = splitFullName(security.sanitizeStoredText(b.name, 160)));
+  const clubberId = b.clubberId != null && String(b.clubberId).trim()
+    ? security.sanitizeStoredText(String(b.clubberId), 40) : null;
+  return { firstName, lastName, clubberId };
+}
+
+// Exactly who this server is counting tonight — the same deduped active set the
+// lobby-screen tally is built from, so a volunteer can see the number AND the
+// names behind it. Each entry is an explicit whitelist, never the raw row:
+// rows carry `clubImageData` blobs, and nothing about allergies or birthdays
+// belongs on this surface.
+app.post('/phone/tonight', (req, res) => {
+  const t = tonightCheckins();
+  const st = computeTonightStats(t);
+  res.json({
+    date: t.date,
+    checkedIn: st.checkedIn,
+    visitors: st.visitors,
+    byClub: st.byClub,
+    entries: t.active.map(e => ({
+      key: historyIdentityKey(e),
+      firstName: e.firstName || '',
+      lastName: e.lastName || '',
+      clubName: (e.clubName || '').trim(),
+      clubberId: e.clubberId != null ? String(e.clubberId) : null,
+      visitor: !!e.visitor,
+      at: e.timestamp,
+    })),
+  });
+});
+
+// Remove a child from tonight's count. LOCAL ONLY: history rows are marked
+// undone (never deleted — history is the print log), tonight comes out of the
+// child's season ledger, and a fresh tally goes out. Nothing is sent to
+// TwoTimTwo; the phone page says so, and the volunteer undoes there too if
+// the child really left. reconcileHistoryWithReport() respects the `undoneBy`
+// marker, so the kid staying on TwoTimTwo's report cannot re-count them.
+app.post('/phone/undo', (req, res) => {
+  const ident = phoneIdentity(req.body);
+  if (!ident.firstName && !ident.lastName && !ident.clubberId) {
+    return res.status(400).json({ error: 'firstName/lastName or clubberId is required' });
+  }
+  const out = markManualUndo(loadHistory(), ident);
+  if (!out.changed) return res.status(404).json({ error: 'Nobody by that name is checked in tonight' });
+  saveHistory(out.history);
+  stripDayFromLedger(ledgerKeysFor(ident.firstName, ident.lastName, ident.clubberId), localDayISO());
+  publishTally();
+  console.log(`[phone] Removed from tonight: ${ident.firstName} ${ident.lastName}`.trim());
+  const st = computeTonightStats();
+  res.json({ ok: true, undone: out.changed, checkedIn: st.checkedIn, byClub: st.byClub });
+});
+
+// Reverse a phone Remove ("Add back"). Only rows the phone itself undid are
+// eligible — an undo detected from TwoTimTwo's report is TwoTimTwo's truth and
+// stays; the way back from that is a real re-check-in.
+app.post('/phone/restore', (req, res) => {
+  const ident = phoneIdentity(req.body);
+  if (!ident.firstName && !ident.lastName && !ident.clubberId) {
+    return res.status(400).json({ error: 'firstName/lastName or clubberId is required' });
+  }
+  const out = clearManualUndo(loadHistory(), ident);
+  if (!out.changed) return res.status(404).json({ error: 'Nothing to add back — this child was not removed from a phone' });
+  saveHistory(out.history);
+  try { recordAttendance(ident.firstName, ident.lastName, ident.clubberId); } catch { /* ledger trouble never blocks the restore */ }
+  publishTally();
+  console.log(`[phone] Added back to tonight: ${ident.firstName} ${ident.lastName}`.trim());
+  const st = computeTonightStats();
+  res.json({ ok: true, restored: out.changed, checkedIn: st.checkedIn, byClub: st.byClub });
+});
+
+// A first-timer label for someone NOT on the roster, straight from the phone.
+// This is the one place the phone prints a check-in label directly, and it is
+// safe precisely because the child has no TwoTimTwo row: roster-diff,
+// reconcile and the last-check-in observer can never see them, so no second
+// label is possible. A roster name is refused (409) — those go through Check
+// in, so the door laptop records the real check-in; otherwise the same kid
+// would get a name-keyed visitor row AND an id-keyed detection row and count
+// twice. Rehearsal mode still yields a TEST label with nothing recorded, and
+// the 25 s duplicate window inside performCheckinPrint absorbs a double-tap.
+app.post('/phone/visitor', async (req, res) => {
+  const b = req.body || {};
+  const { firstName, lastName } = splitFullName(security.sanitizeStoredText(b.name || '', 160));
+  if (!firstName) return res.status(400).json({ error: 'name is required' });
+  const clubName = security.sanitizeStoredText(b.clubName || '', 40);
+  clubbers = loadClubbers();
+  if (findClubber(firstName, lastName)) {
+    return res.status(409).json({
+      error: `${firstName} ${lastName}`.trim() + ' is on the roster — use Check in instead so the door laptop checks them in.',
+    });
+  }
+  const out = await performCheckinPrint({ firstName, lastName, clubName, visitor: true });
+  res.status(out.status).json(out.body);
 });
 
 app.post('/phone/checkin', (req, res) => {
@@ -5303,6 +5739,9 @@ module.exports = {
   parseAllergies,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
+  // Phone Tonight tab: the shared "who is checked in" set and the manual
+  // undo/restore that must survive reconcile — pure, so they are unit-tested.
+  tonightCheckins, markManualUndo, clearManualUndo, splitFullName,
   shouldSendUpdateBeacon, parseLatestChangeEntry, extensionSkew,
   // Attendance ledger — exported so the id-migration and the auto-connect-card
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
