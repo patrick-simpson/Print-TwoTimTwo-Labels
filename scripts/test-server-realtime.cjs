@@ -211,6 +211,82 @@ async function main() {
       events.getDisplayKeyState().configured === true);
   }
 
+  // ── 2b. Display login: one passphrase provisions every screen ─────────────
+  console.log('realtime: display login publishes a sealed provision frame');
+  let PASSPHRASE;
+  {
+    const provisionFrames = () => wire.filter((w) => w.event === 'provision');
+    let h = await j('/health');
+    check('/health reports no display login yet', h.body.displayLogin && h.body.displayLogin.configured === false, JSON.stringify(h.body.displayLogin));
+    check('nothing was provisioned before a passphrase existed', provisionFrames().length === 0, `saw ${provisionFrames().length}`);
+
+    const gen = await post('/config/display-login/generate');
+    PASSPHRASE = gen.body && gen.body.passphrase;
+    check('generate returns a 4x4 passphrase from the unambiguous alphabet',
+      gen.status === 200 && /^[a-z3-9]{4}(-[a-z3-9]{4}){3}$/.test(PASSPHRASE || ''), JSON.stringify(gen.body));
+    check('generate does not save it', !onDisk().displayLoginPassphrase);
+    check('a too-short passphrase is refused with 400', (await post('/config', { displayLoginPassphrase: 'short' })).status === 400);
+    check('a refused passphrase leaves login unconfigured', events.getDisplayLoginState().configured === false);
+
+    const framesBefore = provisionFrames().length;
+    check('saving the passphrase is accepted', (await post('/config', { displayLoginPassphrase: PASSPHRASE })).status === 200);
+    const disk1 = onDisk();
+    check('the passphrase is persisted', disk1.displayLoginPassphrase === PASSPHRASE);
+    check('a 16-byte salt was minted alongside it',
+      typeof disk1.displayLoginSalt === 'string' && Buffer.from(disk1.displayLoginSalt, 'base64').length === 16, JSON.stringify(disk1.displayLoginSalt));
+    check('and it takes effect immediately, with no restart', events.getDisplayLoginState().configured === true);
+
+    // applySavedConfig republishes; the wire is synchronous through FakePusher.
+    await new Promise((r) => setTimeout(r, 50));
+    const frames = provisionFrames();
+    check('a provision frame went out on the cache channel', frames.length === framesBefore + 1 && frames[frames.length - 1].channel === 'cache-awana-channel-provision',
+      JSON.stringify(frames.map((f) => f.channel)));
+    const frame = frames[frames.length - 1].payload;
+    check('the frame carries exactly kdf + envelope (nothing in the clear)',
+      JSON.stringify(Object.keys(frame).sort()) === JSON.stringify(['envelope', 'kdf', 'v']), JSON.stringify(Object.keys(frame)));
+    check('the kdf block names PBKDF2-SHA256 with the salt on disk',
+      frame.kdf.name === 'PBKDF2-SHA256' && frame.kdf.salt === disk1.displayLoginSalt && frame.kdf.iterations === events.PROVISION_KDF_ITERATIONS, JSON.stringify(frame.kdf));
+    let opened = null;
+    try { opened = events.openProvisionForTest(PASSPHRASE, frame); } catch (e) { opened = { error: e.message }; }
+    check('the passphrase opens it to the display key (and no token yet)',
+      opened && opened.displayKey === KEY && opened.slidesPublishToken === '' && typeof opened.issuedAt === 'string', JSON.stringify(opened));
+    let wrong = null;
+    try { wrong = events.openProvisionForTest('not-the-passphrase-at-all', frame); } catch (e) { wrong = e.message; }
+    check('the wrong passphrase does NOT open it', typeof wrong === 'string' && /kid mismatch/.test(wrong), JSON.stringify(wrong));
+    check('the frame body never contains the display key or passphrase in the clear',
+      !JSON.stringify(frame).includes(KEY) && !JSON.stringify(frame).includes(PASSPHRASE));
+
+    // Re-saving the same passphrase (the Settings form does this) must not rotate the salt.
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
+    check('re-saving the same passphrase keeps the salt byte-identical', onDisk().displayLoginSalt === disk1.displayLoginSalt);
+
+    // A token save re-provisions with the token inside the bundle.
+    const tok = await post('/config/slides-token/generate');
+    const before2 = provisionFrames().length;
+    await post('/config', { slidesPublishToken: tok.body.token });
+    await new Promise((r) => setTimeout(r, 50));
+    const f2 = provisionFrames();
+    let opened2 = null;
+    try { opened2 = events.openProvisionForTest(PASSPHRASE, f2[f2.length - 1].payload); } catch (e) { opened2 = { error: e.message }; }
+    check('saving a publish token republishes a bundle carrying it',
+      f2.length === before2 + 1 && opened2 && opened2.slidesPublishToken === tok.body.token, JSON.stringify(opened2));
+    check('issuedAt is fresh per publish (newer than the first frame)',
+      opened && opened2 && Date.parse(opened2.issuedAt) >= Date.parse(opened.issuedAt));
+
+    h = await j('/health');
+    check('/health reports display login configured with a kid, never the passphrase',
+      h.body.displayLogin.configured === true && /^[0-9a-f]{8}$/.test(h.body.displayLogin.kid) && typeof h.body.displayLogin.lastPublishedAt === 'string'
+        && !JSON.stringify(h.body).includes(PASSPHRASE), JSON.stringify(h.body.displayLogin));
+
+    // A different passphrase rotates the salt.
+    const gen2 = await post('/config/display-login/generate');
+    await post('/config', { displayLoginPassphrase: gen2.body.passphrase });
+    check('a different passphrase mints a new salt', onDisk().displayLoginSalt !== disk1.displayLoginSalt);
+    // ...and put the first one back so later phases can keep using it.
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
+    await post('/config', { slidesPublishToken: '' });
+  }
+
   // ── 3. Names leave this process as ciphertext ──────────────────────────────
   console.log('realtime: names are sealed on the wire');
   {
@@ -280,6 +356,18 @@ async function main() {
     check('AND gone from the live publisher, not just the file',
       events.getDisplayKeyState().configured === false,
       'this is the Object.assign-cannot-delete bug');
+    // Fail closed: with no display key the provision frame must NOT go out (a
+    // bundle with an empty key would make every logged-in screen drop its key).
+    {
+      const before = wire.filter((w) => w.event === 'provision').length;
+      await post('/config', { lateGraceMin: 11 });
+      await new Promise((r) => setTimeout(r, 50));
+      check('with the display key cleared, config saves publish NO provision frame',
+        wire.filter((w) => w.event === 'provision').length === before);
+      const h = await j('/health');
+      check('/health warns that the passphrase is set but there is no key to provision',
+        warningTexts(h.body.warnings).some((w) => /display passphrase is set but there is no display key/i.test(w)), JSON.stringify(h.body.warnings));
+    }
 
     const before = wire.length;
     await post('/print', { firstName: 'Cody', lastName: 'Tester', clubName: 'Sparks' });
@@ -305,6 +393,18 @@ async function main() {
     check('AND the live auth gate no longer holds it',
       (await pinWarning()) === true,
       'the old PIN would still have been accepted until a restart');
+  }
+
+  // ── 5b. Clearing the passphrase clears it live and removes the salt ────────
+  console.log('realtime: clearing the display passphrase');
+  {
+    await post('/config', { displayLoginPassphrase: '' });
+    const d = onDisk();
+    check('the passphrase and its salt are both gone from disk', !d.displayLoginPassphrase && !d.displayLoginSalt, JSON.stringify(d));
+    check('AND the live login state is cleared', events.getDisplayLoginState().configured === false);
+    check('/health reports login unconfigured', (await j('/health')).body.displayLogin.configured === false);
+    // Restore it for the remaining phases (phase 6 restores the key).
+    await post('/config', { displayLoginPassphrase: PASSPHRASE });
   }
 
   // ── 6. Encryption never blocks a label ─────────────────────────────────────

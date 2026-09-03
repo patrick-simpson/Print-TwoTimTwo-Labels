@@ -77,6 +77,15 @@ if (events.setDisplayKey(config.displayKey)) {
   console.warn('[realtime] No display key set — children\'s first names are published UNENCRYPTED on a public channel. Generate one in the dashboard (Realtime).');
 }
 
+// Display login: one church passphrase provisions every screen with the key
+// above (and the slides publish token) over a Pusher cache channel — see the
+// display-login block in events.js and publishProvision() below.
+if (events.setDisplayLogin(config.displayLoginPassphrase, config.displayLoginSalt)) {
+  console.log(`[login] Display login configured (kid ${events.getDisplayLoginState().kid}) — screens can log in with the passphrase`);
+} else if (config.displayLoginPassphrase) {
+  console.warn('[login] config.displayLoginPassphrase is INVALID (12–128 characters, with its salt) — screens cannot log in until it is fixed');
+}
+
 // Brute-force protection for the phone PIN. Lives at module scope so the
 // failure counts survive across requests but not across restarts — a restart
 // mid-event must never leave a volunteer locked out.
@@ -116,6 +125,9 @@ try {
   console.warn('[church] Failed to load church-config.json — using baked defaults:', e.message);
 }
 const EVENT_CHANNEL = churchConfig.pusherChannel || 'awana-channel';
+// Device provisioning rides a separate CACHE channel so a screen that has just
+// been switched on receives the last frame at once (see publishProvision()).
+const PROVISION_CHANNEL = events.provisionChannelFor(EVENT_CHANNEL);
 
 const pusher = (config.pusherAppId && config.pusherKey && config.pusherSecret)
   ? new Pusher({
@@ -4395,10 +4407,49 @@ function onClubNight(fn) {
 // Club-night publish timers are started by startListening() so a bare
 // require() of this module never spins up background work — but embedders
 // (the Electron shell) still get them the moment the server actually starts.
+// Display login (device provisioning): the display key + slides publish
+// token, sealed under the passphrase-derived key, on the cache channel. No-op
+// (nothing published, fail closed) unless Pusher, a passphrase AND a display
+// key are all configured — a bundle carrying an empty key would tell every
+// logged-in screen to drop its key. Pusher keeps the cached frame ~30 min, so
+// the 5-minute heartbeat below is what lets a screen log in at all; every
+// config save republishes too, so a rotated key or token reaches logged-in
+// screens within seconds.
+let lastProvisionAt = null;
+let provisionQuietReason = null;
+async function publishProvision() {
+  const reason = !pusher ? 'no pusher'
+    : !events.getDisplayLoginState().configured ? 'no passphrase'
+      : !events.getDisplayKeyState().configured ? 'no display key' : null;
+  if (reason) {
+    if (provisionQuietReason !== reason) console.log(`[login] Provision frame not published (${reason})`);
+    provisionQuietReason = reason;
+    return false;
+  }
+  const frame = events.buildProvisionFrame({
+    displayKey: config.displayKey,
+    slidesPublishToken: config.slidesPublishToken || '',
+    issuedAt: new Date().toISOString(),
+  });
+  if (!frame) return false;
+  const ok = await events.publish(pusher, PROVISION_CHANNEL, events.PROVISION_EVENT, frame);
+  if (ok) {
+    lastProvisionAt = new Date().toISOString();
+    if (provisionQuietReason !== null) console.log(`[login] Provision frame published on ${PROVISION_CHANNEL} (kid ${events.getDisplayLoginState().kid})`);
+    provisionQuietReason = null;
+  }
+  return ok;
+}
+
 function startClubNightTimers() {
   setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
   setInterval(onClubNight(publishTally), 60 * 1000);
   setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
+  // Provision heartbeat: NOT club-night-gated and load-bearing — Pusher's cache
+  // holds the last frame for ~30 minutes, so this is what a screen switched on
+  // at 5 pm on a Saturday logs in against. Startup publish included.
+  setInterval(() => { publishProvision().catch(() => {}); }, 5 * 60 * 1000);
+  publishProvision().catch(() => {});
   // Slides heartbeat is deliberately NOT club-night-gated: this server mostly
   // runs around club time anyway, and while it IS running, a screen that
   // reboots (or a brand-new one) must converge on the current deck within
@@ -4680,6 +4731,13 @@ app.get('/health', async (req, res) => {
   // unencrypted channel is not broken, so it cannot be an error — but it must
   // never be INVISIBLE, or "we set that up" becomes a belief rather than a fact.
   const keyState = events.getDisplayKeyState();
+  const loginState = events.getDisplayLoginState();
+  if (loginState.configured && !keyState.configured) {
+    warnings.push({
+      type: 'displayLoginNeedsKey',
+      message: 'A display passphrase is set but there is no display key, so screens cannot be logged in. Generate the display key (Settings → Realtime privacy) and Save.',
+    });
+  }
   if (pusher && !keyState.configured) {
     warnings.push({
       type: 'displayKeyMissing',
@@ -4784,6 +4842,14 @@ app.get('/health', async (req, res) => {
       slideCount: lobbySlides.slides.length,
       tokenConfigured: Boolean(config.slidesPublishToken),
     },
+    // Display login: whether screens can log in with the passphrase, and the
+    // fingerprint of the wrapping key — never the passphrase, never the key.
+    displayLogin: {
+      configured: loginState.configured,
+      kid: loginState.kid,
+      iterations: loginState.iterations,
+      lastPublishedAt: lastProvisionAt,
+    },
   });
 });
 
@@ -4830,7 +4896,7 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken', 'displayLoginPassphrase'];
 
 // Operator text that ends up printed on a label (labelFooter, the connect-card
 // greeting). Not secrets, but they go onto paper and into config.json, so only
@@ -4864,6 +4930,11 @@ function applySavedConfig(next) {
   // volunteer fixing a name outage mid-event must not have to restart the server
   // that is currently printing labels.
   events.setDisplayKey(config.displayKey);
+  // Same for the display login; and any change to the key, the token or the
+  // passphrase re-provisions every logged-in screen right away (the Electron
+  // shell calls this directly, so the hook lives here, not in the route).
+  events.setDisplayLogin(config.displayLoginPassphrase, config.displayLoginSalt);
+  publishProvision().catch(() => {});
 }
 
 function isTrustedConfigOrigin(req) {
@@ -4917,7 +4988,7 @@ app.post('/config/display-key/generate', (req, res) => {
 // present to POST /api/lobby-slides from its https origin. Same loopback-only
 // mint rule as the display key — a phone on the venue Wi-Fi must not be able
 // to create the credential that writes to every lobby screen.
-const SLIDES_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+const SLIDES_TOKEN_RE = events.SLIDES_TOKEN_RE;
 
 app.post('/config/slides-token/generate', (req, res) => {
   if (!isTrustedConfigOrigin(req)) {
@@ -4928,6 +4999,20 @@ app.post('/config/slides-token/generate', (req, res) => {
   res.json({ token });
 });
 
+// The display login passphrase: what a volunteer types once on each screen.
+// Loopback-only mint like the other two — this is the one string that unlocks
+// the display key. Not saved here; the dashboard saves it via POST /config
+// (save-on-generate, like the slides token: rotating it can never lock a
+// screen out of names it already holds, it only asks screens to log in again).
+app.post('/config/display-login/generate', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The display passphrase can only be generated from the dashboard on this computer' });
+  }
+  const passphrase = events.generateLoginPassphrase();
+  console.log('[login] Generated a new display passphrase (not yet saved)');
+  res.json({ passphrase });
+});
+
 app.post('/config', (req, res) => {
   const {
     printerName, checkinUrl,
@@ -4935,10 +5020,10 @@ app.post('/config', (req, res) => {
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
-    musicalPrinter, updateBeacon, slidesPublishToken,
+    musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
-    return res.status(403).json({ error: 'Pusher/PIN settings can only be changed from the dashboard or the extension options page' });
+    return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
   }
   try {
     const next = {};
@@ -5006,6 +5091,26 @@ app.post('/config', (req, res) => {
         });
       } else {
         next.slidesPublishToken = wanted;
+      }
+    }
+    // The display login passphrase (see publishProvision). A NEW salt is
+    // minted only when the passphrase actually changes, so re-saving the
+    // Settings form never silently rotates the wrapping key under every
+    // screen; clearing it removes both and stops the provision frames.
+    if (displayLoginPassphrase !== undefined) {
+      const wanted = events.normalizePassphrase(displayLoginPassphrase);
+      if (wanted === '') {
+        delete next.displayLoginPassphrase;
+        delete next.displayLoginSalt;
+      } else if (!events.isValidLoginPassphrase(wanted)) {
+        return res.status(400).json({
+          error: `Display passphrase must be ${events.LOGIN_PASSPHRASE_MIN}–${events.LOGIN_PASSPHRASE_MAX} characters — use Generate, or type a sentence`,
+        });
+      } else {
+        if (wanted !== next.displayLoginPassphrase || !events.isValidLoginSalt(next.displayLoginSalt)) {
+          next.displayLoginSalt = events.generateLoginSalt();
+        }
+        next.displayLoginPassphrase = wanted;
       }
     }
     // Binding beyond loopback is an explicit choice, not a default. Takes

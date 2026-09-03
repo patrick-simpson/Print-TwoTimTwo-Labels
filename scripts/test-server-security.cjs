@@ -104,6 +104,8 @@ async function main() {
     pusherSecret: 'SECRET-MUST-NOT-LEAK',
     pusherKey: 'key-abc',
     pusherAppId: '12345',
+    displayLoginPassphrase: 'PASSPHRASE-MUST-NOT-LEAK',
+    displayLoginSalt: Buffer.alloc(16, 7).toString('base64'),
   }, null, 2));
   // One roster row and one history row so the PII endpoints have something to
   // leak if the gate fails — a test that passes because the file was empty
@@ -147,7 +149,7 @@ async function main() {
     const res = await request({ host: '127.0.0.1', pathname: '/config' });
     const cfg = json(res) || {};
     check('loopback GET /config exposes secrets to the dashboard',
-      cfg.pusherSecret === 'SECRET-MUST-NOT-LEAK' && cfg.phonePin === PIN,
+      cfg.pusherSecret === 'SECRET-MUST-NOT-LEAK' && cfg.phonePin === PIN && cfg.displayLoginPassphrase === 'PASSPHRASE-MUST-NOT-LEAK',
       'the dashboard could not read its own settings');
   }
 
@@ -212,6 +214,7 @@ async function main() {
       check('LAN GET /config is allowed with the PIN', res.status === 200, `status ${res.status}`);
       check('LAN GET /config withholds the Pusher secret', !res.body.includes('SECRET-MUST-NOT-LEAK'));
       check('LAN GET /config withholds the PIN itself', !res.body.includes(PIN));
+      check('LAN GET /config withholds the display passphrase', !res.body.includes('PASSPHRASE-MUST-NOT-LEAK'));
     }
     // ...and a LAN caller cannot WRITE them either.
     {
@@ -220,6 +223,13 @@ async function main() {
         headers: { 'X-Awana-Pin': PIN }, body: { pin: PIN, pusherSecret: 'attacker' },
       });
       check('LAN POST /config refuses to set the Pusher secret', res.status === 403, `status ${res.status}`);
+      const pp = await request({
+        host: lan, method: 'POST', pathname: '/config',
+        headers: { 'X-Awana-Pin': PIN }, body: { pin: PIN, displayLoginPassphrase: 'attacker-chosen-passphrase' },
+      });
+      check('LAN POST /config refuses to set the display passphrase', pp.status === 403, `status ${pp.status}`);
+      const mint = await request({ host: lan, method: 'POST', pathname: '/config/display-login/generate', headers: { 'X-Awana-Pin': PIN } });
+      check('LAN cannot mint a display passphrase even with the PIN', mint.status === 403, `status ${mint.status}`);
     }
 
     // ── Refusal sweep ─────────────────────────────────────────────────────────

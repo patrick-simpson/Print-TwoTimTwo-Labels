@@ -29,6 +29,12 @@ Print this page and tape it near the check-in laptop.
 - **Phone check-in:** volunteers on the club Wi-Fi open
   `http://<this-laptop-ip>:3456/phone`, enter the PIN, tap the kid.
   The check-in and the label happen here automatically.
+- **Count looks wrong?** Phone → *Tonight* tab shows exactly who is
+  being counted. **Remove** fixes the count here (still undo them on
+  TwoTimTwo if they really left); **Add back** reverses a slip.
+- **Leader name tag:** phone → **Leader tag** (top right) or the
+  dashboard's *Leader Name Tag* card — name, club, Print. Never counts
+  as a kid.
 
 ## If printing stops
 

@@ -58,6 +58,14 @@ Details in `EXTENSION.md`.
   → Connection → Display key), *then* **Save Settings**. That order means
   a mistyped paste cannot lock every screen out at once. Without a key the
   names ride a public channel in the clear.
+- **Display login** (Settings tab, under the display key) — the easy way
+  to set up screens: **Generate** a passphrase (it saves immediately),
+  then on each TV/projector/laptop open Display Settings → **Log in** and
+  type it once. The screen receives the display key and the slide-publish
+  token by itself and keeps working when you rotate either. Needs a display
+  key to exist and the print server to be running while the screen logs in.
+  Changing the passphrase logs every screen out. Pasting the key by hand
+  (above) still works under the screen's *Advanced* section.
 - **Check-in Features** — phone PIN, late-arrival grace, visitor label
   style, connect cards, and the driven-check-in kill switch.
 - **Group Schedule** — one row per club (start time, location, room);
@@ -86,9 +94,15 @@ someone who can already sniff the network. Use the church's private
 Wi-Fi, not an open guest network. The Pusher secret and the PIN itself
 are never readable over the network, even with a valid PIN.
 
-The phone page never prints directly; it queues the check-in for the
-main laptop, which does the real TwoTimTwo check-in and prints through
-the normal (deduplicated) path.
+For a roster kid the phone page never prints directly; it queues the
+check-in for the main laptop, which does the real TwoTimTwo check-in and
+prints through the normal (deduplicated) path. Its **Tonight** tab shows
+exactly who this server is counting (the same list the lobby screens
+total), with **Remove** (local only — it does not undo the check-in on
+TwoTimTwo) and **Add back**. Two things do print straight from the
+phone, because neither can double-print: a **visitor label** for someone
+not on the roster, and a **Leader tag** for an adult volunteer (never
+counted as a check-in).
 
 See [SECURITY.md](../SECURITY.md) for the full trust model, what it
 deliberately does not defend against, and the fork checklist.
