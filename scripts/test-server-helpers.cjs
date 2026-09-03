@@ -26,8 +26,8 @@ process.on('exit', (code) => {
 const path = require('path');
 
 const {
-  parseCSV, normalizeHeader, buildFamilyIndex, findClubberIn, parseNoPhoto, noPhotoFor,
-  parseAllergies, buildHouseholdSiblingIndex, siblingsFor, isSafePrinterName,
+  parseCSV, normalizeHeader, findClubberIn, parseNoPhoto, noPhotoFor,
+  parseAllergies, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
@@ -107,10 +107,6 @@ console.log('normalizeHeader — real TwoTimTwo column names');
 {
   check('"Med Release?" → MedRelease', normalizeHeader('Med Release?') === 'MedRelease');
   check('"Photo Release?" → PhotoRelease', normalizeHeader('Photo Release?') === 'PhotoRelease');
-  check('"Parent/Guardian#1" → PrimaryContact', normalizeHeader('Parent/Guardian#1') === 'PrimaryContact');
-  check('"Parent/Guardian#2" → Guardian', normalizeHeader('Parent/Guardian#2') === 'Guardian');
-  check('"Address1" → Address', normalizeHeader('Address1') === 'Address');
-  check('"Primary Phone" → PrimaryPhone', normalizeHeader('Primary Phone') === 'PrimaryPhone');
   check('"Share Balance" → ShareBalance', normalizeHeader('Share Balance') === 'ShareBalance');
   check('"Clubber ID" → ClubberID', normalizeHeader('Clubber ID') === 'ClubberID');
   check('"Leader Notes" → LeaderNotes', normalizeHeader('Leader Notes') === 'LeaderNotes');
@@ -131,9 +127,6 @@ console.log('parseCSV — real export shape');
   check('MedRelease captured from "Med Release?"', amy.MedRelease === 'n');
   check('PhotoRelease captured from "Photo Release?"', amy.PhotoRelease === 'y');
   check('ShareBalance captured', amy.ShareBalance === '12');
-  check('PrimaryPhone captured', amy.PrimaryPhone === '(207) 555-0101');
-  check('PrimaryContact captured from "Parent/Guardian#1"', amy.PrimaryContact === 'Pat Zephyr');
-  check('Address captured from "Address1"', amy.Address === '1 Elm St');
 
   const bom = parseCSV('﻿' + FIXTURE);
   check('UTF-8 BOM stripped', bom.length === 3 && bom[0].FirstName === 'Amy');
@@ -150,73 +143,6 @@ console.log('parseNoPhoto — an explicit "no" in either release column flags');
   check('Ben (med=y, photo=n) → no-photo flag', noPhotoFor(ben) === true);
   check('Cal (both blank) → photos allowed', noPhotoFor(cal) === false);
   check('legacy single-column fallback still works', parseNoPhoto('No') === true);
-}
-
-console.log('buildFamilyIndex — real export grouping');
-{
-  const rows = parseCSV(FIXTURE);
-  const idx = buildFamilyIndex(rows);
-  const amySibs = idx.get('amy zephyr') || [];
-  check('blended family: Amy ↔ Ben grouped by shared phone',
-    amySibs.length === 1 && amySibs[0] === 'Ben Orchard', JSON.stringify(amySibs));
-  check('same last name, different household: Cal NOT grouped with Amy',
-    !(idx.get('cal zephyr') || []).includes('Amy Zephyr'),
-    JSON.stringify(idx.get('cal zephyr')));
-  check('phone format differences normalized ("(207) 555-0101" ≡ "207-555-0101")',
-    (idx.get('ben orchard') || []).includes('Amy Zephyr'));
-}
-
-console.log('buildFamilyIndex — placeholder/shared phones must not over-merge');
-{
-  // Three unrelated families whose rows all carry a sentinel/placeholder phone
-  // (all-zeros, all-fives) plus one real family. The placeholders must NOT
-  // collapse the three unrelated kids into one giant sibling group.
-  const rows = parseCSV([
-    'First Name,Last Name,Primary Phone,Parent/Guardian#1,Address1',
-    'Ivy,Reed,000-000-0000,Reed Parent,10 A St',
-    'Jack,Stone,(000) 000-0000,Stone Parent,20 B St',
-    'Kate,Vale,555-5555,Vale Parent,30 C St',
-    'Lee,West,(207) 555-0142,West Parent,40 D St',
-    'Mia,West,207.555.0142,West Parent,40 D St',
-  ].join('\n'));
-  const idx = buildFamilyIndex(rows);
-  check('all-zero phone rejected → Ivy not grouped with Jack',
-    !(idx.get('ivy reed') || []).includes('Jack Stone'), JSON.stringify(idx.get('ivy reed')));
-  check('repeated-digit phone rejected (Kate has no phantom siblings)',
-    (idx.get('kate vale') || []).length === 0);
-  check('real 10-digit phone still groups the Wests',
-    (idx.get('lee west') || []).includes('Mia West'));
-}
-
-console.log('buildFamilyIndex — contact groups even when address is inconsistent');
-{
-  // No phone at all; two siblings share PrimaryContact but only one row has an
-  // address filled in. Contact-before-address must still group them.
-  const rows = parseCSV([
-    'First Name,Last Name,Parent/Guardian#1,Address1',
-    'Nate,Frost,Frost Parent,55 E St',
-    'Owen,Frost,Frost Parent,',
-  ].join('\n'));
-  const idx = buildFamilyIndex(rows);
-  check('siblings group on PrimaryContact despite one blank address',
-    (idx.get('nate frost') || []).includes('Owen Frost'), JSON.stringify(idx.get('nate frost')));
-}
-
-console.log('buildFamilyIndex — manual/template rosters keep working');
-{
-  const manual = parseCSV([
-    'FirstName,LastName,Allergies,HouseholdID',
-    'Dot,Miller,peanut,H1',
-    'Ed,Stone,,H1',
-    'Flo,Miller,,H2',
-    'Gus,Pine,,',
-    'Hal,Pine,,',
-  ].join('\n'));
-  const idx = buildFamilyIndex(manual);
-  check('HouseholdID grouping wins', (idx.get('dot miller') || []).includes('Ed Stone'));
-  check('different HouseholdID not grouped', !(idx.get('dot miller') || []).includes('Flo Miller'));
-  check('last-name fallback when no household data',
-    (idx.get('gus pine') || []).includes('Hal Pine'));
 }
 
 console.log('findClubberIn — id-first lookup');
@@ -275,40 +201,6 @@ console.log('parseAllergies — negation-aware, biased toward flagging a real al
       ['NUTS', 'DAIRY', 'GLUTEN', 'EGG']));
   check('"eggnog" alone does not falsely flag EGG (word-boundary discipline)',
     arrEq(parseAllergies('loves eggnog at Christmas'), []));
-}
-
-console.log('buildHouseholdSiblingIndex — authoritative household export (GET /household/csv)');
-{
-  const rows = parseCSV([
-    'Household ID,Parent/Guardian#1,Active Clubbers',
-    'H1,Pat Zephyr,"Amy Zephyr, Ben Orchard"',
-    'H2,Robin Zephyr,Cal Zephyr',
-  ].join('\n'));
-  const idx = buildHouseholdSiblingIndex(rows);
-  check('"Active Clubbers" column parsed via HEADER_MAP', rows[0].ActiveClubbers === 'Amy Zephyr, Ben Orchard');
-  check('household groups a blended-family pair by name alone (no shared phone needed)',
-    (idx.get('amy zephyr') || []).includes('Ben Orchard') && (idx.get('ben orchard') || []).includes('Amy Zephyr'));
-  check('single-child household has no sibling entry',
-    !idx.has('cal zephyr') || (idx.get('cal zephyr') || []).length === 0);
-  check('empty/garbage rows are ignored without throwing', arrEq([...buildHouseholdSiblingIndex([{}, { ActiveClubbers: '' }]).keys()], []));
-}
-
-console.log('siblingsFor — authoritative household map wins over CSV heuristics');
-{
-  const csvRows = parseCSV(FIXTURE); // Amy/Ben grouped by shared phone; Cal is a separate household
-  const householdRows = parseCSV([
-    'Household ID,Active Clubbers',
-    'H9,"Amy Zephyr, Cal Zephyr"',
-  ].join('\n'));
-  const hhIndex = buildHouseholdSiblingIndex(householdRows);
-
-  check('household map overrides the CSV phone/address heuristic entirely',
-    arrEq(siblingsFor('Amy Zephyr', hhIndex, csvRows), ['Cal Zephyr']));
-  check('falls back to CSV heuristics for a child with no household entry',
-    (siblingsFor('Ben Orchard', hhIndex, csvRows) || []).includes('Amy Zephyr'));
-  check('falls back to CSV heuristics entirely when no household map loaded',
-    (siblingsFor('Ben Orchard', new Map(), csvRows) || []).includes('Amy Zephyr'));
-  check('unknown child → empty array, never throws', arrEq(siblingsFor('Nobody Here', hhIndex, csvRows), []));
 }
 
 console.log('feeds.submitFeed — validation, 5s throttle, and /health freshness snapshot');

@@ -41,9 +41,9 @@ Be clear-eyed about the limits:
 - **Loopback is trusted wholesale.** Any program running as the volunteer on
   that laptop can read the roster. The threat model is a shared church laptop,
   not a compromised one.
-- **The data at rest is not encrypted.** `clubbers.csv`, `households.csv` and
-  `print-history.json` are plain files in the data directory, protected only by
-  the OS account. Keep the check-in laptop locked and its disk encrypted.
+- **The data at rest is not encrypted.** `clubbers.csv` and `print-history.json`
+  are plain files in the data directory, protected only by the OS account. Keep
+  the check-in laptop locked and its disk encrypted.
 
 ## Data retention
 
@@ -61,10 +61,11 @@ run. The roster CSVs are overwritten by each sync and are never versioned.
 - **Legacy script install**: `print-server/` itself — i.e. **inside the git
   working tree**.
 
-That second case is why `.gitignore` covers `config.json`, `households.csv`,
-`print-history.json`, `attendance.json` and `events-buffer.json` as well as
-`clubbers*.csv`. `config.json` holds the **Pusher app secret and the phone
-PIN**; the CSVs hold children's and guardians' personal data.
+That second case is why `.gitignore` covers `config.json`, `print-history.json`,
+`attendance.json` and `events-buffer.json` as well as `clubbers*.csv` (and
+`households*.csv`, kept ignored for any legacy install that still has one on
+disk). `config.json` holds the **Pusher app secret and the phone PIN**; the
+CSVs hold children's and guardians' personal data.
 
 > **If you have ever run the legacy script install from a clone of this repo,
 > check `git status` before committing anything.** Prior to v5.3.0 only

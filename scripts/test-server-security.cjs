@@ -202,7 +202,6 @@ async function main() {
       '/history',
       '/history/today',
       '/checkin-csv-export',
-      '/siblings?name=Testkid%20Leakcanary',
       '/roster-status',
       '/failures',
       '/diagnostics',

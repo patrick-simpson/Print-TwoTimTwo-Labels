@@ -52,8 +52,8 @@ const CATALOG: Group[] = [
     caps: [
       { name: 'Full roster CSV export', use: 'used', where: '/clubber/csv',
         body: 'The 66-column export we enrich labels from (name, club, grade, group, birthdate, notes/allergies, med & photo release, share balance, guardians, phones). Synced to the local print server every load.' },
-      { name: 'Household database', use: 'used', where: '/household/csv',
-        body: 'All households with a comma-separated list of each household’s children — the authoritative sibling map, since the clubber CSV carries no household id. Synced every 30 minutes and now the primary source for “Also here tonight?” (R-3), with the old phone/address heuristics kept only as a fallback.' },
+      { name: 'Household database', use: 'unused', where: '/household/csv',
+        body: 'All households with a comma-separated list of each household’s children. Powered the "Also here tonight?" sibling-suggestion feature (R-3) until that feature was retired; no longer synced.' },
       { name: 'Clubber quick-search API', use: 'unused', where: '/clubber/ajaxSearch',
         body: 'A name-substring lookup returning matching kids with links carrying their ids. Doubles as a cheap session-health probe ("Login Required" when logged out).' },
       { name: 'Custom-view CSV exports', use: 'unused', where: '/clubber/admin?cview=…&print=csv',

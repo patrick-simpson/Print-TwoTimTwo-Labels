@@ -221,18 +221,7 @@ whitespace-collapsed, trailing `?!.:` stripped):
 | `Med Release?` | `MedRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
 | `Photo Release?` | `PhotoRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
 | `Share Balance` | `ShareBalance` | Store-Night shares badge (also see §5) |
-| `Parent/Guardian#1` | `PrimaryContact` | family grouping |
-| `Parent/Guardian#2` | `Guardian` | family grouping |
-| `Address1` | `Address` | family grouping |
-| `Primary Phone` | `PrimaryPhone` | **primary family-grouping key** (no HouseholdID exists) |
 | `Leader Notes` | `LeaderNotes` | (reserved) |
-
-> **There is no `Household ID` / `Family ID` column.** Sibling detection groups
-> by normalized `Primary Phone`, then guardian+address, then a type-prefixed
-> fallback chain, then last name. The authoritative alternative is the household
-> CSV (§4). Keep `HEADER_MAP` and the fixture in `test-server-helpers.cjs` in
-> sync — if TwoTimTwo renames a column, the test fails instead of labels going
-> basic on a Wednesday night.
 
 ### 3.2 Quoting rules the parser must survive
 - UTF-8 BOM sometimes present (stripped before parse).
@@ -245,11 +234,12 @@ whitespace-collapsed, trailing `?!.:` stripped):
 - `GET /clubber/prevyearcsv?year=YYYY|all&exclude_if_this_year=Y` — same 66 cols
   + a `Year` column. (Prior-year returners.)
 - `GET /household/csv` — 38 cols, **all** households (not just active); the
-  `Active Clubbers` column is a comma-separated `"First Last"` list = the
-  authoritative household→children map. Header: Household ID, Parent/Guardian#1,
+  `Active Clubbers` column is a comma-separated `"First Last"` list — a
+  household→children map. Header: Household ID, Parent/Guardian#1,
   Parent/Guardian#2, Address1/2, City, State, Zip, (alt addr), Primary Phone(+
   Type + SMS), … Emergency Contact, Others Pickup, Church, Email, Alt Email,
-  Active Clubbers, Billing Notes.
+  Active Clubbers, Billing Notes. (Available but unused — this fed the now-
+  retired "Also here tonight?" sibling-suggestion feature.)
 - `GET /clubber/admin?cview={id}&print=csv` — a **saved custom view** exported as
   CSV (columns per view: e.g. `cview=14` Birthdays = Birthday, First, Last, Club,
   Med?, Grade). A curated, narrower export than the 66-column dump.
@@ -323,7 +313,7 @@ Awards / meeting flow (HTML, mutating POSTs **not** used by this project):
 - Reads `.clubber` / `.name` / `.club img` / `recid` / `club_id` (roster diff,
   labels, identity).
 - Watches `#lastCheckin` (local check-in detection).
-- Clicks `.clubber` + `#checkin` (driven check-in for siblings / phone / quick mode).
+- Clicks `.clubber` + `#checkin` (driven check-in for phone / quick mode).
 - `GET /clubber/csv` → POSTs to the local print server `/update-csv`.
 - `GET /report/shekelBalance?club_id=N&output=csv` (Store Night).
 - Scans page text for "step up" / "store" (night-mode auto-detect).
