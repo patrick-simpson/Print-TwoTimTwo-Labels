@@ -60,12 +60,15 @@ Details in `EXTENSION.md`.
   names ride a public channel in the clear.
 - **Display login** (Settings tab, under the display key) — the easy way
   to set up screens: **Generate** a passphrase (it saves immediately),
-  then on each TV/projector/laptop open Display Settings → **Log in** and
-  type it once. The screen receives the display key and the slide-publish
-  token by itself and keeps working when you rotate either. Needs a display
-  key to exist and the print server to be running while the screen logs in.
-  Changing the passphrase logs every screen out. Pasting the key by hand
-  (above) still works under the screen's *Advanced* section.
+  then type it once on each screen — lobby TV: Settings → Connection →
+  **Display login**; projector page: Display Settings → **Log in**. The
+  screen receives the display key and the slide-publish token by itself and
+  keeps working when you rotate either. Needs a display key to exist and the
+  print server to be running while the screen logs in. Changing the
+  passphrase does **not** log screens out — each keeps the keys it holds,
+  shows "log in again" in its settings, and needs the new passphrase before
+  it can follow the next key rotation. Pasting the key by hand (above) still
+  works under the screen's *Advanced* section.
 - **Check-in Features** — phone PIN, late-arrival grace, visitor label
   style, connect cards, and the driven-check-in kill switch.
 - **Group Schedule** — one row per club (start time, location, room);
