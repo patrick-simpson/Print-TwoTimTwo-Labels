@@ -412,11 +412,14 @@
             <div id="display-login-section" style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Display login &mdash; one passphrase for every screen</label>
               <p style="font-size:11px; color:#64748b; margin-bottom:8px">
-                Instead of pasting the display key into each screen, a volunteer types this passphrase once
-                (Display Settings &rarr; Log in). The screen then receives the display key and the slide-publish
-                token automatically, and keeps working when you rotate either. Changing the passphrase logs
-                every screen out. The screen needs the print server running to log in; pasting keys by hand
-                still works under the screen's <em>Advanced</em> section.
+                Instead of pasting the display key into each screen, a volunteer types this passphrase once on
+                each screen &mdash; lobby TV: Settings &rarr; Connection &rarr; <em>Display login</em>; projector
+                page: Display Settings &rarr; <em>Log in</em>. The screen then receives the display key and the
+                slide-publish token automatically, and keeps working when you rotate either. Changing the
+                passphrase does <strong>not</strong> log screens out: each keeps working with the keys it already
+                holds, shows &ldquo;log in again&rdquo; in its settings, and needs the new passphrase before it can
+                follow the <em>next</em> key rotation. The screen needs the print server running to log in;
+                pasting keys by hand still works under the screen&rsquo;s <em>Advanced</em> section.
               </p>
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
                 <input type="text" id="settings-display-login" placeholder="none &mdash; screens paste keys by hand" autocomplete="off" style="flex:1 1 240px">
@@ -1339,7 +1342,7 @@ function setDisplayLoginState(value) {
   var note = document.getElementById('display-login-note');
   input.value = value || '';
   if (value) {
-    note.textContent = 'Set. Screens log in with this passphrase (Display Settings → Log in). Keep it with the Wi-Fi password; rotate it — and the display key — if it leaks.';
+    note.textContent = 'Set. Screens log in with this passphrase — lobby TV: Settings → Connection → Display login; projector: Display Settings → Log in. Keep it with the Wi-Fi password; rotate it — and the display key — if it leaks.';
     note.style.color = '#16a34a';
   } else {
     note.textContent = 'Not set: each screen needs the display key and publish token pasted by hand. Press Generate (or type a 12+ character sentence) and Save passphrase.';
@@ -1366,11 +1369,11 @@ function postDisplayLogin(value, okNote) {
 
 function generateDisplayLogin() {
   var input = document.getElementById('settings-display-login');
-  if (input.value && !confirm('Replace the display passphrase?\n\nEvery screen will be logged out and will ask for the new passphrase (names and slides on those screens stop until someone types it).')) return;
+  if (input.value && !confirm('Replace the display passphrase?\n\nScreens already logged in keep working with the keys they hold. Each one shows "log in again" in its settings and needs the new passphrase before it can follow the next key rotation.')) return;
   fetch(BASE + '/config/display-login/generate', { method: 'POST' })
     .then(function(r) { if (!r.ok) throw new Error('generate failed'); return r.json(); })
     .then(function(d) {
-      return postDisplayLogin(d.passphrase, 'Saved. Type it on each screen: Display Settings → Log in. Screens then receive the display key and publish token by themselves.');
+      return postDisplayLogin(d.passphrase, 'Saved. Type it on each screen — lobby TV: Settings → Connection → Display login; projector: Display Settings → Log in. Screens then receive the display key and publish token by themselves.');
     })
     .catch(function() {
       var note = document.getElementById('display-login-note');
@@ -1381,7 +1384,7 @@ function generateDisplayLogin() {
 function saveDisplayLogin() {
   var value = document.getElementById('settings-display-login').value.trim();
   if (!value) { clearDisplayLogin(); return; }
-  postDisplayLogin(value, 'Saved. Type it on each screen: Display Settings → Log in.');
+  postDisplayLogin(value, 'Saved. Type it on each screen — lobby TV: Settings → Connection → Display login; projector: Display Settings → Log in.');
 }
 
 function copyDisplayLogin() {
