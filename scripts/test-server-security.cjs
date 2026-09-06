@@ -206,6 +206,20 @@ async function main() {
       check('LAN POST /print-leader succeeds with the right PIN', leader.status === 200, `status ${leader.status} ${leader.body.slice(0, 120)}`);
       const stats = json(await request({ host: '127.0.0.1', pathname: '/stats/tonight' })) || {};
       check('a leader tag from the LAN moved nothing that counts children', stats.checkedIn === 1, JSON.stringify(stats));
+
+      // The remembered-leader chips and the club list, both reachable with the
+      // PIN. The chips carry volunteers' names, so they are gated like the
+      // roster; the club list is not personal data but rides the same gate.
+      const clubs = await request({ host: lan, method: 'POST', pathname: '/clubs', body: { pin: PIN } });
+      check('LAN POST /clubs succeeds with the right PIN', clubs.status === 200, `status ${clubs.status}`);
+      check('LAN /clubs offers Journey', /Journey/.test(clubs.body), clubs.body.slice(0, 120));
+      const leaders = await request({ host: lan, method: 'POST', pathname: '/leaders', body: { pin: PIN } });
+      check('LAN POST /leaders succeeds with the right PIN', leaders.status === 200, `status ${leaders.status}`);
+      check('LAN /leaders remembers the leader just printed', /Lan Leader|Lan/.test(leaders.body),
+        leaders.body.slice(0, 160));
+      const forgetBad = await request({ host: lan, method: 'POST', pathname: '/leaders/forget', body: { pin: PIN } });
+      check('LAN POST /leaders/forget with no key is a 400 (through the gate, refused by validation)',
+        forgetBad.status === 400, `status ${forgetBad.status}`);
     }
 
     // Secrets stay on the machine even for an authenticated LAN caller.
@@ -263,6 +277,11 @@ async function main() {
       ['/phone/restore', { firstName: 'Testkid', lastName: 'Leakcanary' }],
       ['/phone/visitor', { name: 'Stranger Danger' }],
       ['/print-leader', { name: 'Stranger Leader' }],
+      // Volunteers' names are personal data too: the chips are gated like the
+      // roster, and forgetting is a write no unauthenticated caller may make.
+      ['/leaders', {}],
+      ['/leaders/forget', { key: 'lan leader' }],
+      ['/clubs', {}],
     ];
     for (const [p, body] of PII_POST_PATHS) {
       const res = await request({ host: lan, method: 'POST', pathname: p, body });
@@ -277,6 +296,10 @@ async function main() {
       const hist = json(await request({ host: '127.0.0.1', pathname: '/history' })) || [];
       check('no history row was added by the refused writes',
         Array.isArray(hist) && !hist.some((r) => /Stranger/.test(r.firstName || '')), JSON.stringify(hist.map((r) => r.firstName)));
+      const kept = json(await request({ host: '127.0.0.1', pathname: '/leaders' })) || {};
+      check('the refused forget did not remove a remembered leader',
+        Array.isArray(kept.leaders) && kept.leaders.some((l) => /Lan/.test(l.firstName || '')),
+        JSON.stringify(kept.leaders));
     }
 
     // ── Brute force ───────────────────────────────────────────────────────────

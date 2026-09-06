@@ -32,9 +32,16 @@ Print this page and tape it near the check-in laptop.
 - **Count looks wrong?** Phone → *Tonight* tab shows exactly who is
   being counted. **Remove** fixes the count here (still undo them on
   TwoTimTwo if they really left); **Add back** reverses a slip.
-- **Leader name tag:** phone → **Leader tag** (top right) or the
-  dashboard's *Leader Name Tag* card — name, club, Print. Never counts
-  as a kid.
+- **Leader name tag:** three places, all the same list — the check-in
+  widget's *Walk-in Guest* row with the **Leader** box ticked (the row
+  turns amber and the button reads *Print Leader Tag*), phone →
+  **Leader tag** (top right), or the dashboard's *Leader Name Tag*
+  card. Never counts as a kid.
+- **Leaders you printed before** come back as chips on all three: tap
+  **Print** on one, or tick several and press **Print selected** to tag
+  a whole team without typing. The **×** forgets a leader (a name typed
+  wrong, or someone who has moved on); anyone not printed for a season
+  hides itself, and printing them again brings the chip back.
 
 ## If printing stops
 

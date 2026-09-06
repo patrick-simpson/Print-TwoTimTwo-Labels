@@ -55,6 +55,9 @@ print-history.json
 print-history.json.tmp
 attendance.json
 events-buffer.json
+# Remembered leader names (adult volunteers) — see the leaders store in server.js
+leaders.json
+leaders.json.tmp
 
 # Generated label images / temp print artifacts
 label-*.png
