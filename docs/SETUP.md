@@ -107,6 +107,17 @@ phone, because neither can double-print: a **visitor label** for someone
 not on the roster, and a **Leader tag** for an adult volunteer (never
 counted as a check-in).
 
+Every leader whose tag has printed is remembered on this server
+(`leaders.json` in the data folder — names only, no contact details) and
+offered back as a one-tap chip on the phone page, the dashboard and the
+check-in widget, so nobody types the same volunteer's name twice. Tick
+several and **Print selected** tags a whole team. The **×** on a chip
+forgets that leader; anyone not printed for a season hides itself
+without being forgotten. Every club dropdown on all three surfaces is
+served by the server (`GET /clubs`), so a club can never be missing from
+one of them — which is exactly how the widget's walk-in dropdown ended
+up as the only one without Journey.
+
 See [SECURITY.md](../SECURITY.md) for the full trust model, what it
 deliberately does not defend against, and the fork checklist.
 

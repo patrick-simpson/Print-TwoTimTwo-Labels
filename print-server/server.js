@@ -1232,6 +1232,26 @@ const CLUB_MONOGRAM = {
   journey: 'J',
 };
 
+// ── The one club list every dropdown reads ────────────────────────────────────
+// Display names for the clubs above, in club order, served by GET /clubs and
+// consumed by the extension panel, the dashboard and the phone page.
+//
+// There used to be five hardcoded copies of this list across those three
+// surfaces, and they drifted: the extension's walk-in guest dropdown was the
+// one that never got Journey, so a Journey walk-in could only be printed with
+// the wrong club or none. Keys are clubKey() values, so anything the label
+// renderer can style (monogram + font) is offerable and nothing else is —
+// test-server-helpers.cjs asserts these two tables stay in step.
+const CLUB_DISPLAY_NAMES = {
+  puggle:  'Puggles',
+  cubbie:  'Cubbies',
+  spark:   'Sparks',
+  't&t':   'T&T',
+  trek:    'Trek',
+  journey: 'Journey',
+};
+const CLUB_LIST = Object.keys(CLUB_MONOGRAM).map((k) => CLUB_DISPLAY_NAMES[k]);
+
 // ── Club-specific font selection ──────────────────────────────────────────────
 // Each Awana club gets a distinct font personality on the label.
 // Fonts are standard Windows system fonts available on the target machine.
@@ -3787,8 +3807,155 @@ function renderLeaderLabel({ firstName, lastName, clubName, testBanner = false }
   });
 }
 
-app.post('/print-leader', async (req, res) => {
-  const b = req.body || {};
+// ── Remembered leaders ───────────────────────────────────────────────────────
+// The same adults volunteer week after week, so the second time a leader needs
+// a tag nobody should have to type their name again. Every successful leader
+// print upserts the name here, and the three print surfaces show the remembered
+// ones as one-tap chips.
+//
+// Its OWN file, deliberately not derived from print-history.json: history is
+// capped at MAX_HISTORY rows and pruned at historyRetentionDays, so on a busy
+// night a leader printed three weeks ago would silently fall out of the chips.
+// This file holds one small row per leader and never ages out on its own.
+//
+// This is adult volunteers' names — the same category of data the dashboard
+// already shows, and never a child's — but it is still personal data on disk,
+// so it is capped, prunable from the UI, and nothing else is stored: no
+// contact details, no birthdate, no attendance.
+const LEADERS_FILE = path.join(DATA_DIR, 'leaders.json');
+const LEADERS_MAX = 80;
+// An Awana club year runs roughly September–May. A leader who has not needed a
+// tag in that long has missed a whole season, so their chip stops taking up
+// room — the row is KEPT, so printing them again brings the chip straight back
+// (that is the difference between hiding and the × on the chip, which forgets).
+const LEADER_ACTIVE_DAYS = 270;
+
+const leaderKey = (firstName, lastName) => `${firstName || ''} ${lastName || ''}`.toLowerCase().replace(/\s+/g, ' ').trim();
+
+function loadLeaders() {
+  try {
+    if (!fs.existsSync(LEADERS_FILE)) return [];
+    const raw = JSON.parse(fs.readFileSync(LEADERS_FILE, 'utf8'));
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const clean = [];
+    for (const row of raw) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+      const firstName = security.sanitizeStoredText(row.firstName || '', 80);
+      const lastName = security.sanitizeStoredText(row.lastName || '', 80);
+      const key = leaderKey(firstName, lastName);
+      if (!key || seen.has(key)) continue;      // a corrupt or duplicated row is dropped, not merged
+      seen.add(key);
+      const at = Number(row.lastPrintedAt);
+      clean.push({
+        key,
+        firstName,
+        lastName,
+        clubName: security.sanitizeStoredText(row.clubName || '', 40),
+        lastPrintedAt: Number.isFinite(at) ? at : 0,
+        printCount: Number.isFinite(Number(row.printCount)) ? Math.max(1, Math.round(Number(row.printCount))) : 1,
+      });
+    }
+    return clean;
+  } catch (e) {
+    console.warn('[leaders] Failed to load remembered leaders:', e.message);
+    return [];
+  }
+}
+
+function saveLeaders(list) {
+  try {
+    const tmpPath = LEADERS_FILE + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(list, null, 2), 'utf8');
+    fs.renameSync(tmpPath, LEADERS_FILE);
+  } catch (e) {
+    console.warn('[leaders] Failed to save remembered leaders:', e.message);
+  }
+}
+
+/**
+ * Upsert one leader after a successful print. Newest first, capped — the cap
+ * drops the least recently printed, which is the one least likely to be needed.
+ * A leader who moves between clubs keeps one row: the club follows the most
+ * recent print rather than forking into two chips for the same person.
+ * Pure but for the file write, so the ordering/cap/merge rules are unit-tested.
+ */
+function rememberLeader({ firstName, lastName, clubName }, now = Date.now(), list = loadLeaders()) {
+  const key = leaderKey(firstName, lastName);
+  if (!key) return list;
+  const existing = list.find((l) => l.key === key);
+  const next = list.filter((l) => l.key !== key);
+  next.unshift({
+    key,
+    firstName: firstName || '',
+    lastName: lastName || '',
+    // An explicit club wins; a blank one keeps whatever we knew before, so a
+    // quick no-club print does not erase a leader's club.
+    clubName: clubName || (existing ? existing.clubName : ''),
+    lastPrintedAt: now,
+    printCount: existing ? existing.printCount + 1 : 1,
+  });
+  next.sort((a, b) => b.lastPrintedAt - a.lastPrintedAt);
+  const capped = next.slice(0, LEADERS_MAX);
+  saveLeaders(capped);
+  return capped;
+}
+
+/** The × on a chip: forget this leader outright. */
+function forgetLeader(key, list = loadLeaders()) {
+  const want = String(key || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const next = list.filter((l) => l.key !== want);
+  const removed = next.length !== list.length;
+  if (removed) saveLeaders(next);
+  return { removed, leaders: next };
+}
+
+/** Chips worth showing: printed within a season, newest first. */
+function activeLeaders(list = loadLeaders(), now = Date.now()) {
+  const cutoff = now - LEADER_ACTIVE_DAYS * 24 * 60 * 60 * 1000;
+  return list.filter((l) => l.lastPrintedAt >= cutoff).sort((a, b) => b.lastPrintedAt - a.lastPrintedAt);
+}
+
+// The club list every dropdown reads. Static, but served rather than hardcoded
+// per-surface so a club can never again be missing from one of them.
+//
+// GET and POST both, on purpose: the phone page sends its PIN in the body for
+// every call it makes, and a PIN does not belong in a query string where it
+// would land in access logs and browser history.
+function clubsHandler(req, res) {
+  res.json({ clubs: CLUB_LIST });
+}
+app.get('/clubs', clubsHandler);
+app.post('/clubs', clubsHandler);
+
+// The remembered leaders, for the chips. `hidden` lets a UI say "3 not printed
+// this season" instead of pretending they never existed.
+function leadersHandler(req, res) {
+  const all = loadLeaders();
+  const active = activeLeaders(all);
+  res.json({ leaders: active, hidden: all.length - active.length, clubs: CLUB_LIST });
+}
+app.get('/leaders', leadersHandler);
+app.post('/leaders', leadersHandler);
+
+// POST, not DELETE: the phone page sends its PIN in the body like every other
+// call it makes, and the CORS policy already refuses mutating requests from a
+// non-allowlisted origin.
+app.post('/leaders/forget', (req, res) => {
+  const key = String((req.body && req.body.key) || '');
+  if (!key.trim()) return res.status(400).json({ error: 'key is required' });
+  const { removed, leaders } = forgetLeader(key);
+  const active = activeLeaders(leaders);
+  console.log(`[leaders] ${removed ? 'Forgot' : 'No such remembered leader:'} '${key}'`);
+  res.json({ ok: true, removed, leaders: active, hidden: leaders.length - active.length });
+});
+
+// One leader tag. Extracted from the route so "Print selected" can print a
+// whole team through exactly the same path — one spool job per tag, each with
+// its own duplicate guard, history row and remembered-leader upsert, so a jam
+// halfway down a batch loses one tag and reports which one.
+async function performLeaderPrint(input) {
+  const b = input || {};
   let firstName, lastName;
   if (b.firstName !== undefined) {
     firstName = security.sanitizeStoredText(b.firstName || '', 80);
@@ -3796,12 +3963,13 @@ app.post('/print-leader', async (req, res) => {
   } else {
     ({ firstName, lastName } = splitFullName(security.sanitizeStoredText(b.name || '', 160)));
   }
-  if (!firstName && !lastName) return res.status(400).json({ error: 'name is required' });
+  if (!firstName && !lastName) return { status: 400, body: { error: 'name is required' } };
   const clubName = security.sanitizeStoredText(b.clubName || '', 40);
-  if (!isSafePrinterName(b.printerName)) return res.status(400).json({ error: 'invalid printer name' });
+  if (!isSafePrinterName(b.printerName)) return { status: 400, body: { error: 'invalid printer name' } };
   const effectivePrinter = (b.printerName && String(b.printerName).trim()) || PRINTER_NAME;
   // Rehearsal/demo: a real label with the TEST band, nothing recorded — same
-  // rule as /print, so a training night leaves no trace in the print log.
+  // rule as /print, so a training night leaves no trace in the print log. A
+  // demo tag also does not teach the remembered-leader list a name.
   const isDemo = b.demo === true || b.demo === 'true' || isRehearsalActive();
 
   // Namespaced so it can never collide with a child's check-in key in the
@@ -3809,7 +3977,7 @@ app.post('/print-leader', async (req, res) => {
   const dupKey = `leader:${firstName} ${lastName}`.toLowerCase().trim();
   if (!isDemo && isDuplicatePrint(dupKey)) {
     console.log(`[print-leader] '${firstName} ${lastName}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
-    return res.json({ success: true, duplicate: true });
+    return { status: 200, body: { success: true, duplicate: true } };
   }
 
   let pngPath = null;
@@ -3820,22 +3988,65 @@ app.post('/print-leader', async (req, res) => {
     printImage(pngPath, effectivePrinter);
     if (isDemo) {
       console.log(`[print-leader] Printed a TEST leader tag for '${firstName} ${lastName}' — nothing recorded`);
-      return res.json({ success: true, demo: true });
+      return { status: 200, body: { success: true, demo: true } };
     }
     recordPrint(dupKey);
     addHistoryEntry({ firstName, lastName, clubName, printer: effectivePrinter, success: true, isLeader: true });
+    // Remembered only after the tag actually reached the printer: a failed
+    // print must not seed the chips with a name nobody has a tag for.
+    rememberLeader({ firstName, lastName, clubName });
     console.log(`[print-leader] ${firstName} ${lastName}${clubName ? ' — ' + clubName : ''}`);
-    res.json({ success: true });
+    return { status: 200, body: { success: true } };
   } catch (err) {
     console.error('[print-leader] Error:', err.message);
     if (!isDemo) {
       addHistoryEntry({ firstName, lastName, clubName, printer: effectivePrinter, success: false, isLeader: true });
       recordPrintFailure(`${firstName} ${lastName}`.trim(), clubName, err.message);
     }
-    res.status(500).json({ error: err.message });
+    return { status: 500, body: { error: err.message } };
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
   }
+}
+
+// Batch cap: a church with more leaders than this in one go is a data-entry
+// mistake, not a real night, and 25 sequential spool jobs is already ~a minute
+// of printing.
+const LEADER_BATCH_MAX = 25;
+
+app.post('/print-leader', async (req, res) => {
+  const b = req.body || {};
+
+  // Batch ("Print selected" on the remembered chips). Sequential on purpose:
+  // the printer is a single serial device and interleaved jobs come out of the
+  // spooler in an unpredictable order.
+  if (Array.isArray(b.leaders)) {
+    if (!b.leaders.length) return res.status(400).json({ error: 'leaders is empty' });
+    if (b.leaders.length > LEADER_BATCH_MAX) {
+      return res.status(400).json({ error: `too many leaders in one batch (max ${LEADER_BATCH_MAX})` });
+    }
+    const results = [];
+    for (const entry of b.leaders) {
+      const one = await performLeaderPrint({ ...(entry || {}), printerName: b.printerName, demo: b.demo });
+      const name = `${(entry && (entry.name || `${entry.firstName || ''} ${entry.lastName || ''}`)) || ''}`.trim();
+      results.push({
+        name,
+        success: one.status === 200 && one.body.success === true,
+        duplicate: one.body.duplicate === true,
+        demo: one.body.demo === true,
+        error: one.body.error,
+      });
+    }
+    const printed = results.filter((r) => r.success && !r.duplicate).length;
+    const failed = results.filter((r) => !r.success).length;
+    console.log(`[print-leader] Batch of ${results.length}: ${printed} printed, ${failed} failed`);
+    // 200 even with failures — the body is the per-name record, and a partial
+    // batch is a real outcome the operator needs to read, not an error page.
+    return res.json({ success: failed === 0, batch: true, printed, failed, results });
+  }
+
+  const { status, body } = await performLeaderPrint(b);
+  res.status(status).json(body);
 });
 
 // ── Print an arbitrary PDF (leader worksheets) ────────────────────────────────
@@ -5747,6 +5958,11 @@ module.exports = {
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
   recordAttendance, isNonCheckinRow,
+  // Remembered leaders + the one club list every dropdown reads. Pure but for
+  // their file, so the upsert/cap/season rules and the club-table agreement
+  // are unit-tested against a temp AWANA_DATA_DIR.
+  loadLeaders, saveLeaders, rememberLeader, forgetLeader, activeLeaders, leaderKey,
+  CLUB_LIST, CLUB_DISPLAY_NAMES, CLUB_MONOGRAM, LEADERS_MAX, LEADER_ACTIVE_DAYS,
   // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
   // pinning (June–August gate, day clamping, ISO-week reuse).
   parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,

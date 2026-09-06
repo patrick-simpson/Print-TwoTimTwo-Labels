@@ -41,9 +41,9 @@ Be clear-eyed about the limits:
 - **Loopback is trusted wholesale.** Any program running as the volunteer on
   that laptop can read the roster. The threat model is a shared church laptop,
   not a compromised one.
-- **The data at rest is not encrypted.** `clubbers.csv` and `print-history.json`
-  are plain files in the data directory, protected only by the OS account. Keep
-  the check-in laptop locked and its disk encrypted.
+- **The data at rest is not encrypted.** `clubbers.csv`, `print-history.json`
+  and `leaders.json` are plain files in the data directory, protected only by
+  the OS account. Keep the check-in laptop locked and its disk encrypted.
 
 ## Data retention
 
@@ -51,6 +51,14 @@ Be clear-eyed about the limits:
 (`historyRetentionDays`, default 60, clamped to 1–730). Pruning happens on read
 as well as write, so lowering the setting shrinks an existing file on the next
 run. The roster CSVs are overwritten by each sync and are never versioned.
+
+`leaders.json` (remembered leader name tags) holds **adult volunteers' names
+only** — no contact details, no birthdate, no attendance — one row each, capped
+at `LEADERS_MAX` (80, oldest print dropped first). It is deliberately not
+pruned by age, because a leader who volunteers once a season should still be one
+tap next season; instead a leader not printed for `LEADER_ACTIVE_DAYS` (270, one
+club year) stops being offered, and the **×** on a chip deletes the row outright.
+It is reachable only from loopback or with the phone PIN, like the roster.
 
 ## Where the sensitive files live
 
@@ -62,7 +70,7 @@ run. The roster CSVs are overwritten by each sync and are never versioned.
   working tree**.
 
 That second case is why `.gitignore` covers `config.json`, `print-history.json`,
-`attendance.json` and `events-buffer.json` as well as `clubbers*.csv` (and
+`attendance.json`, `leaders.json` and `events-buffer.json` as well as `clubbers*.csv` (and
 `households*.csv`, kept ignored for any legacy install that still has one on
 disk). `config.json` holds the **Pusher app secret and the phone PIN**; the
 CSVs hold children's and guardians' personal data.

@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.2.1';
+  const EXTENSION_VERSION = '6.3.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1091,8 +1091,12 @@
       cursor: 'pointer', fontWeight: '600',
       transition: 'background 0.15s ease'
     });
-    walkInPrintBtn.addEventListener('mouseenter', function() { walkInPrintBtn.style.background = '#43a047'; });
-    walkInPrintBtn.addEventListener('mouseleave', function() { walkInPrintBtn.style.background = '#4caf50'; });
+    walkInPrintBtn.addEventListener('mouseenter', function() {
+      walkInPrintBtn.style.background = walkInPrintBtn.dataset.awanaHover || '#43a047';
+    });
+    walkInPrintBtn.addEventListener('mouseleave', function() {
+      walkInPrintBtn.style.background = walkInPrintBtn.dataset.awanaBase || '#4caf50';
+    });
 
     // Club selector for walk-ins
     var walkInClubRow = document.createElement('div');
@@ -1104,13 +1108,31 @@
       border: '1px solid #e2e8f0', fontSize: '11px',
       background: '#f8fafc', color: '#475569'
     });
-    var clubOptions = ['(no club)', 'Puggles', 'Cubbies', 'Sparks', 'T&T', 'Trek'];
-    clubOptions.forEach(function(c) {
-      var opt = document.createElement('option');
-      opt.value = c === '(no club)' ? '' : c;
-      opt.textContent = c;
-      clubSelect.appendChild(opt);
-    });
+    // The club list comes from the print server (GET /clubs), which is the one
+    // place it is defined. Five hardcoded copies of this list used to drift —
+    // this dropdown was the one that never got Journey, so a Journey walk-in
+    // could only be printed under the wrong club or none at all. The baked
+    // fallback below is only for a server that is not running yet; it is
+    // replaced the moment /clubs answers.
+    var CLUB_FALLBACK = ['Puggles', 'Cubbies', 'Sparks', 'T&T', 'Trek', 'Journey'];
+    function renderClubOptions(clubs) {
+      var keep = clubSelect.value;
+      clubSelect.textContent = '';
+      [''].concat(clubs).forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c === '' ? '(no club)' : c;
+        clubSelect.appendChild(opt);
+      });
+      if (keep) clubSelect.value = keep;   // a mid-refresh fetch must not clear the operator's pick
+    }
+    renderClubOptions(CLUB_FALLBACK);
+    fetch(PRINT_SERVER + '/clubs', { signal: AbortSignal.timeout(4000) })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (d && Array.isArray(d.clubs) && d.clubs.length) renderClubOptions(d.clubs);
+      })
+      .catch(function() { /* offline: the fallback list stands */ });
 
     var visitorCheck = document.createElement('label');
     Object.assign(visitorCheck.style, {
@@ -1122,7 +1144,53 @@
     visitorCheck.append(visitorCb);
     visitorCheck.append(document.createTextNode('Visitor'));
 
-    walkInClubRow.append(clubSelect, visitorCheck);
+    // ── Leader tag from this same row ──────────────────────────────────────
+    // An adult volunteer's tag, not a check-in: it never counts toward
+    // tonight, never registers anyone in TwoTimTwo and never enters the
+    // session dedup set.
+    //
+    // Sharing the guest row keeps the panel compact, but it means one
+    // checkbox changes what Print DOES — so ticking it visibly retargets the
+    // whole row (amber button, new caption, the two child-only controls
+    // disabled) rather than leaving an identical-looking form that produces a
+    // different label.
+    var leaderCheck = document.createElement('label');
+    Object.assign(leaderCheck.style, {
+      display: 'flex', alignItems: 'center', gap: '3px',
+      fontSize: '11px', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap'
+    });
+    var leaderCb = document.createElement('input');
+    leaderCb.type = 'checkbox';
+    leaderCheck.append(leaderCb);
+    leaderCheck.append(document.createTextNode('Leader'));
+
+    walkInClubRow.append(clubSelect, visitorCheck, leaderCheck);
+
+    function isLeaderMode() { return leaderCb.checked; }
+
+    function applyLeaderMode() {
+      var on = isLeaderMode();
+      walkInPrintBtn.textContent = on ? 'Print Leader Tag' : 'Print';
+      walkInPrintBtn.style.background = on ? '#f59e0b' : '#4caf50';
+      walkInPrintBtn.dataset.awanaBase = on ? '#f59e0b' : '#4caf50';
+      walkInPrintBtn.dataset.awanaHover = on ? '#d97706' : '#43a047';
+      guestInput.placeholder = on ? "Leader's name" : 'First Last';
+      walkInLabel.textContent = on ? 'Leader Name Tag' : 'Walk-in Guest';
+      // Both are meaningless for an adult leader: a leader is not a visiting
+      // child and is not registered as a clubber.
+      visitorCb.disabled = on;
+      registerCb.disabled = on;
+      visitorCheck.style.opacity = on ? '0.4' : '1';
+      registerCheck.style.opacity = on ? '0.4' : '1';
+      if (on) {
+        visitorCb.checked = false;
+        registerCb.checked = false;
+        registerFields.style.display = 'none';
+      }
+      leaderCheck.style.color = on ? '#b45309' : '#64748b';
+      leaderCheck.style.fontWeight = on ? '700' : 'normal';
+    }
+    leaderCb.addEventListener('change', applyLeaderMode);
 
     // \u2500\u2500 F-3: optional "also register in TwoTimTwo" \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     // The label print above always happens regardless of this checkbox \u2014 a
@@ -1225,6 +1293,175 @@
 
     registerFields.append(registerHint, guardianInput, phoneInput, birthdateInput, genderGradeRow, registerStatus);
 
+    // Now that every control the leader mode touches exists, settle the row
+    // into its initial (child) state.
+    applyLeaderMode();
+
+    // ── Remembered leaders ─────────────────────────────────────────────────
+    // The same adults volunteer every week, so the server remembers whoever
+    // has had a tag printed and offers them back as one-tap chips: tick a few,
+    // Print selected, and a whole team is tagged without typing a name.
+    var leaderChipsWrap = document.createElement('div');
+    Object.assign(leaderChipsWrap.style, { display: 'none', flexDirection: 'column', gap: '4px' });
+
+    var leaderChipsHeader = document.createElement('div');
+    Object.assign(leaderChipsHeader.style, {
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px'
+    });
+    var leaderChipsTitle = document.createElement('div');
+    Object.assign(leaderChipsTitle.style, { fontSize: '10px', color: '#94a3b8', fontWeight: '600' });
+    leaderChipsTitle.textContent = 'Remembered leaders';
+    var leaderPrintSelBtn = document.createElement('button');
+    leaderPrintSelBtn.textContent = 'Print selected';
+    Object.assign(leaderPrintSelBtn.style, {
+      fontSize: '10px', padding: '3px 8px', background: '#f59e0b', color: '#ffffff',
+      border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600'
+    });
+    leaderChipsHeader.append(leaderChipsTitle, leaderPrintSelBtn);
+
+    var leaderChipsList = document.createElement('div');
+    Object.assign(leaderChipsList.style, { display: 'flex', flexWrap: 'wrap', gap: '4px' });
+
+    var leaderChipsStatus = document.createElement('div');
+    Object.assign(leaderChipsStatus.style, { fontSize: '10px', color: '#94a3b8' });
+
+    leaderChipsWrap.append(leaderChipsHeader, leaderChipsList, leaderChipsStatus);
+
+    // key → true for the ticked chips, and the last list the server sent.
+    // The selection survives a re-render so a refresh (or a batch that partly
+    // failed) does not silently clear what the operator ticked, and the batch
+    // is built from this state rather than scraped back out of the DOM.
+    var leaderSelection = {};
+    var leaderCache = [];
+
+    function setLeaderChipsStatus(text, color) {
+      leaderChipsStatus.textContent = text || '';
+      leaderChipsStatus.style.color = color || '#94a3b8';
+    }
+
+    function renderLeaderChips(leaders, hidden) {
+      leaderChipsList.textContent = '';
+      leaderCache = (leaders || []).slice();
+      if (!leaders || !leaders.length) {
+        leaderChipsWrap.style.display = 'none';
+        return;
+      }
+      leaderChipsWrap.style.display = 'flex';
+      leaders.forEach(function(l) {
+        var chip = document.createElement('span');
+        Object.assign(chip.style, {
+          display: 'inline-flex', alignItems: 'center', gap: '4px',
+          fontSize: '11px', padding: '2px 4px 2px 6px', borderRadius: '999px',
+          background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e'
+        });
+        var pick = document.createElement('label');
+        Object.assign(pick.style, { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!leaderSelection[l.key];
+        Object.assign(cb.style, { margin: '0', cursor: 'pointer' });
+        cb.addEventListener('change', function() {
+          if (cb.checked) leaderSelection[l.key] = true; else delete leaderSelection[l.key];
+        });
+        var nameText = ((l.firstName || '') + ' ' + (l.lastName || '')).trim();
+        pick.append(cb, document.createTextNode(nameText + (l.clubName ? ' · ' + l.clubName : '')));
+
+        // Print just this one — the common case is a single latecomer.
+        var oneBtn = document.createElement('button');
+        oneBtn.textContent = '\u2399';
+        oneBtn.title = 'Print ' + nameText + "'s tag";
+        Object.assign(oneBtn.style, {
+          border: 'none', background: 'transparent', cursor: 'pointer',
+          fontSize: '11px', color: '#b45309', padding: '0 2px'
+        });
+        oneBtn.addEventListener('click', function() { printLeaders([l]); });
+
+        // Forget: a leader who moved away, or a name typed wrong.
+        var xBtn = document.createElement('button');
+        xBtn.textContent = '\u00D7';
+        xBtn.title = 'Forget ' + nameText;
+        Object.assign(xBtn.style, {
+          border: 'none', background: 'transparent', cursor: 'pointer',
+          fontSize: '13px', lineHeight: '1', color: '#b45309', padding: '0 3px'
+        });
+        xBtn.addEventListener('click', function() {
+          if (!confirm('Forget ' + nameText + '? Their tag can still be printed by typing the name.')) return;
+          delete leaderSelection[l.key];
+          fetch(PRINT_SERVER + '/leaders/forget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: l.key }),
+            signal: AbortSignal.timeout(4000)
+          }).then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) { if (d) renderLeaderChips(d.leaders, d.hidden); })
+            .catch(function() { setLeaderChipsStatus('Could not reach the print server', '#ef4444'); });
+        });
+
+        chip.append(pick, oneBtn, xBtn);
+        leaderChipsList.appendChild(chip);
+      });
+      setLeaderChipsStatus(hidden ? hidden + ' not printed this season (hidden)' : '');
+    }
+
+    function refreshLeaderChips() {
+      fetch(PRINT_SERVER + '/leaders', { signal: AbortSignal.timeout(4000) })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) { if (d) renderLeaderChips(d.leaders, d.hidden); })
+        .catch(function() { /* offline: leave whatever is on screen */ });
+    }
+
+    // One code path for a single chip, a batch of chips, and the typed field:
+    // the server prints them sequentially and reports per name, so a jam
+    // halfway through names the tag that did not come out.
+    function printLeaders(leaders) {
+      if (!leaders || !leaders.length) {
+        setLeaderChipsStatus('Tick a leader first', '#ef4444');
+        return;
+      }
+      setLeaderChipsStatus('Printing ' + leaders.length + ' tag' + (leaders.length === 1 ? '' : 's') + '\u2026');
+      setStatus('\u23F3');
+      fetch(PRINT_SERVER + '/print-leader', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leaders: leaders.map(function(l) {
+            return { firstName: l.firstName, lastName: l.lastName, clubName: l.clubName || '' };
+          }),
+          printerName: selectedPrinterName || ''
+        }),
+        signal: AbortSignal.timeout(PRINT_TIMEOUT_MS * Math.max(1, leaders.length))
+      }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+        .then(function(res) {
+          var d = res.d || {};
+          if (!res.ok) {
+            setStatus('\u274C'); playError();
+            setLeaderChipsStatus(d.error || 'Print failed', '#ef4444');
+          } else if (d.failed) {
+            setStatus('\u274C'); playError();
+            var bad = (d.results || []).filter(function(x) { return !x.success; })
+              .map(function(x) { return x.name; }).join(', ');
+            setLeaderChipsStatus('Printed ' + d.printed + ', failed: ' + bad, '#ef4444');
+          } else {
+            setStatus('\u2705'); playSuccess();
+            setLeaderChipsStatus('Printed ' + (d.printed != null ? d.printed : leaders.length) + ' tag'
+              + ((d.printed === 1) ? '' : 's'), '#16a34a');
+            leaderSelection = {};
+          }
+          clearStatus();
+          refreshLeaderChips();
+        })
+        .catch(function() {
+          setStatus('\u274C'); playError(); clearStatus();
+          setLeaderChipsStatus('Could not reach the print server', '#ef4444');
+        });
+    }
+
+    leaderPrintSelBtn.addEventListener('click', function() {
+      printLeaders(leaderCache.filter(function(l) { return leaderSelection[l.key]; }));
+    });
+
+    refreshLeaderChips();
+
     registerCb.addEventListener('change', function() {
       registerFields.style.display = registerCb.checked ? 'flex' : 'none';
       // Scroll the revealed form into view. The panel scrolls now, but a form
@@ -1290,6 +1527,18 @@
       var name = guestInput.value.trim();
       if (!name) return;
       var club = clubSelect.value;
+
+      // Leader mode: an adult's tag. Deliberately none of what follows —
+      // no markPrinted (a leader is not a check-in, so reconcile and the
+      // roster-diff observer must never see them), no TwoTimTwo registration,
+      // no share balance, no visitor flag. The server remembers the name, so
+      // next week this is a chip instead of typing.
+      if (isLeaderMode()) {
+        var parts = name.split(/\s+/);
+        printLeaders([{ firstName: parts[0] || '', lastName: parts.slice(1).join(' '), clubName: club }]);
+        guestInput.value = '';
+        return;
+      }
       var isVisitor = visitorCb.checked;
       // Send with visitor flag if checked
       var payload = {
@@ -1961,7 +2210,7 @@
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
-      divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields,
+      divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields, leaderChipsWrap,
       divider(), tonightHeader, tonightList,
       queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn

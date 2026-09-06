@@ -86,18 +86,21 @@
   <div class="panel" id="leader-panel" style="display:none">
     <h2>Leader name tag</h2>
     <input type="text" id="leader-name" maxlength="80" placeholder="Leader's name" autocomplete="off">
+    <!-- Options are filled from the server's one club list (see loadClubs). -->
     <select id="leader-club">
       <option value="">No club</option>
-      <option>Puggles</option>
-      <option>Cubbies</option>
-      <option>Sparks</option>
-      <option>T&amp;T</option>
-      <option>Trek</option>
-      <option>Journey</option>
     </select>
     <button class="btn" id="leader-print" type="button">Print leader tag</button>
+    <div id="leader-chips-wrap" style="display:none">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <span class="note" style="margin:0;font-weight:600">Remembered leaders</span>
+        <button class="btn ghost" id="leader-print-selected" type="button">Print selected</button>
+      </div>
+      <div id="leader-chips" class="chips"></div>
+      <div class="note" id="leader-chips-note" style="margin:0"></div>
+    </div>
     <div class="err" id="leader-status"></div>
-    <div class="note" style="margin:0">Prints on the door printer. Does not count as a check-in.</div>
+    <div class="note" style="margin:0">Prints on the door printer. Does not count as a check-in. Whoever you print is remembered for one-tap reprints.</div>
   </div>
 
   <div class="tabs" role="tablist">
@@ -142,7 +145,30 @@
 <script>
 var PIN = sessionStorage.getItem('awanaPhonePin') || '';
 var KIDS = [];
+// The one club list, fetched from the server (GET /clubs) so the phone page,
+// the dashboard and the check-in widget can never disagree about which clubs
+// exist. The baked list is the pre-fetch fallback only.
 var CLUBS = ['Puggles', 'Cubbies', 'Sparks', 'T&T', 'Trek', 'Journey'];
+function loadClubs() {
+  postJson('/clubs', { pin: PIN }).then(function(d) {
+    if (d && Array.isArray(d.clubs) && d.clubs.length) {
+      CLUBS = d.clubs;
+      fillLeaderClubs();
+    }
+  }).catch(function() { fillLeaderClubs(); });
+}
+function fillLeaderClubs() {
+  var sel = document.getElementById('leader-club');
+  if (!sel) return;
+  var keep = sel.value;
+  sel.innerHTML = '<option value="">No club</option>';
+  CLUBS.forEach(function(c) {
+    var o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    sel.appendChild(o);
+  });
+  if (keep) sel.value = keep;
+}
 
 // Per-kid transient UI state, keyed by kid.name.toLowerCase(). Presence of a
 // key here means "this phone has a check-in for this kid in flight (or just
@@ -285,6 +311,9 @@ function handlePinInvalidated() {
   STATE = {};
   REMOVING = {};
   TONIGHT = { checkedIn: 0, visitors: 0, byClub: {}, entries: [] };
+  // Volunteers' names came from a PIN-gated call, so they leave with the PIN.
+  leaderSelection = {};
+  renderLeaderChips([], 0);
   clearPinCountdown();
   showPinScreen('PIN changed — ask the check-in desk for the new PIN.');
 }
@@ -330,6 +359,8 @@ function unlock() {
     render();
     startRosterPoll();
     refreshTonight();
+    loadClubs();
+    refreshLeaders();
     unlockInFlight = false;
     btn.disabled = false;
   }).catch(function(e) {
@@ -771,6 +802,7 @@ function printLeaderTag() {
     if (data && data.duplicate) { toast('Already printed a moment ago.'); return; }
     toast('Leader tag for ' + name + ' printing at the door.', 4000);
     document.getElementById('leader-name').value = '';
+    refreshLeaders();   // the name just printed is now a chip
   }).catch(function(e) {
     leaderInFlight = false; btn.disabled = false;
     if (e.code === 'network' && e.status >= 500) { status.textContent = 'Printer problem — see the door laptop.'; return; }
@@ -780,6 +812,101 @@ function printLeaderTag() {
 }
 document.getElementById('leader-print').addEventListener('click', printLeaderTag);
 document.getElementById('leader-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') printLeaderTag(); });
+
+// ── Remembered leaders ────────────────────────────────────────────────────
+// Whoever has had a tag printed comes back as a chip, so the second week
+// nobody types a name. Tick a few and Print selected tags a whole team.
+var leaderSelection = {};
+var leaderCache = [];
+
+function renderLeaderChips(leaders, hidden) {
+  leaderCache = (leaders || []).slice();
+  var wrap = document.getElementById('leader-chips-wrap');
+  var list = document.getElementById('leader-chips');
+  var note = document.getElementById('leader-chips-note');
+  list.textContent = '';
+  if (!leaderCache.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  leaderCache.forEach(function(l) {
+    var name = ((l.firstName || '') + ' ' + (l.lastName || '')).trim();
+    var chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#fffbeb;border-color:#fde68a;color:#92400e';
+    var pick = document.createElement('label');
+    pick.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!leaderSelection[l.key];
+    cb.addEventListener('change', function() {
+      if (cb.checked) leaderSelection[l.key] = true; else delete leaderSelection[l.key];
+    });
+    pick.appendChild(cb);
+    pick.appendChild(document.createTextNode(name + (l.clubName ? ' \u00B7 ' + l.clubName : '')));
+    var one = document.createElement('button');
+    one.type = 'button';
+    one.textContent = 'Print';
+    one.style.cssText = 'border:none;background:transparent;color:#b45309;font-weight:700;font-size:12px;padding:2px 4px';
+    one.addEventListener('click', function() { printLeaders([l]); });
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '\u00D7';
+    x.setAttribute('aria-label', 'Forget ' + name);
+    x.style.cssText = 'border:none;background:transparent;color:#b45309;font-size:18px;line-height:1;padding:2px 4px';
+    x.addEventListener('click', function() { forgetLeader(l.key, name); });
+    chip.appendChild(pick); chip.appendChild(one); chip.appendChild(x);
+    list.appendChild(chip);
+  });
+  note.textContent = hidden ? hidden + ' not printed this season (hidden)' : '';
+}
+
+function refreshLeaders() {
+  if (!unlockedState) return;
+  postJson('/leaders', { pin: PIN }).then(function(d) {
+    if (d) renderLeaderChips(d.leaders, d.hidden);
+  }).catch(function() { /* offline: leave the chips as they are */ });
+}
+
+function printLeaders(leaders) {
+  var status = document.getElementById('leader-status');
+  if (!leaders || !leaders.length) { status.textContent = 'Tick a leader first.'; return; }
+  if (leaderInFlight) return;
+  leaderInFlight = true;
+  status.textContent = '';
+  postJson('/print-leader', {
+    pin: PIN,
+    leaders: leaders.map(function(l) {
+      return { firstName: l.firstName, lastName: l.lastName, clubName: l.clubName || '' };
+    })
+  }).then(function(d) {
+    leaderInFlight = false;
+    d = d || {};
+    if (d.failed) {
+      var bad = (d.results || []).filter(function(x) { return !x.success; })
+        .map(function(x) { return x.name; }).join(', ');
+      status.textContent = 'Printed ' + d.printed + '; failed: ' + bad;
+    } else {
+      toast('Printing ' + d.printed + ' leader tag' + (d.printed === 1 ? '' : 's') + ' at the door.', 4000);
+      leaderSelection = {};
+    }
+    refreshLeaders();
+  }).catch(function(e) {
+    leaderInFlight = false;
+    if (e.code === 'network' && e.status >= 500) { status.textContent = 'Printer problem — see the door laptop.'; return; }
+    handleActionError(e, 'Could not print: ');
+  });
+}
+
+function forgetLeader(key, name) {
+  if (!confirm('Forget ' + name + '? Their tag can still be printed by typing the name.')) return;
+  delete leaderSelection[key];
+  postJson('/leaders/forget', { pin: PIN, key: key }).then(function(d) {
+    if (d) renderLeaderChips(d.leaders, d.hidden);
+  }).catch(function(e) { handleActionError(e, 'Could not update: '); });
+}
+
+document.getElementById('leader-print-selected').addEventListener('click', function() {
+  printLeaders(leaderCache.filter(function(l) { return leaderSelection[l.key]; }));
+});
 
 // Auto-unlock if a PIN is cached (or none is required).
 if (PIN) {
@@ -791,6 +918,8 @@ if (PIN) {
     render();
     startRosterPoll();
     refreshTonight();
+    loadClubs();
+    refreshLeaders();
   }).catch(function(e) {
     // Stale saved PIN: drop it and fall back to the PIN screen rather than
     // silently retrying it (that would just feed the limiter).

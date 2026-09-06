@@ -157,18 +157,22 @@
     <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="leader-name" maxlength="80" placeholder="Leader's name" autocomplete="off" style="flex:2;min-width:160px">
+        <!-- Options are filled from GET /clubs (the one place the club list
+             lives) so this dropdown can never drift from the others. -->
         <select id="leader-club" style="flex:1;min-width:120px">
           <option value="">No club</option>
-          <option>Puggles</option>
-          <option>Cubbies</option>
-          <option>Sparks</option>
-          <option>T&amp;T</option>
-          <option>Trek</option>
-          <option>Journey</option>
         </select>
         <button type="button" class="btn btn-primary btn-sm" onclick="printLeaderTag()">Print</button>
       </div>
-      <div id="leader-note" style="font-size:12px;color:#64748b">For adult volunteers: prints the name, a LEADER pill and "&lt;Club&gt; Leader". The phone check-in page has the same button.</div>
+      <div id="leader-chips-wrap" style="display:none;flex-direction:column;gap:6px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;color:#64748b;font-weight:600">Remembered leaders</span>
+          <button type="button" class="btn btn-sm" onclick="printSelectedLeaders()">Print selected</button>
+        </div>
+        <div id="leader-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        <div id="leader-chips-note" style="font-size:12px;color:#94a3b8"></div>
+      </div>
+      <div id="leader-note" style="font-size:12px;color:#64748b">For adult volunteers: prints the name, a LEADER pill and "&lt;Club&gt; Leader". Whoever you print is remembered here for one-tap reprints; the phone page and the check-in widget show the same list.</div>
     </div>
   </div>
 
@@ -891,6 +895,122 @@ function reprintLeader(index) {
 
 // Leader name tag card: an adult volunteer's tag. Never a check-in — see the
 // server's /print-leader comment for everything it deliberately does not touch.
+// ── The one club list ────────────────────────────────────────────────────────
+// Served by GET /clubs. Every club dropdown on every surface reads it, which
+// is how Journey ended up missing from the check-in widget's walk-in dropdown
+// back when each surface kept its own copy.
+function loadClubs() {
+  fetch(BASE + '/clubs').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+    if (!d || !Array.isArray(d.clubs)) return;
+    var sel = document.getElementById('leader-club');
+    if (!sel) return;
+    var keep = sel.value;
+    sel.innerHTML = '<option value="">No club</option>';
+    d.clubs.forEach(function(c) {
+      var o = document.createElement('option');
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    });
+    if (keep) sel.value = keep;
+  }).catch(function() { /* leave the No-club-only list */ });
+}
+
+// ── Remembered leaders ───────────────────────────────────────────────────────
+var leaderSelection = {};
+var leaderCache = [];
+
+function loadLeaderChips() {
+  fetch(BASE + '/leaders').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+    if (!d) return;
+    renderLeaderChips(d.leaders || [], d.hidden || 0);
+  }).catch(function() { /* offline — leave whatever is rendered */ });
+}
+
+function renderLeaderChips(leaders, hidden) {
+  leaderCache = leaders.slice();
+  var wrap = document.getElementById('leader-chips-wrap');
+  var list = document.getElementById('leader-chips');
+  var note = document.getElementById('leader-chips-note');
+  if (!wrap || !list) return;
+  list.innerHTML = '';
+  if (!leaders.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  leaders.forEach(function(l) {
+    var name = ((l.firstName || '') + ' ' + (l.lastName || '')).trim();
+    var chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:13px;'
+      + 'padding:3px 6px 3px 8px;border-radius:999px;background:#fffbeb;border:1px solid #fde68a;color:#92400e';
+    var pick = document.createElement('label');
+    pick.style.cssText = 'display:inline-flex;align-items:center;gap:5px;cursor:pointer';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!leaderSelection[l.key];
+    cb.onchange = function() { if (cb.checked) leaderSelection[l.key] = true; else delete leaderSelection[l.key]; };
+    pick.appendChild(cb);
+    pick.appendChild(document.createTextNode(name + (l.clubName ? ' \u00B7 ' + l.clubName : '')));
+    var one = document.createElement('button');
+    one.type = 'button'; one.textContent = 'Print'; one.title = 'Print ' + name + "'s tag";
+    one.style.cssText = 'border:none;background:transparent;cursor:pointer;font-size:12px;font-weight:600;color:#b45309;padding:0 2px';
+    one.onclick = function() { printLeaders([l]); };
+    var x = document.createElement('button');
+    x.type = 'button'; x.textContent = '\u00D7'; x.title = 'Forget ' + name;
+    x.style.cssText = 'border:none;background:transparent;cursor:pointer;font-size:16px;line-height:1;color:#b45309;padding:0 3px';
+    x.onclick = function() { forgetLeader(l.key, name); };
+    chip.appendChild(pick); chip.appendChild(one); chip.appendChild(x);
+    list.appendChild(chip);
+  });
+  note.textContent = hidden ? hidden + ' leader' + (hidden === 1 ? '' : 's') + ' not printed this season (hidden)' : '';
+}
+
+function forgetLeader(key, name) {
+  if (!confirm('Forget ' + name + '? Their tag can still be printed by typing the name.')) return;
+  delete leaderSelection[key];
+  fetch(BASE + '/leaders/forget', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: key })
+  }).then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) { if (d) renderLeaderChips(d.leaders || [], d.hidden || 0); })
+    .catch(function() { setLeaderNote('Could not reach the server.'); });
+}
+
+function setLeaderNote(text) {
+  var note = document.getElementById('leader-note');
+  if (note) note.textContent = text;
+}
+
+function printSelectedLeaders() {
+  var chosen = leaderCache.filter(function(l) { return leaderSelection[l.key]; });
+  if (!chosen.length) { setLeaderNote('Tick at least one remembered leader first.'); return; }
+  printLeaders(chosen);
+}
+
+// One path for a single chip, a batch of chips and the typed field. The server
+// prints sequentially and reports per name, so a jam names the missing tag.
+function printLeaders(leaders) {
+  setLeaderNote('Printing ' + leaders.length + ' tag' + (leaders.length === 1 ? '' : 's') + '\u2026');
+  fetch(BASE + '/print-leader', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leaders: leaders.map(function(l) {
+      return { firstName: l.firstName, lastName: l.lastName, clubName: l.clubName || '' };
+    }) })
+  }).then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b || {} }; }); })
+    .then(function(res) {
+      var b = res.body;
+      if (!res.ok) { setLeaderNote('Print failed: ' + (b.error || 'see the server log')); return; }
+      if (b.failed) {
+        var bad = (b.results || []).filter(function(x) { return !x.success; })
+          .map(function(x) { return x.name; }).join(', ');
+        setLeaderNote('Printed ' + b.printed + '; failed: ' + bad);
+      } else {
+        setLeaderNote('Printed ' + b.printed + ' tag' + (b.printed === 1 ? '' : 's') + '.');
+        leaderSelection = {};
+      }
+      loadLeaderChips();
+      loadHistory();
+    })
+    .catch(function() { setLeaderNote('Print failed — is the server running?'); });
+}
+
 function printLeaderTag() {
   var nameEl = document.getElementById('leader-name');
   var note = document.getElementById('leader-note');
@@ -907,6 +1027,7 @@ function printLeaderTag() {
       note.textContent = res.body.duplicate ? 'Already printed a moment ago.' : 'Printed ' + name + '.';
       if (!res.body.duplicate) nameEl.value = '';
       loadHistory();
+      loadLeaderChips();   // the name just printed is now a chip
     })
     .catch(function() { note.textContent = 'Print failed — is the server running?'; });
 }
@@ -1666,6 +1787,8 @@ loadLobbyDeck();
 loadRoster();
 loadHistory();
 loadTonightStats();
+loadClubs();
+loadLeaderChips();
 loadSettings();
 loadTemplates();
 // After loadSettings() so the key state is already painted when we scroll to it.
