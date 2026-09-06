@@ -117,6 +117,10 @@
   <div id="tonight-view" style="display:none">
     <div class="total" id="tonight-total"></div>
     <div class="chips" id="tonight-chips"></div>
+    <!-- Whether the number above agrees with TwoTimTwo's own. Hidden until
+         the check-in page has reported one: silence must never read as
+         agreement. -->
+    <div id="tonight-check" style="display:none;font-size:13px;line-height:1.45;margin:6px 0"></div>
     <div class="note">This is exactly what the lobby screens are counting. <b>Remove</b> only fixes the count here — it does not undo the check-in on TwoTimTwo.</div>
     <div id="tonight-list"></div>
     <button class="btn link" id="visitor-toggle" type="button">Not on the list? Print a visitor label</button>
@@ -314,6 +318,9 @@ function handlePinInvalidated() {
   // Volunteers' names came from a PIN-gated call, so they leave with the PIN.
   leaderSelection = {};
   renderLeaderChips([], 0);
+  // The count check came from the same PIN-gated call; leave no stale verdict
+  // on screen for whoever picks the phone up next.
+  renderCountCheck(null);
   clearPinCountdown();
   showPinScreen('PIN changed — ask the check-in desk for the new PIN.');
 }
@@ -590,8 +597,40 @@ function applyTonight(data) {
   };
 }
 
+// The print server's count against TwoTimTwo's own. A shortfall means a child
+// is checked in on TwoTimTwo wearing no label — the case worth walking over
+// for. An excess is usually a walk-in guest never registered there, and the
+// server has already subtracted those.
+function renderCountCheck(v) {
+  var el = document.getElementById('tonight-check');
+  if (!el) return;
+  if (!v || !v.known) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  if (v.matches) {
+    el.style.color = '#15803d';
+    el.textContent = '\u2713 Matches TwoTimTwo (' + (v.theirs || 0) + ')';
+    return;
+  }
+  var short = v.unexplained < 0;
+  var clubs = (v.byClub || []).filter(function(c) { return c.unexplained !== 0; })
+    .map(function(c) { return c.club + ' ' + (c.unexplained < 0 ? '\u2212' : '+') + Math.abs(c.unexplained); })
+    .join(', ');
+  el.style.color = short ? '#b91c1c' : '#b45309';
+  el.textContent = '\u26A0 TwoTimTwo ' + v.theirs + ' \u00B7 printed ' + v.ours + ' \u2014 '
+    + Math.abs(v.unexplained) + (short ? ' with no label' : ' extra')
+    + (clubs ? ' (' + clubs + ')' : '');
+}
+
+function refreshCountCheck() {
+  if (!unlockedState) return;
+  postJson('/reconcile', { pin: PIN })
+    .then(renderCountCheck)
+    .catch(function() { /* the Tonight poll surfaces PIN/lockout trouble */ });
+}
+
 function refreshTonight() {
   if (!unlockedState) return;
+  refreshCountCheck();
   fetchTonight(PIN).then(function(data) {
     applyTonight(data);
     renderTonight();

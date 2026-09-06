@@ -43,6 +43,27 @@ Print this page and tape it near the check-in laptop.
   wrong, or someone who has moved on); anyone not printed for a season
   hides itself, and printing them again brings the chip back.
 
+### The TwoTimTwo count check
+
+Under **Tonight** (in the check-in widget, on the dashboard, and on the phone)
+there is one line comparing this server's count with TwoTimTwo's own:
+
+- **`✓ Matches TwoTimTwo (101)`** — nothing to do.
+- **`⚠ TwoTimTwo 101 · printed 99 — 2 with no label (Sparks −2)`** — two
+  children are checked in at the desk but no label came out for them. **This
+  is the one to act on**: find them in Sparks and reprint from the Tonight
+  list, or print a walk-in label.
+- **`⚠ … — 3 extra`** — more labels than TwoTimTwo has check-ins, beyond the
+  walk-in guests it already knows are unregistered. Usually someone was
+  printed but never checked in at the desk.
+- **No line at all** — the check-in page has not reported a number in the last
+  five minutes (nobody has that tab open, or the network dropped). Silence is
+  never agreement; open the check-in page and it comes back within a minute.
+
+Walk-in guests printed without *Also register in TwoTimTwo* are counted and
+subtracted automatically, so they do not raise a false alarm. A shortfall is
+never explained away that way.
+
 ## If printing stops
 
 1. Is the green server window still open? If not, double-click
