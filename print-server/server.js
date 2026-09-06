@@ -3484,6 +3484,171 @@ app.get('/stats/tonight', (req, res) => {
   res.json(computeTonightStats());
 });
 
+// ── Is our count right? ───────────────────────────────────────────────────────
+// The print server counts labels it printed. TwoTimTwo counts children its
+// own check-in screen recorded. Those are two independent measurements of
+// the same night, and until now nothing compared them — so a child checked
+// in without a label, or a label printed for a child TwoTimTwo never saw,
+// was invisible to everyone until somebody read a report days later.
+//
+// The extension already fetches TwoTimTwo's /clubber/checkin_report every
+// ~60s for undo detection; it now posts that report's per-club counts here
+// too. Kept deliberately LOCAL: this never becomes a Pusher event, so the
+// display contract (and its mirrored vectors) is untouched, and the lobby TV
+// never carries a disagreement between two staff tools.
+//
+// In memory only, on purpose. It is a live second opinion about TONIGHT that
+// refreshes every minute; persisting it would mainly create the opportunity
+// to show a stale one after a restart.
+let sourceCount = null; // { date, checkedIn, byClub, at }
+
+const SOURCE_COUNT_STALE_MS = 5 * 60 * 1000; // ~5 polls; the extension posts every ~60s
+
+// Club names arrive from two different places — TwoTimTwo's crest alt text
+// ("T&T", "Cubbies ") and whatever the label was printed with — so they are
+// folded through the SAME clubKey() the label renderer uses, rather than a
+// second private normaliser (v6.3.0's one-club-list rule). Anything it does
+// not recognise ("No club") still compares, by its own trimmed name, so an
+// unknown club can never silently merge into a known one.
+
+// Pure, so every branch below is testable without a socket, a printer or a
+// clock (same discipline as reconcileHistoryWithReport and the display
+// repo's decideBoard). Takes the two counts; returns the verdict.
+//
+// Direction matters, because the two directions mean opposite things:
+//   ours < theirs  — a child TwoTimTwo checked in never got a label here.
+//                    The one a volunteer must act on: that child is in the
+//                    building wearing nothing.
+//   ours > theirs  — we printed for someone TwoTimTwo has no record of.
+//                    Usually benign and fully explained by walk-in guests
+//                    printed without "Also register in TwoTimTwo", which is
+//                    a supported way to work — so those are counted and
+//                    subtracted before calling anything wrong.
+function compareCounts(stats, source, now = Date.now()) {
+  if (!source || source.date !== stats.date) {
+    return { known: false, reason: 'no-source', ours: stats.checkedIn };
+  }
+  const ageMs = now - source.at;
+  if (ageMs > SOURCE_COUNT_STALE_MS) {
+    return { known: false, reason: 'stale', ours: stats.checkedIn, ageMs, theirs: source.checkedIn };
+  }
+
+  const ours = stats.checkedIn;
+  const theirs = source.checkedIn;
+  const diff = ours - theirs;
+
+  // Children this server printed for that TwoTimTwo cannot know about: a
+  // walk-in guest posts no clubberId. Counted per club so a club-level gap
+  // can be explained by the same rule as the total.
+  const unregistered = stats.unregistered || 0;
+  const unregisteredByClub = stats.unregisteredByClub || {};
+
+  // `&amp;` is decoded before folding: the club name normally arrives already
+  // decoded from the crest's alt attribute, but a raw entity slipping through
+  // must not turn T&T into a club of its own that agrees with nothing.
+  const fold = (name) => {
+    const decoded = String(name || '').replace(/&amp;/gi, '&');
+    return clubKey(decoded) || decoded.trim().toLowerCase() || 'no club';
+  };
+  const tally = (src) => {
+    const out = {};
+    for (const [c, n] of Object.entries(src || {})) {
+      if (!Number.isFinite(n)) continue;
+      const k = fold(c);
+      out[k] = (out[k] || 0) + n;
+    }
+    return out;
+  };
+  const ourByKey = tally(stats.byClub);
+  const theirByKey = tally(source.byClub);
+  const unregByKey = tally(unregisteredByClub);
+  const clubs = new Set([...Object.keys(ourByKey), ...Object.keys(theirByKey)]);
+
+  const byClub = [...clubs].map((key) => {
+    const o = ourByKey[key] || 0;
+    const t = theirByKey[key] || 0;
+    const u = unregByKey[key] || 0;
+    return {
+      club: CLUB_DISPLAY_NAMES[key] || key,
+      ours: o,
+      theirs: t,
+      diff: o - t,
+      // What is left once walk-ins we never registered are accounted for.
+      unexplained: (o - t) - (o > t ? Math.min(u, o - t) : 0),
+    };
+  }).sort((a, b) => Math.abs(b.unexplained) - Math.abs(a.unexplained) || a.club.localeCompare(b.club));
+
+  // Only an excess can be explained away by unregistered walk-ins; a shortfall
+  // never can, so it is never softened.
+  const explained = diff > 0 ? Math.min(unregistered, diff) : 0;
+  const unexplained = diff - explained;
+
+  return {
+    known: true,
+    ours,
+    theirs,
+    diff,
+    unregistered,
+    explained,
+    unexplained,
+    matches: unexplained === 0,
+    // Which way it is off, in the words the surfaces use.
+    direction: unexplained === 0 ? 'match' : (unexplained < 0 ? 'missing-labels' : 'extra-labels'),
+    byClub: byClub.filter(c => c.ours || c.theirs),
+    ageMs,
+    at: source.at,
+  };
+}
+
+// Our side of the comparison, per club, plus the walk-ins TwoTimTwo cannot
+// be expected to know about (no clubberId — see the walk-in POST in
+// content.js, which sends a name and a club and nothing else).
+function countsForCompare(tonight = tonightCheckins()) {
+  const byClub = {};
+  const unregisteredByClub = {};
+  let checkedIn = 0;
+  let unregistered = 0;
+  tonight.active.forEach((e) => {
+    const club = (e.clubName || '').trim() || 'No club';
+    checkedIn++;
+    byClub[club] = (byClub[club] || 0) + 1;
+    if (e.clubberId == null || String(e.clubberId).trim() === '') {
+      unregistered++;
+      unregisteredByClub[club] = (unregisteredByClub[club] || 0) + 1;
+    }
+  });
+  return { date: tonight.date, checkedIn, byClub, unregistered, unregisteredByClub };
+}
+
+// The extension posts TwoTimTwo's own count here. Rejects anything it cannot
+// read rather than storing a zero: "I could not read the report" and "nobody
+// is checked in" must never collapse into the same number (the same rule the
+// parser upstream now follows).
+app.post('/feed/source-count', (req, res) => {
+  const b = req.body || {};
+  const date = typeof b.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.date) ? b.date : null;
+  if (!date) return res.status(400).json({ ok: false, error: 'date must be YYYY-MM-DD' });
+  if (!Number.isInteger(b.checkedIn) || b.checkedIn < 0) {
+    return res.status(400).json({ ok: false, error: 'checkedIn must be a non-negative integer' });
+  }
+  const byClub = {};
+  if (b.byClub && typeof b.byClub === 'object' && !Array.isArray(b.byClub)) {
+    for (const [club, n] of Object.entries(b.byClub)) {
+      if (Number.isInteger(n) && n >= 0 && String(club).trim()) byClub[String(club).trim()] = n;
+    }
+  }
+  sourceCount = { date, checkedIn: b.checkedIn, byClub, at: Date.now() };
+  res.json({ ok: true });
+});
+
+// What every surface reads. GET for the dashboard and the check-in widget,
+// POST so the phone page's POST-only helper (and its PIN) can reach it too.
+function reconcileHandler(req, res) {
+  res.json(compareCounts(countsForCompare(), sourceCount));
+}
+app.get('/reconcile', reconcileHandler);
+app.post('/reconcile', reconcileHandler);
+
 // ── Label preview ────────────────────────────────────────────────────────────
 app.get('/preview', async (req, res) => {
   const { name, firstName: qFirst, lastName: qLast } = req.query;
@@ -5950,6 +6115,11 @@ module.exports = {
   parseAllergies,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,
   reconcileHistoryWithReport, reportEntryIdentityKey, computeTonightStats,
+  // "Is our count right?" — the pure comparison against TwoTimTwo's own
+  // per-club numbers, plus our side of it. Exported so every direction
+  // (short, over, explained by walk-ins, stale, no source) is unit-tested
+  // without a browser or a live report.
+  compareCounts, countsForCompare, SOURCE_COUNT_STALE_MS,
   // Phone Tonight tab: the shared "who is checked in" set and the manual
   // undo/restore that must survive reconcile — pure, so they are unit-tested.
   tonightCheckins, markManualUndo, clearManualUndo, splitFullName,

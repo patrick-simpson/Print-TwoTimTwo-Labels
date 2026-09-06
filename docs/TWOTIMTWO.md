@@ -109,7 +109,7 @@ Clicking a `.clubber` opens `#checkin-modal` and populates the hidden
 
 | Tab | URL | Output | Notes |
 |---|---|---|---|
-| Report | `/clubber/checkin_report?date=YYYY-MM-DD` | HTML: one `<table>` per club, `tfoot tr.totals` Count / Total Shares, per-row `undoCheckin(<id>)` | **Authoritative "who is checked in tonight."** No CSV variant. |
+| Report | `/clubber/checkin_report?date=YYYY-MM-DD` | HTML: one `<table>` per club, `tfoot tr.totals` Count / Total Shares, per-row `undoCheckin(<id>)` | **Authoritative "who is checked in tonight."** No CSV variant. Markup notes below. |
 | Print Form | `/clubber/checkin_form` | printable blank HTML sheet | paper fallback |
 | Form Entry | `/clubber/checkin_form_entry?date&club_id` | HTML attendance-checkbox table (POST saves) | key in a paper sheet |
 | Import CSV | `/clubber/checkin_csv` (multipart POST `file`) | HTML w/ `.clubber_not_found` / `.multiple_clubbers` | **official external write-path** for check-ins |
@@ -269,6 +269,42 @@ clubbers. **Required fields** (validated server-side): `Household[name1]`,
 `enter_ovr_club_id`: 4 Puggles, 1 Cubbies, 2 Sparks, 3 T&T, 6 Trek, 7 Journey.
 
 ---
+
+
+### `/clubber/checkin_report` — the markup, exactly
+
+Verified against the live report. Each detail here has already cost a bug, so
+change a selector only against a real page:
+
+- **One `<table>` per club.** The club is named ONLY by its crest's `alt`
+  text — `<th colspan=4 class="title"><img alt="Sparks "></th>` — and that
+  crest sits in **its own `<thead><tr>`, ahead of the column-header row**.
+  So `querySelector('thead tr')` returns the crest row, not the headers. That
+  is why `friendsBrought` read 0 all season: the "Brought a friend" column was
+  being looked for in the crest row. Search *every* header row.
+- Alt text carries trailing spaces (`"Cubbies "`) and `&`
+  (`T&T`, which is `T&amp;T` in the source but decoded by the DOM). Fold club
+  names through `clubKey()` rather than comparing them raw.
+- The totals row is **single-quoted**: `<tfoot><tr class='totals'><td><i>Count:
+  14</i></td>…`. A CSS selector (`tfoot tr.totals`) is quote-agnostic; a
+  regex over the raw HTML is not.
+- **Every row opens a fresh unclosed `<tbody>`.** They parse as siblings, so
+  `querySelectorAll('tbody tr')` still sees them all — but do not assume one
+  tbody per table.
+- Each row carries **two** controls for the same child: an edit link
+  `/meeting/clubberCheckin/{id}` and `onclick='undoCheckin({id})'`. Dedupe by
+  id when counting rows, or every child counts twice.
+- The page opens with a decorative table that has no crest. Skip any table
+  without one rather than folding it into a total.
+- `?clubs[N]=1` filters to specific clubs; **omitting the params returns every
+  club**, so the plain `?date=` URL is already the whole night.
+
+`/report/attendance_summary?output=csv` is the aggregate cross-check —
+`"Meeting","Puggles","","Cubbies",…,"TOTAL",""` with one row per meeting,
+newest first. **The newest row is the NEXT, unheld meeting** (all blank, TOTAL
+`0`), so "the most recent row" is the newest row dated on or before today, not
+row one. Its totals agree with the check-in report's per-club `Count:` values.
+
 
 ## 5. Reports — the CSV feed suite
 

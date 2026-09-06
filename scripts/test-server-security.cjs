@@ -260,6 +260,10 @@ async function main() {
       '/failures',
       '/diagnostics',
       '/config',
+      // Aggregate counts, but they are still tonight's operational picture —
+      // and /reconcile is a read of the roster's shape, so it is gated like
+      // every other one.
+      '/reconcile',
       '/',                       // the dashboard itself
       '/preview?name=Testkid%20Leakcanary',
     ];
@@ -282,6 +286,11 @@ async function main() {
       ['/leaders', {}],
       ['/leaders/forget', { key: 'lan leader' }],
       ['/clubs', {}],
+      ['/reconcile', {}],
+      // TwoTimTwo's own count is only ever posted by the extension on the
+      // check-in machine. An unauthenticated caller must not be able to plant
+      // a second opinion that makes a real shortfall look like agreement.
+      ['/feed/source-count', { date: '2026-09-02', checkedIn: 999 }],
     ];
     for (const [p, body] of PII_POST_PATHS) {
       const res = await request({ host: lan, method: 'POST', pathname: p, body });
@@ -296,6 +305,9 @@ async function main() {
       const hist = json(await request({ host: '127.0.0.1', pathname: '/history' })) || [];
       check('no history row was added by the refused writes',
         Array.isArray(hist) && !hist.some((r) => /Stranger/.test(r.firstName || '')), JSON.stringify(hist.map((r) => r.firstName)));
+      const rec = json(await request({ host: '127.0.0.1', pathname: '/reconcile' })) || {};
+      check('a refused source-count post planted no second opinion',
+        rec.known === false || rec.theirs !== 999, JSON.stringify(rec));
       const kept = json(await request({ host: '127.0.0.1', pathname: '/leaders' })) || {};
       check('the refused forget did not remove a remembered leader',
         Array.isArray(kept.leaders) && kept.leaders.some((l) => /Lan/.test(l.firstName || '')),

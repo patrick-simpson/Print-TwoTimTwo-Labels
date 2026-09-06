@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.3.0';
+  const EXTENSION_VERSION = '6.4.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -1604,7 +1604,7 @@
       border: '1px solid #e2e8f0', borderRadius: '4px', cursor: 'pointer',
       color: '#475569', lineHeight: '16px'
     });
-    tonightRefresh.addEventListener('click', loadTonight);
+    tonightRefresh.addEventListener('click', function() { loadTonight(); loadCountCheck(); });
     // Reset tonight to zero (operator request): marks every check-in row
     // undone on the server (tally and every display drop within seconds),
     // pulls tonight out of the season ledger, clears the recap buffer, then
@@ -1648,6 +1648,14 @@
         });
     });
     tonightHeader.append(tonightLabel, tonightCount, tonightReset, tonightRefresh);
+
+    // Does our number agree with TwoTimTwo's own? Sits directly under the
+    // Tonight heading because that is where the count it qualifies lives.
+    var countCheck = document.createElement('div');
+    countCheck.id = 'awana-count-check';
+    Object.assign(countCheck.style, {
+      display: 'none', fontSize: '10px', lineHeight: '14px', padding: '1px 0'
+    });
 
     var tonightList = document.createElement('div');
     tonightList.id = 'awana-tonight-list';
@@ -2211,7 +2219,7 @@
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
       divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields, leaderChipsWrap,
-      divider(), tonightHeader, tonightList,
+      divider(), tonightHeader, countCheck, tonightList,
       queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
     );
@@ -2577,6 +2585,55 @@
 
   function clearStatus() {
     setTimeout(function() { setStatus(''); }, STATUS_TIMEOUT);
+  }
+
+  // ── Is our number right? ──────────────────────────────────────────────────
+  // The print server counts labels it printed; TwoTimTwo counts children its
+  // own check-in screen recorded. This shows whether those two agree, because
+  // the interesting case is silent otherwise: a child checked in and walked
+  // off without a label, and nobody finds out until somebody reads a report
+  // days later.
+  //
+  // The two directions are worded differently ON PURPOSE. Short means a child
+  // is in the building wearing nothing — act now. Over is usually a walk-in
+  // guest printed without "Also register in TwoTimTwo", which is a supported
+  // way to work, so the server subtracts those before calling anything wrong
+  // and this only ever shows what is left unexplained.
+  function renderCountCheck(v) {
+    var el = document.getElementById('awana-count-check');
+    if (!el) return;
+    if (!v || !v.known) {
+      // Never dress up "I don't know" as agreement.
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
+    var clubs = (v.byClub || []).filter(function(c) { return c.unexplained !== 0; })
+      .map(function(c) { return c.club + ' ' + (c.unexplained < 0 ? '\u2212' : '+') + Math.abs(c.unexplained); })
+      .join(', ');
+    if (v.matches) {
+      el.style.color = '#16a34a';
+      el.textContent = '\u2713 Matches TwoTimTwo (' + v.theirs + ')';
+      el.title = v.explained
+        ? v.explained + ' walk-in guest(s) printed here are not registered in TwoTimTwo, which accounts for the difference.'
+        : 'This server and TwoTimTwo agree on tonight\u2019s count.';
+      return;
+    }
+    var short = v.unexplained < 0;
+    el.style.color = short ? '#dc2626' : '#f59e0b';
+    el.textContent = '\u26A0 TwoTimTwo ' + v.theirs + ' \u00B7 printed ' + v.ours + ' \u2014 '
+      + Math.abs(v.unexplained) + (short ? ' with no label' : ' extra')
+      + (clubs ? ' (' + clubs + ')' : '');
+    el.title = short
+      ? 'These children are checked in on TwoTimTwo but this server printed no label for them.'
+      : 'This server printed more labels than TwoTimTwo has check-ins, beyond the walk-in guests it knows are unregistered.';
+  }
+
+  function loadCountCheck() {
+    fetch(PRINT_SERVER + '/reconcile', { signal: AbortSignal.timeout(3000) })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(renderCountCheck)
+      .catch(function() { /* print server down — the panel says so elsewhere */ });
   }
 
   // ── Tonight's check-ins list (widget reprint) ──────────────────────────────
@@ -3830,6 +3887,7 @@
   fetchPrinters();
   watchCheckins();
   loadTonight();
+  loadCountCheck();
   // Establish the roster baseline on load (or re-populate ROSTER_CACHE after a
   // reload that preserved baselineScanned via sessionStorage).
   setTimeout(scanClubberList, 500);
@@ -3868,7 +3926,7 @@
   // print too — their check-ins should show up here for reprints).
   setInterval(function() {
     var panel = document.getElementById('awana-panel');
-    if (panel && panel.style.display !== 'none') loadTonight();
+    if (panel && panel.style.display !== 'none') { loadTonight(); loadCountCheck(); }
   }, 60000);
   updateQueueBadge();
 

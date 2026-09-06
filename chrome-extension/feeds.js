@@ -216,56 +216,103 @@
   // ── Tonight's counters + award slips (both sourced from the same two
   // TwoTimTwo reports, so fetched together in one pass) ──────────────────────
 
+  // Reads /clubber/checkin_report — TwoTimTwo's OWN count of who is checked
+  // in tonight, per club. This is the independent number the print server's
+  // own tally gets reconciled against (see /reconcile), so being wrong here
+  // is worse than being silent: returns null whenever the page cannot be
+  // confidently understood, and NEVER a zero standing in for "I couldn't
+  // read it". A zero is a real, meaningful count (nobody has checked in
+  // yet) and must only ever mean that.
+  //
+  // Two independent ways to count: the per-club
+  // <tfoot><tr class='totals'>Count: N</tr>, and — when that is missing — the
+  // per-child controls (the edit link content.js's fetchCheckinReport() has
+  // always relied on, plus the undo control the old fallback used). Both are
+  // now scoped per TABLE, so the fallback yields per-club numbers too instead
+  // of only a document-wide total.
   function parseCheckinReport(html) {
     if (!html || isLoginPage(html)) return null;
     var doc;
     try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return null; }
     var tables = doc.querySelectorAll('table');
-    var countedViaTotals = false;
+    if (!tables.length) return null;
+
+    var byClub = {};
     var totalCount = 0;
     var friendCount = 0;
+    var readAnyClub = false;
+
     for (var t = 0; t < tables.length; t++) {
       var table = tables[t];
+
+      // The club a table belongs to: its heading's crest carries the club
+      // name as alt text. A table without one is not a club table (the page
+      // opens with a decorative title table), so it is skipped entirely
+      // rather than folded into the total.
+      var titleTh = table.querySelector('th.title');
+      var clubImg = titleTh ? titleTh.querySelector('img[alt]') : null;
+      var clubName = clubImg ? (clubImg.getAttribute('alt') || '').trim() : '';
+      if (!clubName) continue;
+
+      var count = null;
       var totalsRow = table.querySelector('tfoot tr.totals');
-      if (!totalsRow) continue;
-      var rowText = totalsRow.textContent || '';
-      var m = /Count:\s*(\d+)/i.exec(rowText);
-      if (m) {
-        totalCount += parseInt(m[1], 10);
-        countedViaTotals = true;
+      if (totalsRow) {
+        var m = /Count:\s*(\d+)/i.exec(totalsRow.textContent || '');
+        if (m) count = parseInt(m[1], 10);
       }
-      var headerRow = table.querySelector('thead tr') || table.querySelector('tr');
-      var headerCells = headerRow ? headerRow.querySelectorAll('th') : [];
+      if (count === null) {
+        // Fallback: count the children themselves. Each row carries a
+        // per-clubber edit link and an undo control, either of which yields
+        // the clubber id — deduped, so the two controls in one row cannot
+        // count that child twice, and scoped to THIS table so the count stays
+        // per-club rather than a document-wide total.
+        var seen = {};
+        var controls = table.querySelectorAll(
+          'a[href*="/meeting/clubberCheckin/"], [onclick*="undoCheckin"], [onclick*="checkinclubberundo"]'
+        );
+        for (var L = 0; L < controls.length; L++) {
+          var attr = controls[L].getAttribute('href') || controls[L].getAttribute('onclick') || '';
+          var idm = /(\d+)/.exec(attr);
+          if (idm) seen[idm[1]] = true;
+        }
+        if (controls.length) count = Object.keys(seen).length;
+      }
+      if (count === null || !isFinite(count) || count < 0) continue;
+
+      readAnyClub = true;
+      byClub[clubName] = (byClub[clubName] || 0) + count;
+      totalCount += count;
+
+      // "Brought a friend" is only offered by some clubs, so its absence is
+      // normal and never a parse failure.
+      // EVERY header row is searched, not just the first. The club crest sits
+      // in its own <thead><tr> ahead of the real column headers, so looking
+      // only at `thead tr` found the crest row, never matched, and quietly
+      // reported that nobody brought a friend all season.
+      var headerRows = table.querySelectorAll('thead tr');
+      if (!headerRows.length) headerRows = table.querySelectorAll('tr');
       var friendIdx = -1;
-      for (var h = 0; h < headerCells.length; h++) {
-        var htext = (headerCells[h].textContent || '').trim();
-        if (/friend|brought/i.test(htext)) { friendIdx = h; break; }
+      for (var hr = 0; hr < headerRows.length && friendIdx < 0; hr++) {
+        var headerCells = headerRows[hr].querySelectorAll('th');
+        for (var h = 0; h < headerCells.length; h++) {
+          if (/friend|brought/i.test((headerCells[h].textContent || '').trim())) { friendIdx = h; break; }
+        }
       }
       if (friendIdx >= 0) {
         var bodyRows = table.querySelectorAll('tbody tr');
         for (var r = 0; r < bodyRows.length; r++) {
           var cells = bodyRows[r].querySelectorAll('td');
-          if (cells.length > friendIdx) {
-            var ctext = (cells[friendIdx].textContent || '').trim();
-            if (/^yes$/i.test(ctext)) friendCount++;
+          if (cells.length > friendIdx && /^yes$/i.test((cells[friendIdx].textContent || '').trim())) {
+            friendCount++;
           }
         }
       }
     }
-    if (!countedViaTotals) {
-      // Fallback: count rows carrying an undo control with a numeric clubber id.
-      var ids = {};
-      var undoEls = doc.querySelectorAll(
-        '[onclick*="undoCheckin"], [onclick*="checkinclubberundo"], a[href*="checkinclubberundo"]'
-      );
-      for (var u = 0; u < undoEls.length; u++) {
-        var attr = undoEls[u].getAttribute('onclick') || undoEls[u].getAttribute('href') || '';
-        var idm = /(\d+)/.exec(attr);
-        if (idm) ids[idm[1]] = true;
-      }
-      totalCount = Object.keys(ids).length;
-    }
-    return { checkedIn: totalCount, friendsBrought: friendCount };
+
+    // Not one club table understood — the page shape changed, or this is not
+    // the report at all. Say so; do not report an empty club night.
+    if (!readAnyClub) return null;
+    return { checkedIn: totalCount, friendsBrought: friendCount, byClub: byClub };
   }
 
   var AWARD_RE = /award/i;
@@ -380,6 +427,17 @@
     fetchText('/clubber/checkin_report?date=' + today).then(function(html) {
       var parsed = parseCheckinReport(html);
       if (!parsed) return;
+      // TwoTimTwo's own numbers, kept LOCAL to the print server so it can
+      // check its tally against them (GET /reconcile). Deliberately not part
+      // of the `tonight` Pusher payload below: that contract is mirrored in
+      // the display repo and pinned by the shared vectors, and a mismatch
+      // between two operator tools is an operator's business, not something
+      // the lobby TV should carry.
+      postFeed('/feed/source-count', {
+        date: today,
+        checkedIn: parsed.checkedIn,
+        byClub: parsed.byClub
+      });
       var calId = getCalendarIdFromPage();
       var reportUrl = '/meeting/report?output=csv' + (calId ? '&calendar_id=' + encodeURIComponent(calId) : '');
       fetchText(reportUrl).then(function(csv) {

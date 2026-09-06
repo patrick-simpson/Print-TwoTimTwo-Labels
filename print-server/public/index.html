@@ -144,6 +144,10 @@
     </div>
     <div class="card-body" style="display:flex;flex-direction:column;gap:12px">
       <div id="tonight-clubs" class="club-chips"><span class="empty" style="padding:0">No check-ins yet tonight</span></div>
+      <!-- Does our count agree with TwoTimTwo's own? Hidden entirely until
+           the check-in page has reported a number, because "I have not heard"
+           must never look like "we agree". -->
+      <div id="tonight-check" style="display:none;font-size:12px;line-height:1.45"></div>
       <div id="tonight-flags" class="flag-list" style="display:none"></div>
     </div>
   </div>
@@ -786,6 +790,34 @@ function loadHealth() {
       document.getElementById('privacy-detail').textContent = 'Cannot tell whether names are encrypted until the server answers.';
     }
   });
+}
+
+// Is our number right? — the print server counts labels it printed, TwoTimTwo
+// counts children its own check-in screen recorded. A shortfall is the one to
+// act on: a child checked in and got no label. An excess is usually a walk-in
+// guest printed without "Also register in TwoTimTwo", so the server subtracts
+// those before calling anything wrong and this shows only what is left.
+function loadCountCheck() {
+  fetch(BASE + '/reconcile').then(function(r) { return r.json(); }).then(function(v) {
+    var el = document.getElementById('tonight-check');
+    if (!el) return;
+    if (!v || !v.known) { el.style.display = 'none'; return; }
+    el.style.display = '';
+    if (v.matches) {
+      el.style.color = '#15803d';
+      el.textContent = '\u2713 Matches TwoTimTwo (' + esc(v.theirs) + ' checked in)'
+        + (v.explained ? ' \u00B7 ' + esc(v.explained) + ' walk-in guest(s) not registered there' : '');
+      return;
+    }
+    var short = v.unexplained < 0;
+    var clubs = (v.byClub || []).filter(function(c) { return c.unexplained !== 0; })
+      .map(function(c) { return esc(c.club) + ' ' + (c.unexplained < 0 ? '\u2212' : '+') + Math.abs(c.unexplained); })
+      .join(', ');
+    el.style.color = short ? '#b91c1c' : '#b45309';
+    el.innerHTML = '<strong>\u26A0 TwoTimTwo ' + esc(v.theirs) + ' \u00B7 printed ' + esc(v.ours) + '</strong> \u2014 '
+      + Math.abs(v.unexplained) + (short ? ' with no label printed' : ' more than TwoTimTwo has')
+      + (clubs ? '<br><span style="color:#64748b">' + clubs + '</span>' : '');
+  }).catch(function() { /* dashboard shows server trouble elsewhere */ });
 }
 
 // Tonight at a glance
@@ -1787,6 +1819,7 @@ loadLobbyDeck();
 loadRoster();
 loadHistory();
 loadTonightStats();
+loadCountCheck();
 loadClubs();
 loadLeaderChips();
 loadSettings();
@@ -1799,6 +1832,7 @@ setInterval(loadHealth, 10000);
 setInterval(loadHistory, 15000);
 setInterval(loadLobbyDeck, 30000);
 setInterval(loadTonightStats, 15000);
+setInterval(loadCountCheck, 30000);
 </script>
 </body>
 </html>
