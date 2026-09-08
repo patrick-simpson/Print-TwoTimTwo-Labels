@@ -232,7 +232,11 @@ whitespace-collapsed, trailing `?!.:` stripped):
 
 ### 3.3 Related roster exports
 - `GET /clubber/prevyearcsv?year=YYYY|all&exclude_if_this_year=Y` — same 66 cols
-  + a `Year` column. (Prior-year returners.)
+  + a `Year` column. (Prior-year returners.) **Drift, 2026-09-08:** every
+  `year` value tried (`2016`–`2025`, `all`, with and without
+  `exclude_if_this_year`) now returns HTTP 400. Treat as unavailable until
+  re-verified; `/report/prevyear_clubbername` and `/clubber/query` (§8) are
+  the surviving prior-year lookups.
 - `GET /household/csv` — 38 cols, **all** households (not just active); the
   `Active Clubbers` column is a comma-separated `"First Last"` list — a
   household→children map. Header: Household ID, Parent/Guardian#1,
@@ -359,3 +363,127 @@ TwoTimTwo directly; enriches labels from the synced `clubbers.csv`.
 
 Everything else in this doc is **available but unused** — see the capabilities
 page (`/capabilities.html`) for the ranked backlog of what to build next.
+
+---
+
+## 8. Additional pages observed 2026-09-08 (read-only inventory)
+
+A GET-only walk of ~140 URLs on the same tenant, logged in as the operator.
+Same discipline as the rest of this document: page paths, form field names,
+table headers and CSV header rows only — never data. Nothing here has been
+built against yet; it exists so the ideas page's feasibility badges rest on
+something observed rather than assumed.
+
+### 8.1 The report catalogue
+
+The Reports page exposes every report through one `current_report` select:
+Current Counts, Payments, Share Balances, Attendance Summary, Unpaid
+Attendance, Missed Attendance, Attendance Grid, Quarterly Attendance (Blue
+Jewel), Quarterly Points or Shares, Checkin Items Summary, Book Progress, Book
+Progress Details, Completed Sections, Completed Books (by range), Completed
+Books (history), Meeting Reports, Distributed Awards, Compare Prev Year by
+Clubber Name, Clubbers without Book History, Clubbers History, Registration
+Info.
+
+CSV header rows seen with `&output=csv` (session cookie, `application/csv`),
+extending the §5 table:
+
+| URL | Params | CSV header |
+|---|---|---|
+| `/report/checkinItems` | `club_id` | `"Clubber","Attendance","Brought a friend","Bible"` — columns are that club's configured check-in items |
+| `/report/attendance_summary` | `year_start` | `"Meeting","Puggles","","Cubbies","","Sparks","","T&T","","Trek","","Journey","","TOTAL",""` |
+| `/report/clubcounts` | `year_start` | `"Club","#Registered","Capacity"` |
+| `/report/attendance_grid` | `club_id, year_start, from, to` | `"Club","Clubber","Sep02","Sep09","#","%"` — one column per meeting date |
+| `/meeting/report` (alias `/report/meeting`) | `year_start, calendar_id, club_id, info, sort` | `"HBGroup","Clubber","Book","Unit","Award","Note"` |
+| `/report/completed_books` | `club_id, year_start, from_date, to_date` | `"Name","Book","Date"` |
+| `/report/completed_books_history` | `club_id` | `"Name","Book","Date"` |
+| `/report/bookProgress` | `club_id` | `"Name","Track","Current Book","Progress","HB Group"` |
+| `/report/quarter_points` | `club_id, what, year_start, from, to, level` | `"Clubber","TOTAL","Sections","Checkin","Special"` |
+| `/report/quarter_attendance` (Blue Jewel) | `club_id, year_start, from, to, minimum, cal_event_id` | `"Handbook Group","Name","#Meetings"` |
+| `/report/missed_attendance` | `club_id, calendar_id, include_contact` | `"Handbook Group","Name","Last Meeting"` — `include_contact` adds guardian contact columns (PII; operator-only) |
+| `/report/clubberWithoutHistory` | `club_id` | `"First Name","Last Name","Grade","Possible previous year match"` |
+| `/report/prevyear_clubbername` | `club_id` | header row is mostly blank cells plus `"Previous Year(s)"`; awkward to parse |
+| `/payment/unpaid` | `club_id, minimum` | `"Name","#Meetings"` |
+| `/clubber/admin?cview=14&print=csv` | — | `Birthday,First,Last,Club,Med?,Grade` (saved view "Birthdays"). Other saved views on this tenant: Contact Info, Game Groupings, Meeting Info, Special Notes (ids not probed) |
+
+Not CSV despite `output=csv`: `/report/registration` returns
+`application/pdf`; `/report/bookProgressDetail` returns HTML (about 790 KB);
+`/report/completed_steps` returned an empty body without a date range.
+
+### 8.2 Check-in page details not covered above
+
+- Filter form on `/clubber/checkin`: `date` (select of meeting dates), `sort`
+  (First Name / Last Name), `clubs[4]`,`[1]`,`[2]`,`[3]`,`[6]`,`[7]`
+  checkboxes, and **`selected_color`** (All / Blue / Green / Red / Yellow).
+  The color teams behind the CSV `Color` column are a first-class filter.
+- `/clubber/checkin_form` (printable blank sheet) takes POST `tab, sort,
+  bygroup` (Group by Club / Group by Handbook Group / All selected clubs),
+  `orientation` (Portrait / Landscape), `clubs[]`.
+- `/clubber/checkin_csv`: POST `tab, date, file` (the official bulk import;
+  not exercised).
+- `/clubber/labels` returns **`application/pdf`** — TwoTimTwo's own built-in
+  label sheet. Its layout knobs live on `/setting?tab=Labels`: `# labels
+  across`, `# labels down`, `Expanded format?`, `Font size for name`, `Font
+  size for other info`, `Label Height`, `Label Width`, `Origin X`, `Origin Y`.
+- `/clubber/assignment?club_id=N` — club roster assignment (structure only).
+- `/clubber/query` — table `First Name | Last Name | Year Start | Birthdate |
+  Clubber#` (multi-year clubber lookup).
+
+### 8.3 Site-wide pages
+
+- `/setting` — tenant settings with a "Find Setting" search. Examples:
+  Current Year Description (`2026 - 2027`), Date format (`M/D/Y`),
+  Accumulated award levels, Cumulative completed books awards, Disable
+  Public Registration, Display meeting assigned sections on public calendar.
+  A read-only source for season/year detection.
+- `/msg/admin` — `Start Date | Message | End Date` plus a **Create** button:
+  the announcement table (the natural source for a `notice` broadcast).
+  Reading is a GET; creating is a POST that was not exercised.
+- `/text/admin` — `What | Text`: custom front-page / registration-page text.
+- `/calendar/iCal` — `text/calendar`; 33 `VEVENT`s this season, each
+  `UID:<yyyymmdd>.<calendar_id>`, `DTSTART`/`DTEND` in UTC (this tenant:
+  21:00Z–22:30Z), `SUMMARY:Awana meeting`. The `UID` embeds the same
+  `calendar_id` the check-in form posts. `/calendar/iCalInfo` is its help page.
+- `/calendar/index` also hosts the **Checkin Items** editor (fields `desc,
+  checkin, id, calendar_id, calendar_date, clubs[], type` (Checkbox /
+  Quantity / Text), `shekels, points, automatic, inactive`) and
+  `addManualDate` / `addDateRange` actions: meeting dates and check-in items
+  are per-tenant configuration.
+- `/meeting/handbook` — Generate Handbook Agenda: `cal_id, club_id,
+  checked_in, print_balances` (PDF agenda for tonight's checked-in kids).
+- `/meeting/groups` — Select Club, then game / handbook groupings.
+- `/bookTrack/admin` — `Description | Used by Club(s) | Properties` (for
+  example the Journey club's "Journey: Advocates" track).
+- `/blueJewel/admin` — `Period Start | Period End | Min # Attendance in
+  Period | #Mtgs in Period | Award` per club; buttons Add / Re-apply /
+  Switch to every 5 meetings. Attendance-award periods are data.
+- `/grade/admin` — `Desc | Club | Handbook Group | Auto-assign Book | Age
+  Min | Age Max | Clubber Count`. The clubber form's grade select runs Age 2
+  (Puggles); Preschool 1 yr / 2 yrs before K (Cubbies); K, Gr 1, Gr 2
+  (Sparks); Gr 3–5 (T&T); Gr 6–8 (Trek); Gr 9–12 (Journey).
+- `/profile/admin` — staff roster `Name | Email | Roles | Inactive |
+  Parent?`; roles include Is Administrator?, Manage Inventory, Is
+  Secretary?, Is Awana staff?, Record Shekels, Record Checkin, Record
+  Handbook Activity, Record Award Distribution, Record Item Distribution,
+  Change book assigned to Clubber, Meeting Reports. PII-bearing;
+  operator-only.
+- `/inventory` — store inventory `Item | Inventory`, with an "Items with
+  Negative Balance" section.
+- `/download` — "Download Data" per `year_start` (Current, 2025-2026 …
+  2016-2017): a `File` table of bulk exports.
+- `/payment/index`, `/payment/report` (`year_start, date_from, date_to,
+  type`), `/payment/unpaid` — payments; financial PII, operator-only.
+- `/yearend/process` — year-end rollover (POST `advance_grade`; not
+  exercised). `/forum`, `/doc/guide`, `/doc/all` — vendor help.
+- Setup pages: `/additItem/admin`, `/registrationRate/admin`,
+  `/pmtType/admin`, `/shirtsize/admin`, `/relationship/admin`,
+  `/clubber/customize`, `/household/customize`.
+- Scale on this tenant: `/clubber/csv` had roughly 300 data rows,
+  `/household/csv` roughly 500.
+
+### 8.4 Privacy rule for anything built from §8
+
+Whatever is read from these pages stays on the print server and the
+operator dashboard unless it is reduced to the display contract's allowlist
+(first names, counts, dates). Guardian contact, payments, notes, birth years
+and addresses never leave the operator machine.
