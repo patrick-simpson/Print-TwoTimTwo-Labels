@@ -1,4 +1,17 @@
-﻿## [6.11.0] - 2026-09-09
+﻿## [6.12.0] - 2026-09-09
+A typed slide can carry a show-until date, so last month's announcement retires itself.
+
+**"AWANA STORE NEXT WEEK" is still on the lobby TV in November.** An operator types a dated announcement, the night happens, and nobody goes back to delete the slide. A text slide now takes an optional **show window** — `showFrom` and `showUntil`, either or both — and the deck cleans itself up on every screen at once.
+
+**Both are bare local calendar dates, and that is the whole point.** The value that rides the wire is exactly the `YYYY-MM-DD` the operator typed: no timezone, no `toISOString()`, no conversion anywhere in `buildSlidesDeck`. Every consumer compares it against its own local date key, because in a US-Eastern evening a UTC date has already rolled over to tomorrow — which is precisely club hours. `slideDate()` accepts only a real calendar date (a leap day passes; `2026-02-29`, `2026-13-01`, `2026-9-1` and `next Wednesday` do not) and **drops** anything else rather than guessing, so a junk window means the slide always shows — never that it silently never appears.
+
+**The chunk budget was re-measured, not assumed.** `showFrom` + `showUntil` cost 49 bytes a slide, straight out of `SLIDES_CHUNK_JSON_BUDGET`. The worst deck the entry caps admit — 50 slides, 500 characters of text, a full 60-character eyebrow *and* both dates — is 34,251 bytes and needs 10 of the 12 chunks, with every chunk still sealing into the `slides` pad ladder's 4096 rung. That deck is now a permanent case in `npm run test:contracts`, so the next optional field cannot quietly overflow the ceiling. The greedy-packing refusal is untouched: a deck the chunker cannot fit is still a 413 with nothing committed.
+
+**Nothing about the transport moved.** `slides` stays TEXT ONLY — `buildSlidesDeck` still drops any entry carrying a `type`, so a per-device video slide can never ride the wire, dates or no dates. The deck is still sealed, still padded on its own two-rung ladder, still ordered strictly by `publishedAt`. A deck with no dates serializes byte-identically to what shipped before, which is asserted, so the field is genuinely optional for consumers.
+
+`contract-vectors.json` (canonical here, mirrored byte-identically into Awana-Check-in-Display) gains `showFrom`/`showUntil` in `entryOptionalFields`, a valid vector carrying a window, and a dirty vector proving an impossible date is scrubbed. `npm run test:contracts` gains 11 checks and `npm run test:slides` 4 (a dated slide published end to end, sealed, with the junk date absent from the ciphertext). 19 suites, 0 failures.
+
+## [6.11.0] - 2026-09-09
 A visiting family goes into the walk-in form once: a label per child, one connect card.
 
 **A mom with three kids at the door meant typing everything three times.** The same surname, the same club, the same guardian name and phone — while a line formed behind her. The walk-in guest section now has **"+ Add another child"** (up to four). Each row carries its own first name and club; the surname comes from the name already typed above, and the guardian details are shared by the whole family.

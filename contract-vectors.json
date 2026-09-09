@@ -821,7 +821,7 @@
       ]
     },
     "slides": {
-      "note": "The lobby displays' typed slide deck (contract v5), published by the operator so every screen shows one deck. TEXT ONLY by contract: the display app's per-device video slides reference bytes in that device's own storage, so the publisher strips them and the consumer's sanitizer drops them. One publish is split into chunks so a large deck stays under Pusher's per-message ceiling; every chunk of a publish carries identical {deckRev, publishedAt}. publishedAt is the consumer's ONLY ordering and anti-replay authority — a deck commits iff its publishedAt is strictly newer than the committed one — because deckRev is an operator-facing counter that may restart at 1 if the publisher loses its state file. An explicitly published EMPTY deck (slides:[] with total:1) propagates: 'the operator cleared the deck' and 'never received a deck' are different facts. The publisher refuses (at publish time, before committing) any deck that cannot be broadcast within maxTotal chunks, and additionally caps a whole deck's serialized JSON at 40000 bytes.",
+      "note": "The lobby displays' typed slide deck (contract v5), published by the operator so every screen shows one deck. TEXT ONLY by contract: the display app's per-device video slides reference bytes in that device's own storage, so the publisher strips them and the consumer's sanitizer drops them. One publish is split into chunks so a large deck stays under Pusher's per-message ceiling; every chunk of a publish carries identical {deckRev, publishedAt}. publishedAt is the consumer's ONLY ordering and anti-replay authority — a deck commits iff its publishedAt is strictly newer than the committed one — because deckRev is an operator-facing counter that may restart at 1 if the publisher loses its state file. A slide may carry an optional show window — showFrom / showUntil, bare YYYY-MM-DD calendar dates with no timezone — so a dated announcement retires itself. Every consumer compares them against ITS OWN local date key, never a UTC-converted one; an unparseable date is dropped from the entry, which means the slide simply always shows. An explicitly published EMPTY deck (slides:[] with total:1) propagates: 'the operator cleared the deck' and 'never received a deck' are different facts. The publisher refuses (at publish time, before committing) any deck that cannot be broadcast within maxTotal chunks, and additionally caps a whole deck's serialized JSON at 40000 bytes.",
       "fields": [
         "deckRev",
         "publishedAt",
@@ -837,7 +837,9 @@
         "durationSec"
       ],
       "entryOptionalFields": [
-        "id"
+        "id",
+        "showFrom",
+        "showUntil"
       ],
       "maxEntries": 50,
       "maxTotal": 12,
@@ -901,6 +903,31 @@
               "durationSec": 0
             }
           ]
+        },
+        {
+          "deckRev": 6,
+          "publishedAt": "2026-09-16T22:25:00.000Z",
+          "seq": 0,
+          "total": 1,
+          "slides": [
+            {
+              "eyebrow": "Next week",
+              "text": "AWANA STORE NEXT WEEK",
+              "theme": "sunset",
+              "textSize": "auto",
+              "durationSec": 0,
+              "showFrom": "2026-09-09",
+              "showUntil": "2026-09-16"
+            },
+            {
+              "eyebrow": "",
+              "text": "Grand Prix sign-ups close Sunday",
+              "theme": "auto",
+              "textSize": "auto",
+              "durationSec": 0,
+              "showUntil": "2026-10-04"
+            }
+          ]
         }
       ],
       "dirty": [
@@ -958,6 +985,31 @@
             "banner",
             "presenterNotes",
             "Smiths"
+          ],
+          "expectEntryCount": 1
+        },
+        {
+          "reason": "a junk or impossible show window is dropped from the entry — the slide shows always rather than never",
+          "payload": {
+            "deckRev": 7,
+            "publishedAt": "2026-09-16T22:30:00.000Z",
+            "seq": 0,
+            "total": 1,
+            "slides": [
+              {
+                "eyebrow": "",
+                "text": "Bring a friend night",
+                "theme": "auto",
+                "textSize": "auto",
+                "durationSec": 0,
+                "showFrom": "2026-02-30",
+                "showUntil": "next Wednesday"
+              }
+            ]
+          },
+          "mustNotContain": [
+            "2026-02-30",
+            "next Wednesday"
           ],
           "expectEntryCount": 1
         }

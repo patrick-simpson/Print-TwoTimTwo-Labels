@@ -328,6 +328,10 @@ const SLIDE_MAX_DURATION_SEC = 600;
 // One chunk's JSON must seal into the 4096 pad rung (4 length-prefix bytes
 // spare), and 12 chunks must cover any deck the size gate below admits. The
 // budget leaves margin for the {deckRev, publishedAt, seq, total} wrapper.
+// The optional showFrom/showUntil pair costs 49 more bytes per slide, which
+// eats into this budget: the worst deck the caps admit (50 slides, 500-char
+// text, a 60-char eyebrow and both dates) needs 10 of the 12 chunks, pinned
+// in scripts/test-contracts.cjs so a future field cannot quietly overflow it.
 const SLIDES_CHUNK_JSON_BUDGET = 3900;
 const SLIDES_TOTAL_MAX = 12;
 // Coarse publish-time cap on the whole sanitized deck's serialized size —
@@ -348,6 +352,32 @@ function slideText(value, max) {
     out += code === 0x0a ? '\n' : ((code < 0x20 || code === 0x7f) ? ' ' : s[i]);
   }
   return out.trim().slice(0, max);
+}
+
+// Optional per-slide date window (#345): "AWANA STORE NEXT WEEK" retires
+// itself instead of advertising a night that already happened.
+//
+// A BARE LOCAL DATE, on purpose. The value is exactly the YYYY-MM-DD the
+// operator typed, carries no timezone, and is never converted to one here —
+// every consumer compares it against ITS OWN local date key (never
+// toISOString(), which in a US-Eastern evening has already rolled to
+// tomorrow, i.e. exactly club hours). Anything that is not a real calendar
+// date is DROPPED, never guessed at: a slide with a junk window shows
+// always, which is the same behaviour as a slide with no window at all and
+// strictly better than a slide that silently never appears.
+const SLIDE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function slideDate(value) {
+  const m = SLIDE_DATE_RE.exec(typeof value === 'string' ? value.trim() : '');
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  // Date.UTC is used ONLY to ask "does this calendar date exist" (leap years,
+  // month lengths). Nothing derived from it is stored or compared — the string
+  // the operator typed is what rides the wire.
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return null;
+  return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
 /**
@@ -374,6 +404,12 @@ function buildSlidesDeck(rawSlides) {
     if (Number.isFinite(dur) && dur > 0) {
       slide.durationSec = Math.min(SLIDE_MAX_DURATION_SEC, Math.max(SLIDE_MIN_DURATION_SEC, Math.round(dur)));
     }
+    // The optional show window. Omitted (not null, not '') when absent or
+    // unparseable, so a deck without dates is byte-identical to before.
+    const showFrom = slideDate(item.showFrom);
+    if (showFrom) slide.showFrom = showFrom;
+    const showUntil = slideDate(item.showUntil);
+    if (showUntil) slide.showUntil = showUntil;
     // The display keys its React lists and dedupe on ids; a clean one passes
     // through, anything else is omitted and the consumer mints its own.
     if (typeof item.id === 'string' && item.id.trim() && item.id.length <= SLIDE_ID_MAX
@@ -897,6 +933,7 @@ module.exports = {
   buildNotice,
   buildSlidesDeck,
   buildSlidesChunks,
+  slideDate,
   slidesDeckJsonBytes,
   SLIDES_MAX,
   SLIDES_TOTAL_MAX,

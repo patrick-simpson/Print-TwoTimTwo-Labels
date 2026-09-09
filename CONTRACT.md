@@ -116,6 +116,24 @@ Every chunk of a publish carries identical `deckRev` + `publishedAt`:
 | `total` | int, 1–12 | Chunk count for this publish. |
 | `slides` | array | `{ id? (≤64), eyebrow (≤60), text (required, ≤500, multi-line), theme (whitelist else "auto"), textSize (whitelist else "auto"), durationSec (0 or 3–600) }`. ≤50 per deck. `slides: []` is legal only when `total` is 1 — an explicitly cleared deck propagates. |
 
+A slide may also carry an optional **show window** so a dated announcement
+retires itself instead of advertising last month's store night:
+
+| Field | Type | Notes |
+|---|---|---|
+| `showFrom` | OPTIONAL `YYYY-MM-DD` | First day the slide may show. Absent = from the beginning. |
+| `showUntil` | OPTIONAL `YYYY-MM-DD` | Last day it may show, inclusive. Absent = forever. |
+
+Both are **bare local calendar dates with no timezone**, exactly as the
+operator typed them. Every consumer compares them against ITS OWN local date
+key — never a `toISOString()`-derived one, which in a US-Eastern evening has
+already rolled to tomorrow, i.e. exactly club hours. The publisher DROPS a
+value that is not a real calendar date (`2026-02-30`, `next Wednesday`), so a
+junk window means the slide always shows, never that it silently never does.
+A deck whose every slide has expired is still a published deck; what a screen
+does with an empty visible set is the consumer's business (this repo's display
+falls back to its calendar slides).
+
 The publisher refuses — at publish time, before committing anything — any
 deck that cannot be broadcast within the 12-chunk ceiling (greedy packing
 can strand slack per chunk, so a raw byte cap alone is not a guarantee),

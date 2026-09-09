@@ -286,8 +286,10 @@ console.log('buildSlidesDeck');
   ]);
   check('two clean slides pass', deck.length === 2);
   check('entry has exact shape (with id)',
-    keysOf(deck[0]).join(',') === [...spec.entryFields, ...spec.entryOptionalFields].sort().join(','),
+    keysOf(deck[0]).join(',') === [...spec.entryFields, 'id'].sort().join(','),
     keysOf(deck[0]).join(','));
+  check('no entry ever carries a key outside the contract',
+    deck.every((s) => keysOf(s).every((k) => [...spec.entryFields, ...spec.entryOptionalFields].includes(k))));
   check('entry has exact shape (no id)',
     keysOf(deck[1]).join(',') === [...spec.entryFields].sort().join(','), keysOf(deck[1]).join(','));
   check('multi-line text survives', deck[0].text === 'Welcome to\nAwana!');
@@ -322,6 +324,33 @@ console.log('buildSlidesDeck');
   check(`caps at ${spec.maxEntries} slides`,
     events.buildSlidesDeck(Array.from({ length: 80 }, (_, i) => ({ text: 'slide ' + i }))).length === spec.maxEntries);
   check('null input safe', events.buildSlidesDeck(null).length === 0);
+
+  // The optional show window (#345). Bare local dates, dropped when they are
+  // not a real calendar date — a slide with a junk window shows ALWAYS, which
+  // is the same as no window and strictly better than never appearing.
+  const dated = vectors.events.slides.valid[3];
+  const window = events.buildSlidesDeck(dated.slides);
+  check('a valid show window rides through verbatim',
+    window[0].showFrom === '2026-09-09' && window[0].showUntil === '2026-09-16'
+    && !('showFrom' in window[1]) && window[1].showUntil === '2026-10-04');
+  check('a dated entry still has an allowlisted key set',
+    window.every((s) => keysOf(s).every((k) => [...spec.entryFields, ...spec.entryOptionalFields].includes(k))),
+    keysOf(window[0]).join(','));
+  const badDates = vectors.events.slides.dirty[2];
+  const dropped = events.buildSlidesDeck(badDates.payload.slides);
+  check('an impossible date and free text are both dropped',
+    dropped.length === badDates.expectEntryCount
+    && !('showFrom' in dropped[0]) && !('showUntil' in dropped[0]));
+  check('nothing date-ish survives the dirty vector',
+    !badDates.mustNotContain.some((v) => JSON.stringify(dropped).includes(v)));
+  check('slideDate accepts a leap day and refuses a fake one',
+    events.slideDate('2024-02-29') === '2024-02-29' && events.slideDate('2026-02-29') === null
+    && events.slideDate('2026-13-01') === null && events.slideDate('2026-9-1') === null);
+  check('slideDate trims, and returns the typed string with NO timezone shift',
+    events.slideDate('  2026-12-25  ') === '2026-12-25');
+  check('a deck with no dates is byte-identical to before the field existed',
+    JSON.stringify(events.buildSlidesDeck([{ text: 'plain' }]))
+      === JSON.stringify([{ eyebrow: '', text: 'plain', theme: 'auto', textSize: 'auto', durationSec: 0 }]));
 }
 
 console.log('buildSlidesChunks');
@@ -369,6 +398,30 @@ console.log('buildSlidesChunks');
     events.slidesDeckJsonBytes(cjkDeck) <= events.SLIDES_DECK_JSON_MAX
     && events.buildSlidesChunks(cjkDeck, 1, stamp) === null,
     `${events.slidesDeckJsonBytes(cjkDeck)} bytes`);
+  // CHUNK BUDGET RE-CHECK (#345): showFrom+showUntil cost 49 bytes a slide, so
+  // the worst deck the entry caps admit — 50 slides, 500 characters of text, a
+  // full 60-character eyebrow AND both dates — must still fit maxTotal chunks.
+  // (This deck is the ceiling: MAX slides at MAX field lengths.)
+  const datedMaxDeck = events.buildSlidesDeck(Array.from({ length: spec.maxEntries }, (_, i) => ({
+    text: (`Slide ${i} `).padEnd(spec.maxText, 'x'),
+    eyebrow: 'y'.repeat(spec.maxEyebrow),
+    durationSec: 600,
+    showFrom: '2026-09-01',
+    showUntil: '2026-09-30',
+  })));
+  const datedChunks = events.buildSlidesChunks(datedMaxDeck, 9, stamp);
+  check('every slide of the ceiling deck kept both dates',
+    datedMaxDeck.length === spec.maxEntries
+    && datedMaxDeck.every((s) => s.showFrom === '2026-09-01' && s.showUntil === '2026-09-30'));
+  check(`the dated ceiling deck still chunks within maxTotal (${spec.maxTotal})`,
+    datedChunks !== null && datedChunks.length <= spec.maxTotal,
+    datedChunks ? `${datedChunks.length} chunks, ${events.slidesDeckJsonBytes(datedMaxDeck)} bytes` : 'null');
+  check('and every one of its chunks still seals into the slides pad ladder',
+    datedChunks !== null
+    && datedChunks.every((c) => events.paddedSize('slides', Buffer.byteLength(JSON.stringify(c), 'utf8')) !== null));
+  check('the dated ceiling deck reassembles exactly',
+    JSON.stringify(datedChunks.flatMap((c) => c.slides)) === JSON.stringify(datedMaxDeck));
+
   check('slidesDeckJsonBytes measures the sanitized deck',
     events.slidesDeckJsonBytes(bigDeck) === Buffer.byteLength(JSON.stringify(bigDeck), 'utf8'));
 
