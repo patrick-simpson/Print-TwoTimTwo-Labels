@@ -69,7 +69,14 @@ function extractFunction(name) {
   throw new Error(`unbalanced braces while extracting ${name}() from content.js`);
 }
 
-const HELPERS = ['nameKeyOf', 'identityKey', 'migrateLegacyKey', 'resolveIdentityKey', 'isPrinted'];
+const HELPERS = ['nameKeyOf', 'identityKey', 'migrateLegacyKey', 'resolveIdentityKey', 'isPrinted',
+  // #323: the walk-in guest FAMILY payload builder. Pure, so it evaluates in
+  // the same sandbox with nothing but MAX_GUEST_FAMILY supplied.
+  'buildGuestFamilyPayloads'];
+
+// Pinned rather than assumed: the helper enforces the same cap the UI does, so
+// a change to one must be visible to this test.
+const MAX_GUEST_FAMILY = 4;
 
 // The sentinel scanClubberList() stores when one name maps to two clubber ids.
 const AMBIGUOUS_NAME = '*ambiguous*';
@@ -84,10 +91,11 @@ function sandbox() {
     'printedNames',
     'ROSTER_NAME_INDEX',
     'AMBIGUOUS_NAME',
+    'MAX_GUEST_FAMILY',
     `${body}\n; return { ${HELPERS.join(', ')} };`
   );
   return Object.assign(
-    factory(printedNames, ROSTER_NAME_INDEX, AMBIGUOUS_NAME),
+    factory(printedNames, ROSTER_NAME_INDEX, AMBIGUOUS_NAME, MAX_GUEST_FAMILY),
     { printedNames, ROSTER_NAME_INDEX }
   );
 }
@@ -259,6 +267,77 @@ console.log('extension privacy badge');
   check('content.js never reads a displayKey value from the server',
     !/\.displayKey\b(?!Configured|Id)/.test(SRC),
     (SRC.match(/\.displayKey\b(?!Configured|Id)/g) || []).join(','));
+}
+
+console.log('walk-in guest family (#323) — one form, one card, four independent prints');
+{
+  const h = sandbox();
+  check('content.js declares the cap this test pins',
+    new RegExp('MAX_GUEST_FAMILY = ' + MAX_GUEST_FAMILY + ';').test(SRC));
+
+  const shared = { club: 'Cubbies', printerName: 'P1', stepUpNight: false, visitor: true };
+  const fam = h.buildGuestFamilyPayloads('Ann Smith',
+    [{ firstName: 'Bea', club: 'Sparks' }, { firstName: 'Cy', club: 'T&T' }], shared);
+
+  check('three rows produce three payloads', fam.length === 3, JSON.stringify(fam));
+  check('the extra children inherit the typed surname',
+    fam.map((p) => p.name).join('|') === 'Ann Smith|Bea Smith|Cy Smith', JSON.stringify(fam.map((p) => p.name)));
+
+  // THE point of the item: three labels, three DISTINCT dedup identities. A
+  // collision here would silently print one label for two children.
+  const keys = fam.map((p) => h.identityKey(null, p.name));
+  check('every child gets its own dedup identity', new Set(keys).size === 3, keys.join(','));
+  check('...and each is the ordinary name key, not something bespoke',
+    keys.every((k, i) => k === 'nm:' + h.nameKeyOf(fam[i].name)), keys.join(','));
+
+  check('only the FIRST child prints the family connect card',
+    fam[0].suppressConnectCard === undefined && fam[1].suppressConnectCard === true
+    && fam[2].suppressConnectCard === true, JSON.stringify(fam.map((p) => p.suppressConnectCard)));
+  check('each row keeps its own club',
+    fam.map((p) => p.clubName).join('|') === 'Cubbies|Sparks|T&T', JSON.stringify(fam.map((p) => p.clubName)));
+  check('the shared fields reach every child',
+    fam.every((p) => p.printerName === 'P1' && p.stepUpNight === false && p.visitor === true),
+    JSON.stringify(fam));
+  check('no payload carries a batch marker or a household id',
+    fam.every((p) => !('family' in p) && !('household' in p) && !('siblings' in p)), JSON.stringify(fam));
+
+  check('a blank extra row is not a child',
+    h.buildGuestFamilyPayloads('Ann Smith', [{ firstName: '   ' }, { firstName: 'Bea' }], {}).length === 2);
+  const capped = h.buildGuestFamilyPayloads('Ann Smith',
+    ['Bea', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus'].map((n) => ({ firstName: n })), {});
+  check(`the cap is ${MAX_GUEST_FAMILY} children, enforced in the builder too`,
+    capped.length === MAX_GUEST_FAMILY, JSON.stringify(capped.map((p) => p.name)));
+  const dupes = h.buildGuestFamilyPayloads('Ann Smith',
+    [{ firstName: 'Bea' }, { firstName: 'bea' }, { firstName: 'Cy' }], {});
+  check('the same child typed twice gets ONE label, not a swallowed duplicate',
+    dupes.length === 3 && dupes.map((p) => p.name).join('|') === 'Ann Smith|Bea Smith|Cy Smith',
+    JSON.stringify(dupes.map((p) => p.name)));
+
+  check('a single-token primary name still works, with no trailing space',
+    JSON.stringify(h.buildGuestFamilyPayloads('Ava', [{ firstName: 'Bea' }], {}).map((p) => p.name))
+      === '["Ava","Bea"]');
+  check('an empty or whitespace primary name prints nothing at all',
+    h.buildGuestFamilyPayloads('', [{ firstName: 'Bea' }], {}).length === 0
+    && h.buildGuestFamilyPayloads('   ', [], {}).length === 0
+    && h.buildGuestFamilyPayloads(null, null, null).length === 0);
+  check('null extras and null shared are safe (the lone walk-in path)',
+    JSON.stringify(h.buildGuestFamilyPayloads('Ann Smith', null, null)) ===
+      JSON.stringify([{ name: 'Ann Smith', clubName: '', clubImageData: null, printerName: '', stepUpNight: false }]),
+    JSON.stringify(h.buildGuestFamilyPayloads('Ann Smith', null, null)));
+  check('the visitor flag is only set when asked for',
+    !('visitor' in h.buildGuestFamilyPayloads('Ann Smith', [], { visitor: false })[0]));
+
+  // Wiring: no batch endpoint, and the removed sibling machinery stays removed.
+  check('each child is its own sequential POST /print, never a batch route',
+    /printGuestFamily\(payloads, i \+ 1, tally\)/.test(SRC)
+    && !/\/print-family|\/print-batch|\/print-siblings/.test(SRC));
+  check('one child failing still prints the next (recursion in then AND catch)',
+    (SRC.match(/next\(\);/g) || []).length >= 2);
+  check('the family rows are typed by a human — no roster lookup, no household index',
+    !/ROSTER_NAME_INDEX\[[^\]]*\]\s*;?\s*\/\/ family/.test(SRC)
+    && !/householdIndex|HOUSEHOLD_INDEX|siblingsOf/.test(SRC));
+  check('registration submits one household with Clubber[i] indexing',
+    /Clubber%5B' \+ i \+ '%5D%5Bfirst_name%5D/.test(SRC));
 }
 
 console.log('');

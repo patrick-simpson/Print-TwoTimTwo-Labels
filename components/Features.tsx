@@ -46,7 +46,7 @@ const FEATURES: { icon: string; title: string; body: string; isNew?: boolean }[]
   { icon: '📖', title: 'Handbook groups', body: 'Each child’s handbook group prints under their name so they get sorted to the right table fast.' },
   { icon: '🪙', title: 'Store Night shares', body: 'On Awana Store nights the label shows each kid’s share balance, pulled straight from TwoTimTwo.' },
   { icon: '🎓', title: 'Step Up Night', body: 'Graduating kids get a special inverted label announcing the club they’re stepping up to.' },
-  { icon: '👋', title: 'Walk-ins & visitors', body: 'Type any name in the widget to print a guest label — with a VISITOR badge if you want one.' },
+  { icon: '👋', title: 'Walk-ins & visitors', body: 'Type any name in the widget to print a guest label — with a VISITOR badge if you want one. A whole visiting family goes in one form: a label per child, one connect card.' },
   { icon: '🔁', title: 'One-tap reprints', body: 'Tonight’s check-ins are listed right in the widget — tap Reprint when a label tears or wanders off.' },
   { icon: '📊', title: 'Live dashboard', body: 'Tonight at a glance: per-club counts, visitors, and every allergy or no-photo kid in the building.' },
   { icon: '📴', title: 'Offline-ready', body: 'The roster is cached locally, prints queue while the server is unreachable, and search keeps working if the Wi-Fi drops.' },

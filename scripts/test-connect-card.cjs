@@ -314,7 +314,67 @@ async function main() {
       !('connectCardGreeting' in cleared), JSON.stringify(cleared.connectCardGreeting));
   }
 
-  // ── 6. Trophy band (#293) end to end ───────────────────────────────────────
+  // ── 6. suppressConnectCard: a visiting family gets ONE card (#323) ────────
+  console.log('\nconnect card: a whole visiting family, one card');
+  {
+    await post('/config', { connectCard: true, connectCardAutoFirstTimer: false });
+    const cards = () => (readJson(dataDir, 'print-history.json') || []).filter(e => e.isConnectCard).length;
+    const checkins = () => (readJson(dataDir, 'print-history.json') || []).filter(e => !isNonCheckinRow(e)).length;
+
+    const c0 = cards();
+    const k0 = checkins();
+    // Child one: the operator typed the family in, so this is the card.
+    const one = await post('/print', { firstName: 'Fam', lastName: 'One', clubName: 'Cubbies', visitor: true });
+    check('child one prints and gets the family card', one.status === 200 && cards() === c0 + 1,
+      `${c0} → ${cards()}`);
+
+    // Children two to four: same household, no second card — and each is still
+    // a completely ordinary, independent check-in.
+    const cAfterOne = cards();
+    for (const name of ['Two', 'Three', 'Four']) {
+      const res = await post('/print', {
+        firstName: name, lastName: 'One', clubName: 'Cubbies', visitor: true, suppressConnectCard: true,
+      });
+      check(`child ${name} prints`, res.status === 200, res.body.slice(0, 120));
+    }
+    check('no second card for the rest of the family', cards() === cAfterOne, `${cAfterOne} → ${cards()}`);
+    check('but every child got its own check-in row and label', checkins() === k0 + 4,
+      `${k0} → ${checkins()}`);
+
+    // The shape an offline-queue replay or a hand-built body can produce.
+    const strForm = await post('/print', {
+      firstName: 'Strung', lastName: 'Along', clubName: 'Cubbies', visitor: true, suppressConnectCard: 'true',
+    });
+    check('the string "true" suppresses too (an offline replay)',
+      strForm.status === 200 && cards() === cAfterOne, `${cAfterOne} → ${cards()}`);
+
+    // Backwards compatibility: POST /phone/visitor never sends the field.
+    const omitted = await post('/print', { firstName: 'Omitted', lastName: 'Field', clubName: 'Cubbies', visitor: true });
+    check('an omitted flag still prints the card (today\'s behaviour)',
+      omitted.status === 200 && cards() === cAfterOne + 1, `${cAfterOne} → ${cards()}`);
+    const falseFlag = await post('/print', {
+      firstName: 'Explicit', lastName: 'False', clubName: 'Cubbies', visitor: true, suppressConnectCard: false,
+    });
+    check('suppressConnectCard:false still prints the card',
+      falseFlag.status === 200 && cards() === cAfterOne + 2, `${cAfterOne + 1} → ${cards()}`);
+    const garbage = await post('/print', {
+      firstName: 'Garbage', lastName: 'Value', clubName: 'Cubbies', visitor: true, suppressConnectCard: 'maybe',
+    });
+    check('a garbage value fails toward printing the card',
+      garbage.status === 200 && cards() === cAfterOne + 3, `${cAfterOne + 2} → ${cards()}`);
+
+    // Suppression beats the AUTO path too, not just the explicit visitor flag.
+    await post('/config', { connectCard: true, connectCardAutoFirstTimer: true });
+    const beforeAuto = cards();
+    const auto = await post('/print', {
+      firstName: 'Autofam', lastName: 'Second', clubName: 'Cubbies', suppressConnectCard: true,
+    });
+    check('a brand-new name with suppression writes no card',
+      auto.status === 200 && cards() === beforeAuto, `${beforeAuto} → ${cards()}`);
+    await post('/config', { connectCard: true, connectCardAutoFirstTimer: false });
+  }
+
+  // ── 7. Trophy band (#293) end to end ───────────────────────────────────────
   // The band reuses this suite's own once-per-child-per-night history gate, so
   // it belongs beside the connect card's: the two are the only decorations
   // that must not fire twice for one child on one night.

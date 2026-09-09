@@ -341,7 +341,12 @@ async function main() {
     check('leader mode never marks the name printed (that is check-in dedup)',
       !/markPrinted/.test(leaderBranch));
     check('leader mode never registers anyone in TwoTimTwo',
-      !/registerWalkInGuest/.test(leaderBranch));
+      !/registerWalkInFamily/.test(leaderBranch));
+    // Renamed in v6.11.0 (a guest FAMILY registers under one household), so
+    // pin the real name — a scan for a function that no longer exists passes
+    // while testing nothing.
+    check('...and that is the real registration function name',
+      /function registerWalkInFamily\(/.test(ext));
     check('leader mode prints through the leader path', /printLeaders\(/.test(leaderBranch));
     check('ticking Leader visibly retargets the row rather than leaving it identical',
       /Print Leader Tag/.test(ext) && /visitorCb\.disabled/.test(ext) && /registerCb\.disabled/.test(ext));

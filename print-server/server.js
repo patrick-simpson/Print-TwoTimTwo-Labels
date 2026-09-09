@@ -2944,6 +2944,7 @@ async function performCheckinPrint(input) {
     stepUpNight   = false,
     awanaShares   = null,
     clubberId     = null,
+    suppressConnectCard = false,
     demo          = false
   } = input || {};
 
@@ -3146,8 +3147,15 @@ async function performCheckinPrint(input) {
     // a re-print past the 25s dedup window (lost label, roster fix, a second
     // station) must not hand the family a second welcome card, and firstEver
     // alone can't see that because tonight is still the kid's only ledger date.
+    // A visiting FAMILY (#323) is several independent prints — one per child —
+    // that share one household, so every child after the first asks for its
+    // card to be suppressed and the family gets ONE welcome card, not four.
+    // Absent or garbage means "print the card": that is today's behaviour, and
+    // POST /phone/visitor (which never sends the field) and the extension's
+    // offline queue both depend on it.
+    const suppressCard = suppressConnectCard === true || suppressConnectCard === 'true';
     let shouldConnectCard = false;
-    if (config.connectCard) {
+    if (config.connectCard && !suppressCard) {
       if (visitor) {
         shouldConnectCard = true;
       } else if (autoFirstTimer) {
@@ -3252,7 +3260,7 @@ app.post('/print', async (req, res) => {
     firstName, lastName,
     clubName: body.clubName, clubImageData: body.clubImageData, printerName: body.printerName,
     visitor: body.visitor, stepUpNight: body.stepUpNight, awanaShares: body.awanaShares,
-    clubberId: body.clubberId, demo: body.demo,
+    clubberId: body.clubberId, suppressConnectCard: body.suppressConnectCard, demo: body.demo,
   });
   res.status(out.status).json(out.body);
 });
