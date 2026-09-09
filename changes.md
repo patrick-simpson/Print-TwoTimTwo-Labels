@@ -1,4 +1,21 @@
-﻿## [6.7.0] - 2026-09-09
+﻿## [6.8.0] - 2026-09-09
+The phone can now show a club's roster minus tonight — who has *not* walked in yet.
+
+**At 6:20 a leader wants the other list.** The Check-in tab greys out whoever is already in, so "who is still missing" meant eyeballing a roster and mentally subtracting while the room filled up. A third tab, **Not here**, does the subtraction: everyone on the roster who has no label printed tonight, grouped by club with a per-club count in a collapsible header and sorted by name, so a leader can call the two families who are late instead of scrolling past the forty who arrived.
+
+**No new route, no new polling.** It re-renders the same `POST /phone/roster` payload the page already fetches every 12 seconds, and it is driven from inside `render()` rather than only off the poll — a check-in made on this phone must drop the kid out of the missing list immediately, not up to twelve seconds later. The tab count is kept current even while the tab is hidden; the DOM work only happens when it is on screen.
+
+**A former clubber must never read as "call this family".** `loadClubbers()` returns every row the CSV ever carried, so a child who left the program would have sat in a missing list forever. `POST /phone/roster` now carries one additive boolean, `inactive`, read off the roster's own `Inactive` column with the same idiom `twinDisambiguation()` already uses, and the tab filters those rows out. The payload is still first + last name, club and three flags — no allergies, no birthdate, no notes, no photos — and it still only reaches a PIN-gated phone. Nothing here is published: no Pusher event, no sanitizer, no contract change.
+
+**Unknown is not zero, and this is the whole discipline of the feature.** Copying the Tonight tab's `'(' + n + ')'` badge verbatim would have printed **(0)** before any roster loaded — a confident "nobody is missing" produced by knowing nothing. So the badge stays *blank* until a `/phone/roster` call has actually succeeded, an unloaded roster reads **"Roster not loaded"**, an empty one reads **"No roster — sync the CSV on the door laptop"**, and only a genuinely full house says "Everyone on the roster is checked in." A failed poll keeps the last-known-good list rather than blanking it (a network hiccup is not an empty room), and a 403 that invalidates the PIN clears the flag and the collapse state so the next volunteer never inherits the previous PIN's missing list. Same rule the lobby screens' checkout board follows: "I have no data" and "everyone is here" are opposite facts.
+
+**Wording never claims presence.** The rows say *not checked in yet*, never "still missing" or "not in the building" — the tab knows who has had a label printed, so a nickname mismatch or a check-in done outside this server reads as missing, and the view says that out loud. A kid removed from tonight's count on a phone shows up as waiting (the server has genuinely stopped counting them) but wears that reason on the row. The rows are read-only on purpose: the Check-in tab stays the one place a check-in is driven.
+
+**Three tabs do not fit a 360px phone**, so the label is the short "Not here" and the page got its first media query — placed after the base `.tab` rule, or it would lose the cascade — the same clipped-off-the-edge failure a sibling repo hit with a caption button.
+
+`npm run test:realtime` gains 7 checks: the roster row pinned as an exact five-key whitelist (a dropped flag would turn this tab into a confident lie), `checkedIn`/`inactive` as real booleans on every row, a new inactive fixture row proving a former clubber is flagged rather than listed as missing, and the waiting SET itself — empty with everyone in, exactly one name after a `/phone/undo`, empty again after the Add back. 18 suites, 0 failures.
+
+## [6.7.0] - 2026-09-09
 Reprint a whole stretch of tonight after a jam, instead of one row at a time while a line forms at the door.
 
 **A jam or a torn roll eats eight labels in a rush.** Print History could only reprint one row per click, each behind its own confirm — so the recovery took longer than the outage. The History tab now has **From / To times, an optional club, and a "Reprint this stretch" button**.

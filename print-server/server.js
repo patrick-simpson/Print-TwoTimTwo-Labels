@@ -6212,10 +6212,20 @@ app.post('/phone/roster', (req, res) => {
   const removedHere = new Set(
     t.entries.filter(e => e.undone && e.undoneBy === 'phone').map(nameOf).filter(n => !checkedIn.has(n))
   );
+  // `inactive` so the phone's Not-here-yet tab can leave former clubbers out
+  // of a call list — loadClubbers() returns every row the CSV ever carried, so
+  // without this a kid who left the program reads as missing forever. Same
+  // idiom as twinDisambiguation(): any non-blank Inactive cell means inactive.
   const kids = clubbers.map(r => {
     const name = `${r.FirstName || ''} ${r.LastName || ''}`.trim();
     const key = name.toLowerCase();
-    return { name, club: r.Club || '', checkedIn: checkedIn.has(key), removedHere: removedHere.has(key) };
+    return {
+      name,
+      club: r.Club || '',
+      checkedIn: checkedIn.has(key),
+      removedHere: removedHere.has(key),
+      inactive: !!String(r.Inactive || '').trim(),
+    };
   }).filter(k => k.name);
   res.json({ kids });
 });
