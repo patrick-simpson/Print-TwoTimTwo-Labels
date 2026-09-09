@@ -3,8 +3,8 @@
 // A second, fully independent content script (registered in manifest.json
 // alongside content.js). It periodically pulls a handful of TwoTimTwo's own
 // reports (check-in report, meeting report CSV, completed-books report,
-// color-group points, calendar iCal feed, admin messages, household CSV,
-// handbook PDFs) and POSTs compact JSON to the local print server, which is
+// attendance grid, color-group points, calendar iCal feed, admin messages,
+// household CSV, handbook PDFs) and POSTs compact JSON to the local print server, which is
 // the only publisher on the shared Pusher channel feeding lobby signage /
 // projector.
 //
@@ -19,11 +19,12 @@
 //     children's FIRST names ever reach the Pusher channel. Never last names,
 //     allergy/contact info, birth years, or calendar attendee/organizer/
 //     location data.
-//   - Two posts DO carry a child's full name, and both go to LOCALHOST ONLY
+//   - Three posts DO carry a child's full name, and all go to LOCALHOST ONLY
 //     for a purpose that never reaches the channel: /print-award (the slip a
-//     child is handed) and /feed/completed-books (the trophy band on that
-//     child's next label). The print server keeps both in memory / in its own
-//     print log and publishes neither.
+//     child is handed), /feed/completed-books (the trophy band on that child's
+//     next label) and /feed/attendance-grid (the operator's ledger audit). The
+//     print server keeps them in memory / in its own print log and publishes
+//     none of them.
 (function() {
   if (window.__awanaFeedsLoaded) return;
   window.__awanaFeedsLoaded = true;
@@ -701,6 +702,156 @@
     });
   }
 
+  // ── Attendance grid → the local ledger audit (#311) ────────────────────────
+  // The print server's attendance.json drives milestones, the streak flame and
+  // the auto connect card, and nothing ever checked it against TwoTimTwo. This
+  // pulls /report/attendance_grid (one column per meeting date, plus TwoTimTwo's
+  // own "#" total) so the dashboard can list the nights the two disagree about.
+  //
+  // NAMES: like the completed-books feed, this carries full names — to
+  // localhost only, where the server holds it in memory and publishes nothing.
+  //
+  // The header is documented (docs/TWOTIMTWO.md §5) but the CELL encoding is
+  // not, so this never guesses: it classifies cells, then cross-checks its own
+  // count against the "#" column for EVERY row. One disagreement and the whole
+  // club is discarded as unreadable — a misread encoding must report "unknown",
+  // never "these children attended nothing".
+  var GRID_MAX_ROWS = 600;
+  var GRID_MAX_DATES = 60;
+  var MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+  // Awana years start Aug 1 — mirrors seasonStartISO() in print-server/server.js.
+  function seasonStartYear(now) {
+    return now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  }
+
+  // "Sep02" → "2026-09-02". The grid's column labels carry no year, and the
+  // from/to parameter formats are undocumented, so the year comes from the
+  // Aug-1 season boundary rather than from anything the site echoed back.
+  function gridDateToIso(label, startYear) {
+    var m = /^([A-Za-z]{3})\s*(\d{1,2})$/.exec(String(label == null ? '' : label).trim());
+    if (!m) return null;
+    var mi = MONTHS.indexOf(m[1].toLowerCase());
+    if (mi < 0) return null;
+    var day = parseInt(m[2], 10);
+    if (!(day >= 1 && day <= 31)) return null;
+    var year = mi >= 7 ? startYear : startYear + 1;
+    return year + '-' + pad2(mi + 1) + '-' + pad2(day);
+  }
+
+  function gridCellIsPresent(v) {
+    var t = String(v == null ? '' : v).trim().toLowerCase();
+    if (!t) return false;
+    if (t === '0' || t === '-' || t === '--' || t === 'n' || t === 'a' || t === 'no' || t === 'false') return false;
+    return true;
+  }
+
+  // Pure. Returns { meetingDates: [iso], rows: [{name, dates:[iso]}] } or null.
+  function parseAttendanceGridCsv(text, startYear, todayIso) {
+    if (!text || isLoginPage(text) || !looksLikeCsv(text)) return null;
+    var rows = parseCsvText(text);
+    if (rows.length < 2 || !rows[0]) return null;
+    var header = rows[0];
+    var clubberIdx = -1, countIdx = -1;
+    for (var i = 0; i < header.length; i++) {
+      var h = (header[i] || '').trim();
+      if (/^clubber$/i.test(h)) clubberIdx = i;
+      else if (h === '#') countIdx = i;
+    }
+    // No "#" column means no cross-check is possible, so the encoding cannot be
+    // confirmed and the grid is unknown rather than assumed.
+    if (clubberIdx < 0 || countIdx < 0) return null;
+    var dateCols = [];
+    for (var c = clubberIdx + 1; c < countIdx; c++) {
+      var iso = gridDateToIso(header[c], startYear);
+      if (iso) dateCols.push({ idx: c, iso: iso });
+    }
+    if (!dateCols.length || dateCols.length > GRID_MAX_DATES) return null;
+    // A future, unheld meeting is not a date anyone can be missing — but its
+    // cells still count toward the "#" cross-check.
+    var pastCols = dateCols.filter(function(d) { return d.iso <= todayIso; });
+    if (!pastCols.length) return null;
+
+    var out = [];
+    for (var r = 1; r < rows.length; r++) {
+      var row = rows[r];
+      if (isFooterOrBlankRow(row)) continue;
+      var name = (row[clubberIdx] || '').trim();
+      if (!name) continue;
+      var all = 0;
+      var dates = [];
+      for (var d = 0; d < dateCols.length; d++) {
+        if (!gridCellIsPresent(row[dateCols[d].idx])) continue;
+        all++;
+        if (dateCols[d].iso <= todayIso) dates.push(dateCols[d].iso);
+      }
+      var expected = parseInt((row[countIdx] || '').trim(), 10);
+      // THE safety mechanism: if our reading of the cells disagrees with
+      // TwoTimTwo's own count for any row, we did not understand the encoding.
+      if (isFinite(expected) && all !== expected) return null;
+      out.push({ name: name.slice(0, 80), dates: dates });
+      if (out.length > GRID_MAX_ROWS) return null;
+    }
+    return { meetingDates: pastCols.map(function(d) { return d.iso; }), rows: out };
+  }
+
+  // NOTE: unlike runWorksheets/runCompletedBooks this iterates CLUB_ID_NAMES
+  // rather than CHURCH_CFG.sharesClubIds — that list omits Cubbies and Journey
+  // (and carries a 5 that is not a club here), which would leave two whole
+  // clubs permanently and silently unaudited.
+  function runAttendanceGrid() {
+    var now = new Date();
+    var startYear = seasonStartYear(now);
+    var todayIso = formatDateYMD(now);
+    var from = startYear + '-08-01';
+    var to = (startYear + 1) + '-07-31';
+    var ids = Object.keys(CLUB_ID_NAMES);
+    var clubsRead = [], clubsFailed = [], allDates = {}, allRows = [];
+
+    function fetchOne(i) {
+      if (i >= ids.length) {
+        // "I could not read it" must never arrive as "nobody attended".
+        if (!clubsRead.length) return;
+        postFeed('/feed/attendance-grid', {
+          season: startYear + '-' + (startYear + 1),
+          meetingDates: Object.keys(allDates).sort().slice(0, GRID_MAX_DATES),
+          clubsRead: clubsRead,
+          clubsFailed: clubsFailed,
+          rows: allRows.slice(0, GRID_MAX_ROWS)
+        });
+        return;
+      }
+      var id = ids[i];
+      var clubName = CLUB_ID_NAMES[id] || String(id);
+      var base = '/report/attendance_grid?output=csv&club_id=' + encodeURIComponent(id);
+      // Sequentially, never Promise.all: six 15s fetches at once on a club-night
+      // laptop is rude, and this is never urgent.
+      fetchText(base + '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)).then(function(csv) {
+        var parsed = parseAttendanceGridCsv(csv, startYear, todayIso);
+        if (parsed) return parsed;
+        // The from/to formats are undocumented — retry once without them.
+        return fetchText(base).then(function(csv2) {
+          return parseAttendanceGridCsv(csv2, startYear, todayIso);
+        });
+      }).then(function(parsed) {
+        if (!parsed) {
+          clubsFailed.push(clubName);
+        } else {
+          clubsRead.push(clubName);
+          parsed.meetingDates.forEach(function(d) { allDates[d] = true; });
+          parsed.rows.forEach(function(row) {
+            allRows.push({ name: row.name, club: clubName, dates: row.dates });
+          });
+        }
+        fetchOne(i + 1);
+      }).catch(function() {
+        clubsFailed.push(clubName);
+        fetchOne(i + 1);
+      });
+    }
+    fetchOne(0);
+  }
+
   // ── Completed handbooks → the trophy band (#293) ───────────────────────────
   // Finishing a whole handbook is the biggest thing that happens to an Awana
   // kid all year, and today it only shows up if the meeting report caught it
@@ -777,9 +928,9 @@
   // of rows, and needs no departure event to miss.
   //
   // THIS IS THE ONE FEED THAT CARRIES NAMES ONTO THE WIRE. Everything else
-  // published from this file is aggregate counters and church copy; the two
-  // full-name posts (/print-award, /feed/completed-books) stay on localhost
-  // and are never published. First name + club only here, and the print
+  // published from this file is aggregate counters and church copy; the three
+  // full-name posts (/print-award, /feed/completed-books,
+  // /feed/attendance-grid) stay on localhost and are never published. First name + club only here, and the print
   // server's buildCheckout() enforces that structurally — a guardian name or a
   // security code cannot get through even if this parser started reading them.
   // The payload is then sealed with AES-256-GCM before it reaches the channel.
@@ -883,7 +1034,8 @@
     notice: 0,
     checkout: 0,
     worksheets: 0,
-    completedBooks: 0
+    completedBooks: 0,
+    attendanceGrid: 0
   };
 
   var TASK_FNS = {
@@ -893,7 +1045,8 @@
     notice: runNotice,
     checkout: runCheckout,
     worksheets: runWorksheets,
-    completedBooks: runCompletedBooks
+    completedBooks: runCompletedBooks,
+    attendanceGrid: runAttendanceGrid
   };
 
   function intervalFor(task) {
@@ -912,6 +1065,11 @@
         return isInClubWindow() ? 5 * 60 * 1000 : 30 * 60 * 1000;
       case 'worksheets':
         return 5 * 60 * 1000; // internal guards decide whether it actually fires
+      case 'attendanceGrid':
+        // OFF during club (six CSV fetches must never compete with the print
+        // path), every 6h otherwise. lastRun starts at 0, so the first tick
+        // after a page load already fires it outside the window.
+        return isInClubWindow() ? Infinity : 6 * 60 * 60 * 1000;
       case 'completedBooks':
         // Club-night only, same reason as checkout: full names, and the band
         // is only useful for labels printing tonight.

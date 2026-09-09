@@ -306,6 +306,10 @@ async function main() {
       // The completed-books feed carries children's FULL names (it decides
       // whose next label gets a trophy band), so it is gated like the roster.
       ['/feed/completed-books', { entries: [{ name: 'Stranger Leakcanary', book: 'Wingrunner', date: '2026-09-02' }] }],
+      // The attendance grid carries full names too, and its apply route writes
+      // into the season ledger — neither may be reachable without a PIN.
+      ['/feed/attendance-grid', { meetingDates: ['2026-09-02'], clubsRead: ['Sparks'], rows: [{ name: 'Stranger Leakcanary', club: 'Sparks', dates: ['2026-09-02'] }] }],
+      ['/attendance-audit/apply', { confirm: true }],
     ];
     for (const [p, body] of PII_POST_PATHS) {
       const res = await request({ host: lan, method: 'POST', pathname: p, body });

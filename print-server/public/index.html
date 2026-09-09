@@ -286,6 +286,7 @@
       <div class="tab" data-tab="preview">Label Preview</div>
       <div class="tab" data-tab="settings">Settings</div>
       <div class="tab" data-tab="diagnostics">Diagnostics</div>
+      <div class="tab" data-tab="attendance">Attendance Audit</div>
     </div>
     <div class="card" style="border-top-left-radius:0">
       <!-- History tab -->
@@ -574,6 +575,29 @@
           </div>
         </div>
       </div>
+
+      <!-- Attendance Audit tab (#311) -->
+      <div id="tab-attendance" class="tab-content">
+        <div class="card-header">
+          <span>Attendance Audit</span>
+          <span>
+            <span id="audit-age" style="font-weight:400;font-size:12px;color:#64748b">Loading&hellip;</span>
+            <button class="btn btn-secondary btn-sm" onclick="loadAttendanceAudit()">Refresh</button>
+          </span>
+        </div>
+        <div class="card-body">
+          <div id="audit-note" style="font-size:12px;color:#475569;line-height:1.5"></div>
+          <div id="audit-body" style="margin-top:10px"></div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" id="audit-apply-btn" onclick="applyAuditAdditions()" disabled>Apply missing dates</button>
+            <span id="audit-apply-note" style="font-size:11px;color:#94a3b8"></span>
+          </div>
+          <p style="font-size:11px;color:#94a3b8;margin-top:10px">
+            Nothing is ever deleted. The ledger legitimately holds walk-in guests TwoTimTwo never saw,
+            so a night only this machine knows about is information, not an error.
+          </p>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -837,6 +861,116 @@ function loadCountCheck() {
       + Math.abs(v.unexplained) + (short ? ' with no label printed' : ' more than TwoTimTwo has')
       + (clubs ? '<br><span style="color:#64748b">' + clubs + '</span>' : '');
   }).catch(function() { /* dashboard shows server trouble elsewhere */ });
+}
+
+// ── Attendance Audit (#311) ──────────────────────────────────────────────────
+// The season ledger against TwoTimTwo's own attendance grid. Two rules the
+// copy here must never break: an absent or unreadable grid says "Not checked",
+// never "agrees" and never a zero; and the Apply button only ever ADDS.
+function auditDays(ms) { return Math.max(0, Math.round(ms / 86400000)); }
+
+function loadAttendanceAudit() {
+  var age = document.getElementById('audit-age');
+  var note = document.getElementById('audit-note');
+  var body = document.getElementById('audit-body');
+  var btn = document.getElementById('audit-apply-btn');
+  if (!age || !note || !body || !btn) return;
+  fetch(BASE + '/attendance-audit').then(function(r) { return r.json(); }).then(function(v) {
+    btn.disabled = true;
+    btn.textContent = 'Apply missing dates';
+    body.innerHTML = '';
+    if (!v || !v.known) {
+      age.style.color = '#64748b';
+      age.textContent = 'Not checked';
+      var why = 'Not checked \u2014 no attendance grid has been read yet. Open TwoTimTwo in Chrome with the extension loaded (outside club hours) and this fills in on its own.';
+      if (v && v.reason === 'stale') {
+        why = 'Not checked \u2014 the last grid read is ' + auditDays(v.ageMs) + ' day(s) old, too stale to trust. It refreshes on its own from a TwoTimTwo tab.';
+      } else if (v && v.reason === 'no-meetings') {
+        why = 'Not checked \u2014 the grid held no past meeting dates, so there is nothing to compare.';
+      }
+      note.textContent = why;
+      return;
+    }
+    age.style.color = '#64748b';
+    age.textContent = 'Grid read ' + auditDays(v.ageMs) + ' day(s) ago'
+      + (v.season ? ' \u00B7 season ' + v.season : '');
+    var unread = (v.clubsUnread || []).length
+      ? ' Not included: ' + (v.clubsUnread || []).map(esc).join(', ') + ' (could not be read).'
+      : '';
+    if (v.matches) {
+      note.innerHTML = '<span style="color:#15803d;font-weight:600">\u2713 Agrees with TwoTimTwo across '
+        + esc(v.scopeDates) + ' meeting(s)</span>' + (unread ? '<span style="color:#64748b">' + unread + '</span>' : '');
+    } else {
+      note.innerHTML = '<span style="color:#b45309;font-weight:600">\u26A0 '
+        + esc(v.totals.missing) + ' night(s) TwoTimTwo has that this ledger does not, and '
+        + esc(v.totals.ledgerOnly) + ' this ledger has that TwoTimTwo does not</span>'
+        + '<br><span style="color:#64748b">A night only this machine knows about is usually a walk-in guest \u2014 those are never removed.'
+        + esc(unread) + '</span>';
+      var html = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+        + '<tr style="text-align:left;color:#64748b"><th style="padding:4px 6px">Child</th><th style="padding:4px 6px">Club</th>'
+        + '<th style="padding:4px 6px">Missing here</th><th style="padding:4px 6px">Only here</th></tr>';
+      (v.rows || []).forEach(function(r) {
+        html += '<tr style="border-top:1px solid #e2e8f0">'
+          + '<td style="padding:4px 6px">' + esc(r.name) + '</td>'
+          + '<td style="padding:4px 6px;color:#64748b">' + esc(r.club) + '</td>'
+          + '<td style="padding:4px 6px;color:#b91c1c">' + (r.missingHere.length ? esc(r.missingHere.join(', ')) : '\u2014') + '</td>'
+          + '<td style="padding:4px 6px;color:#64748b">' + (r.ledgerOnly.length ? esc(r.ledgerOnly.join(', ')) : '\u2014') + '</td>'
+          + '</tr>';
+      });
+      html += '</table>';
+      body.innerHTML = html;
+      if (v.totals.missing > 0) {
+        btn.disabled = false;
+        btn.textContent = 'Apply ' + v.totals.missing + ' missing date(s)';
+      }
+    }
+    // The four buckets that are never discrepancies and never applied.
+    var buckets = [
+      ['Same name twice \u2014 skipped on purpose', v.ambiguous],
+      ['Walk-in guests TwoTimTwo never saw', v.notOnRoster],
+      ['On TwoTimTwo but never printed here \u2014 not added', v.neverPrinted],
+      ['Clubs that could not be read', v.clubsUnread]
+    ].filter(function(b) { return (b[1] || []).length; });
+    if (buckets.length) {
+      body.innerHTML += '<div style="margin-top:10px;font-size:11px;color:#94a3b8">'
+        + buckets.map(function(b) {
+          return '<div title="' + esc(b[0]) + '">' + esc(b[0]) + ': ' + b[1].length
+            + ' \u2014 ' + b[1].slice(0, 8).map(esc).join(', ') + (b[1].length > 8 ? '\u2026' : '') + '</div>';
+        }).join('')
+        + '</div>';
+    }
+  }).catch(function() {
+    age.style.color = '#b91c1c';
+    age.textContent = 'Unknown \u2014 server offline';
+    note.textContent = 'The audit could not be read, so nothing is known about the ledger either way.';
+    body.innerHTML = '';
+    btn.disabled = true;
+  });
+}
+
+function applyAuditAdditions() {
+  var btn = document.getElementById('audit-apply-btn');
+  var out = document.getElementById('audit-apply-note');
+  if (!confirm('Add the missing night(s) to the season ledger?\n\nThis changes streaks and milestone counts for the rest of the season (a child jumping past 5 nights will not get their 5-night line). Nothing is ever deleted.')) return;
+  btn.disabled = true;
+  fetch(BASE + '/attendance-audit/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d && d.ok) {
+      out.style.color = '#15803d';
+      out.textContent = 'Added ' + d.added + ' date(s) across ' + (d.children || []).length + ' child(ren) \u00B7 0 deleted';
+    } else {
+      out.style.color = '#b91c1c';
+      out.textContent = (d && d.error) ? d.error : 'Could not apply';
+    }
+    loadAttendanceAudit();
+  }).catch(function() {
+    out.style.color = '#b91c1c';
+    out.textContent = 'Could not reach the print server';
+    loadAttendanceAudit();
+  });
 }
 
 // Tonight at a glance
@@ -1940,6 +2074,9 @@ loadRoster();
 loadHistory();
 loadTonightStats();
 loadCountCheck();
+// No setInterval: the grid feed refreshes at most every 6 hours, so this
+// reads once at load and on the tab's own Refresh button.
+loadAttendanceAudit();
 loadClubs();
 loadLeaderChips();
 loadSettings();

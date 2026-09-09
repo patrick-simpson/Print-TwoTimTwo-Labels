@@ -393,9 +393,9 @@ extending the §5 table:
 | `/report/checkinItems` | `club_id` | `"Clubber","Attendance","Brought a friend","Bible"` — columns are that club's configured check-in items |
 | `/report/attendance_summary` | `year_start` | `"Meeting","Puggles","","Cubbies","","Sparks","","T&T","","Trek","","Journey","","TOTAL",""` |
 | `/report/clubcounts` | `year_start` | `"Club","#Registered","Capacity"` |
-| `/report/attendance_grid` | `club_id, year_start, from, to` | `"Club","Clubber","Sep02","Sep09","#","%"` — one column per meeting date |
+| `/report/attendance_grid` | `club_id, year_start, from, to` | `"Club","Clubber","Sep02","Sep09","#","%"` — one column per meeting date. **Parsed since v6.10.0** (the attendance audit). The date column labels carry no year, so the year comes from the Aug-1 Awana season boundary. The per-cell encoding for present/absent was never observed, so the parser classifies cells and then cross-checks its own count against the `#` column for every row — one disagreement and the whole club is discarded as unreadable. The `from`/`to` value formats are still unverified; the parser retries without them. |
 | `/meeting/report` (alias `/report/meeting`) | `year_start, calendar_id, club_id, info, sort` | `"HBGroup","Clubber","Book","Unit","Award","Note"` |
-| `/report/completed_books` | `club_id, year_start, from_date, to_date` | `"Name","Book","Date"` |
+| `/report/completed_books` | `club_id, year_start, from_date, to_date` | `"Name","Book","Date"` — **parsed since v6.9.0** (the trophy band). The accepted `from_date`/`to_date` formats and whether `Name` is "First Last" or "Last, First" are both still unverified, so neither is trusted: the print server's own 14-day window filters, and the name key swaps around a comma so either ordering matches. |
 | `/report/completed_books_history` | `club_id` | `"Name","Book","Date"` |
 | `/report/bookProgress` | `club_id` | `"Name","Track","Current Book","Progress","HB Group"` |
 | `/report/quarter_points` | `club_id, what, year_start, from, to, level` | `"Clubber","TOTAL","Sections","Checkin","Special"` |
