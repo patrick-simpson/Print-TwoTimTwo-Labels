@@ -1,4 +1,19 @@
-﻿## [6.4.0] - 2026-09-06
+﻿## [6.5.0] - 2026-09-09
+The birthday cake on a label now says the age out loud.
+
+**"Turning 7 this week!" beside the cake.** The cake icon told a leader *something* was going on and nothing more, so a birthday kid got noticed rather than greeted. The birth year has been on the roster all along, so the label now prints the age they turn this week in a short line to the right of the cake — every leader who reads the badge greets the exact age, and a silent icon becomes a conversation on club night.
+
+**Real birthday weeks only, deliberately.** A June–August kid's cake is their *half*-birthday (6.0.0's `isCakeWeek`), and "turning 7 in six months" is not a fact anyone wants on a badge — so a half-birthday week prints the cake alone, exactly as before. The age is computed from the same matched year the cake keys on (`birthdayWeekYear`, factored out of `isWeekOfMonthDay` with byte-identical behaviour), so the icon and the words cannot disagree in the Dec→Jan wrap week.
+
+**A malformed birth year prints the plain cake, never "Turning NaN".** The age is clamped the way `awanaShares` and the streak count already are: an unparseable, blank or "N/A" birthdate, a missing roster record, a future year, and anything outside 1–21 all degrade to null — and a null renders byte-for-byte the label that printed yesterday. An age is also never a standalone line: without a cake it prints nothing at all.
+
+**All five label-render sites derive it**, so a preview, a reprint, an award slip and the Print-Dialog label say the same thing the label that first printed said — a reprint silently losing the line was the likelier bug than never adding it. On a crowded row (five allergies, coin, flame, sparkle, camera) the *words* yield first to a short "Turning 7!" and then to nothing; the cake and every safety icon keep their positions, because those are safety content and the sentence is not.
+
+**Nothing derived from the birth year leaves the print server.** Only the integer age reaches the canvas renderer: `print-server/events.js` is untouched, so no birth-year-derived field enters the sealed `checkin` contract, the history rows, or `/health`. A test asserts that by name.
+
+New golden baseline `birthday-age.png` plus font-independent checks that eleven malformed values each render byte-identically to the plain cake, that an age without a cake renders nothing, and that a crowded icon row is never pushed further left than the allergy glyphs already put it; `npm run test:server` gains the helper's null contract, the 1–21 boundary, the half-birthday rule, and a wiring scan pinning all five call sites. 18 suites, 0 failures.
+
+## [6.4.0] - 2026-09-06
 Does the number of clubbers checked in actually match TwoTimTwo? Now the answer is on screen instead of in a report nobody reads until Friday.
 
 **Two counts, finally compared.** The print server counts labels it printed. TwoTimTwo counts children its own check-in screen recorded. Those are independent measurements of the same night, and nothing had ever compared them — so the case that matters most was completely silent: a child checked in at the desk, no label came out, and they walked into club wearing nothing. The extension already fetched `/clubber/checkin_report` every ~60 s for undo detection, so it now posts that report's per-club counts to the print server as well (`POST /feed/source-count`), and `GET`/`POST /reconcile` reports the verdict on the **Club Print widget**, the **dashboard's Tonight card** and the **phone Tonight tab**: `✓ Matches TwoTimTwo (101)`, or `⚠ TwoTimTwo 101 · printed 99 — 2 with no label (Sparks −2)`.

@@ -962,14 +962,18 @@ function parseBirthdate(birthdateStr) {
   return isNaN(bday.getTime()) ? null : bday;
 }
 
-// True when the given month/day (0-indexed month) falls in the same ISO week
-// as today. Tested in both this calendar year and the next: the old code
-// rolled an already-passed birthday forward a year before comparing, so the
-// cake vanished the day after the birthday even though the documented
-// behavior is "the whole calendar week containing it". Checking next year as
-// well keeps the Dec→Jan ISO-week wrap working (e.g. today Dec 29 in ISO
-// week 1, target Jan 2).
-function isWeekOfMonthDay(month, day) {
+// Which calendar year's occurrence of the given month/day (0-indexed month)
+// falls in the same ISO week as today — or null when neither does. Tested in
+// both this calendar year and the next: the old code rolled an already-passed
+// birthday forward a year before comparing, so the cake vanished the day
+// after the birthday even though the documented behavior is "the whole
+// calendar week containing it". Checking next year as well keeps the Dec→Jan
+// ISO-week wrap working (e.g. today Dec 29 in ISO week 1, target Jan 2).
+//
+// Returning the MATCHED YEAR rather than a bare boolean is what lets the
+// birthday-age line (#291) compute the age from exactly the occurrence the
+// cake icon keys on — the two can never disagree across the year wrap.
+function birthdayWeekYear(month, day) {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -990,13 +994,18 @@ function isWeekOfMonthDay(month, day) {
       const lastDay = new Date(yr, month + 1, 0).getDate();
       const candidate = new Date(yr, month, Math.min(day, lastDay));
       const w = getWeekNumber(candidate);
-      if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
+      if (w.year === todayWeek.year && w.week === todayWeek.week) return yr;
     }
-    return false;
+    return null;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
-    return false;
+    return null;
   }
+}
+
+// True when the given month/day falls in the same ISO week as today.
+function isWeekOfMonthDay(month, day) {
+  return birthdayWeekYear(month, day) !== null;
 }
 
 function isBirthdayWeek(birthdateStr) {
@@ -1026,6 +1035,30 @@ function isHalfBirthdayWeek(birthdateStr) {
 // kid's half-birthday week.
 function isCakeWeek(birthdateStr) {
   return isBirthdayWeek(birthdateStr) || isHalfBirthdayWeek(birthdateStr);
+}
+
+// The age a child turns this birthday week (#291), printed as words beside the
+// cake so a leader can greet the exact age instead of just noticing an icon.
+//
+// REAL birthday weeks only, deliberately: a summer kid's half-birthday cake
+// gets no age line, because "turning 7 in six months" is not a fact anyone
+// wants on a badge. The two windows are mutually exclusive, so no tie-break is
+// needed — a half-birthday week simply returns null here.
+//
+// Uses the SAME matched year the cake keys on (birthdayWeekYear), so the icon
+// and the words can never disagree at the Dec→Jan wrap.
+//
+// Returns null for anything unparseable, not-this-week, or implausible for a
+// club (outside 1–21), so a caller can pass the result straight through to
+// generateLabel and a malformed birth year degrades to today's plain cake.
+// The birth YEAR itself never leaves this function: only the derived age does.
+function birthdayAgeThisWeek(birthdateStr) {
+  const bday = parseBirthdate(birthdateStr);
+  if (!bday) return null;
+  const yr = birthdayWeekYear(bday.getMonth(), bday.getDate());
+  if (yr === null) return null;
+  const age = yr - bday.getFullYear();
+  return (Number.isInteger(age) && age >= 1 && age <= 21) ? age : null;
 }
 
 // ── Allergy parser ────────────────────────────────────────────────────────────
@@ -1461,7 +1494,8 @@ async function generateLabel(input) {
   }
   let {
     firstName, lastName, clubName, clubImageBuffer,
-    allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
+    allergyTokens = [], handbookGroup = '', isBirthday = false, birthdayAge = null,
+    isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
     streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
@@ -1503,6 +1537,15 @@ async function generateLabel(input) {
   if (awanaShares !== null && awanaShares !== undefined) {
     const n = Number(awanaShares);
     awanaShares = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
+  }
+  // Birthday age (#291): the age a kid turns this week, printed beside the
+  // cake. Same coercion discipline as awanaShares — a malformed birth year
+  // must never print "Turning NaN". 1–21 is the plausible club range; anything
+  // else (0, negative, 22+, a string, Infinity, an object) degrades to no line
+  // at all, i.e. to exactly today's plain cake.
+  if (birthdayAge !== null && birthdayAge !== undefined) {
+    const n = Number(birthdayAge);
+    birthdayAge = (Number.isFinite(n) && n >= 1 && n <= 21) ? Math.floor(n) : null;
   }
   // Streak flame (#14): same coercion discipline as awanaShares — a malformed
   // value must never print "🔥 NaN".
@@ -1708,6 +1751,19 @@ async function generateLabel(input) {
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
 
+  // Birthday age line (#291): a few words beside the cake, so the icon becomes
+  // a conversation instead of a silent glyph. Gated on isBirthday a SECOND time
+  // here — the age is an annotation ON the cake, never a standalone line, so a
+  // caller passing birthdayAge with isBirthday:false renders byte-identically
+  // to no age at all.
+  const AGE_TEXT_SIZE = 10;
+  const ageFull  = (isBirthday && birthdayAge != null) ? `Turning ${birthdayAge} this week!` : '';
+  const ageShort = ageFull ? `Turning ${birthdayAge}!` : '';
+  // How much of the bottom band the right-anchored icon row may occupy before
+  // it would run into the icon panel (or the badge's left padding when there
+  // is none). 178pt with a panel present.
+  const ICON_ROW_MAX_W = (BX + BW - 6) - (hasIcon ? TEXT_X : BX + 8);
+
   // Twin-safe (#13): the middle initial rides the first-name line so the
   // width fit below accounts for it; the birth-month hint is its own small
   // line under the last name.
@@ -1826,7 +1882,21 @@ async function generateLabel(input) {
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
       (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0) +
       (isNewKid ? 1 : 0) + (collectibleIndex != null ? 1 : 0);
-    const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
+    // The age words (#291) sit in that same right-anchored row and are much
+    // wider than an icon slot (~89pt, roughly 3.5 slots), so they have to be
+    // measured rather than estimated — otherwise the handbook group runs
+    // straight under them, the exact collision this reservation exists for.
+    const iconReserve = iconCount > 0 ? iconCount * 25 + 10 : 0;
+    let ageReserve = 0;
+    if (ageFull) {
+      ctx.font = `${AGE_TEXT_SIZE}px ${fontFamily}`;
+      // Bounded by what is actually LEFT of the band: when the icons alone
+      // already fill it, the ladder below will drop the words, and reserving
+      // for text that never gets drawn would truncate this line for nothing.
+      ageReserve = Math.max(0, Math.min(
+        ctx.measureText(ageFull).width + 3, ICON_ROW_MAX_W - iconReserve));
+    }
+    const reservedRight = iconReserve + ageReserve;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
     groupStr = truncateTextCanvas(ctx, groupStr, groupFont, groupMaxW);
@@ -1899,8 +1969,17 @@ async function generateLabel(input) {
       // new names fast. Subtle by design - no text, small glyph.
       glyphs.push({ ch: '\u2728', size: EMOJI_SIZE });
     }
+    let ageGlyph = null;
     if (isBirthday) {
       glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      if (ageFull) {
+        // Right of the cake (#291), so the allergy/no-photo safety icons keep
+        // their familiar right-edge positions and the row reads "\uD83C\uDF70 Turning 7
+        // this week!". Carries its own text font \u2014 the emoji stack would
+        // rasterise the words with whatever fallback it happens to reach.
+        ageGlyph = { ch: ageFull, size: AGE_TEXT_SIZE, font: fontFamily };
+        glyphs.push(ageGlyph);
+      }
     }
     allergyTokens.forEach(function(t) {
       glyphs.push({ ch: ALLERGY_EMOJI[t] || '\u26A0', size: ALLERGY_EMOJI_SIZE });
@@ -1916,12 +1995,32 @@ async function generateLabel(input) {
     let totalW = 0;
     glyphs.forEach(function(g, i) {
       if (!g.draw) {
-        ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+        ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
         g.w = ctx.measureText(g.ch).width;
       }
       totalW += g.w;
       if (i < glyphs.length - 1) totalW += SPACING;
     });
+
+    // Width ladder for the age words (#291): full string, then a short form,
+    // then nothing. The CAKE never goes, and neither does any allergy or
+    // no-photo glyph — those are safety content. Only the words yield, so a
+    // crowded label degrades to exactly today's icon row.
+    if (ageGlyph && totalW > ICON_ROW_MAX_W) {
+      ctx.font = `${ageGlyph.size}px ${ageGlyph.font}`;
+      const shortW = ctx.measureText(ageShort).width;
+      if (totalW - ageGlyph.w + shortW <= ICON_ROW_MAX_W) {
+        totalW += shortW - ageGlyph.w;
+        ageGlyph.ch = ageShort;
+        ageGlyph.w = shortW;
+      } else {
+        // The age is never the only glyph — the cake is always beside it — so
+        // dropping it always removes exactly one SPACING as well.
+        totalW -= ageGlyph.w + SPACING;
+        glyphs.splice(glyphs.indexOf(ageGlyph), 1);
+        ageGlyph = null;
+      }
+    }
 
     let ex = BX + BW - PAD - totalW;
     iconRowLeftX = ex;
@@ -1932,7 +2031,7 @@ async function generateLabel(input) {
         ex += g.w + SPACING;
         return;
       }
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
       ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
       ctx.fillText(g.ch, ex, ey);
       if (g.slash) {
@@ -2727,12 +2826,13 @@ app.post('/label', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens, handbookGroup, birthday, noPhoto;
+  let allergyTokens, handbookGroup, birthday, birthdayAge, noPhoto;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print: the group is judged
     // against the club that actually prints, so a club-less request for a
@@ -2744,6 +2844,7 @@ app.post('/label', async (req, res) => {
     allergyTokens = [];
     handbookGroup = '';
     birthday = false;
+    birthdayAge = null;
     noPhoto = false;
   }
 
@@ -2767,7 +2868,7 @@ app.post('/label', async (req, res) => {
     const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
+      allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
@@ -2853,7 +2954,7 @@ async function performCheckinPrint(input) {
   // Attempt to enrich the label with data from the CSV
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens, handbookGroup, birthday, cakeWeek, noPhoto;
+  let allergyTokens, handbookGroup, birthday, cakeWeek, birthdayAge, noPhoto;
   let effectiveClubName = clubName;
   if (record) {
     // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
@@ -2862,6 +2963,7 @@ async function performCheckinPrint(input) {
     allergyTokens = parseAllergies(allergySource);
     birthday      = isBirthdayWeek(record.Birthdate);   // real — feeds the display event
     cakeWeek      = isCakeWeek(record.Birthdate);       // label icon: real or half-birthday
+    birthdayAge   = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
@@ -2879,6 +2981,7 @@ async function performCheckinPrint(input) {
     handbookGroup = '';
     birthday      = false;
     cakeWeek      = false;
+    birthdayAge   = null;
     noPhoto       = false;
     if (firstName || lastName) {
       console.log(`[csv] '${firstName} ${lastName}' not found in CSV — printing basic label`);
@@ -2954,7 +3057,7 @@ async function performCheckinPrint(input) {
     const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
+      allergyTokens, handbookGroup, isBirthday: cakeWeek, birthdayAge, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount, isNewKid: newKid,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       testBanner: isDemo,   // a demo label is visibly marked
@@ -3671,12 +3774,13 @@ app.get('/preview', async (req, res) => {
   // Enrich from CSV if available
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName);
-  let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
+  let allergyTokens = [], handbookGroup = '', birthday = false, birthdayAge = null, noPhoto = false;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print — a preview must show the
     // label the same request would PRINT, pseudo-group suppression included.
@@ -3701,7 +3805,7 @@ app.get('/preview', async (req, res) => {
     const twinP = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName,
-      allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, noPhoto,
       isVisitor: previewVisitor,
       middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
@@ -3782,12 +3886,16 @@ app.post('/reprint', async (req, res) => {
   try {
     clubbers = loadClubbers();
     const record = findClubber(entry.firstName, entry.lastName);
-    let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
+    let allergyTokens = [], handbookGroup = '', birthday = false, birthdayAge = null, noPhoto = false;
     if (record) {
       const allergySource = record.Allergies || record.Notes || '';
       allergyTokens = parseAllergies(allergySource);
       handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, entry.clubName);
       birthday = isCakeWeek(record.Birthdate);
+      // Re-derived from the roster, not restored from the history row (which
+      // stores no birthdate), so a reprint matches the label that first
+      // printed instead of silently dropping its age line.
+      birthdayAge = birthdayAgeThisWeek(record.Birthdate);
       noPhoto = noPhotoFor(record);
     }
 
@@ -3799,7 +3907,7 @@ app.post('/reprint', async (req, res) => {
     const twinR = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
-      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, noPhoto,
       middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
@@ -3888,12 +3996,13 @@ app.post('/print-award', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens = [], birthday = false, noPhoto = false;
+  let allergyTokens = [], birthday = false, birthdayAge = null, noPhoto = false;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto  = noPhotoFor(record);
     if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
   }
@@ -3906,7 +4015,7 @@ app.post('/print-award', async (req, res) => {
     const twinA = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, birthdayAge, noPhoto,
       middleInitial: twinA.middleInitial, nameHint: twinA.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
@@ -6135,7 +6244,7 @@ module.exports = {
   CLUB_LIST, CLUB_DISPLAY_NAMES, CLUB_MONOGRAM, LEADERS_MAX, LEADER_ACTIVE_DAYS,
   // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
   // pinning (June–August gate, day clamping, ISO-week reuse).
-  parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,
+  parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek, birthdayAgeThisWeek,
   // Twin-safe labels (#13) — collision detection + hint preference order.
   twinDisambiguation,
   // Seasonal art (#16) — the computus and the calendar tiling are date math

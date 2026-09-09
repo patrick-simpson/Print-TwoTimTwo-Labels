@@ -1031,6 +1031,102 @@ console.log('half-birthday cake (#8) — June–August birthdays, label only');
     /isBirthdayWeek\(r\.Birthdate\)/.test(src));
 }
 
+console.log('birthday age line (#291) — real birthday weeks only');
+{
+  const { parseBirthdate, isBirthdayWeek, isCakeWeek, birthdayAgeThisWeek } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  const today = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const mmdd = `${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const thisYear = today.getFullYear();
+
+  // Happy path, valid whichever day the suite runs: a kid born on today's
+  // month/day in 2018 turns (thisYear - 2018) this week.
+  check('born-today gives the age they turn this week',
+    birthdayAgeThisWeek(`2018-${mmdd}`) === thisYear - 2018,
+    `got ${birthdayAgeThisWeek(`2018-${mmdd}`)}, expected ${thisYear - 2018}`);
+
+  // The null contract. A caller passes this straight to generateLabel, so
+  // every unusable input has to come back as "no line", never as NaN.
+  for (const bad of ['', 'N/A', null, undefined, 'not a date', '18', '13/40/2018', '2/29/2019']) {
+    check(`birthdayAgeThisWeek(${JSON.stringify(bad)}) is null`,
+      birthdayAgeThisWeek(bad) === null, `got ${birthdayAgeThisWeek(bad)}`);
+  }
+
+  // Implausible for a club, both directions.
+  check('an 1899 birth year is too old to print (age > 21)',
+    birthdayAgeThisWeek(`1899-${mmdd}`) === null);
+  check('a future birth year never prints a negative age',
+    birthdayAgeThisWeek(`${thisYear + 2}-${mmdd}`) === null);
+
+  // The 1..21 boundary, computed against the matched year so it holds in
+  // the Dec→Jan wrap week too (where the match may be next year).
+  {
+    const yr = today.getMonth() === 11 && isBirthdayWeek(`${thisYear + 1}-01-01`) ? thisYear + 1 : thisYear;
+    check('exactly 21 still prints', birthdayAgeThisWeek(`${yr - 21}-${mmdd}`) === 21,
+      `got ${birthdayAgeThisWeek(`${yr - 21}-${mmdd}`)}`);
+    check('22 does not', birthdayAgeThisWeek(`${yr - 22}-${mmdd}`) === null);
+  }
+
+  // A two-digit slash year is NOT nulled — parseBirthdate's Date() fallback
+  // reads '3/15/18' as 2018-03-15. Documented as an equality, not as null,
+  // so nobody "fixes" it into a rejection later.
+  check("a 2-digit slash year resolves the same as its 4-digit form",
+    birthdayAgeThisWeek('3/15/18') === birthdayAgeThisWeek('2018-03-15'));
+  check('parseBirthdate maps 2-digit years to 20xx (why the above holds)', (() => {
+    const d = parseBirthdate('3/15/18');
+    return d && d.getFullYear() === 2018;
+  })());
+
+  // Not this week → no line, whatever the year.
+  {
+    const other = new Date(thisYear, today.getMonth() + 3, 15);
+    const shifted = `2018-${pad(other.getMonth() + 1)}-${pad(other.getDate())}`;
+    check(`a birthday ~3 months out (${shifted}) prints no age`,
+      birthdayAgeThisWeek(shifted) === null || isBirthdayWeek(shifted) === true);
+  }
+
+  // The half-birthday rule: a summer kid gets the cake and NO age. Same
+  // bornOpposite construction as the half-birthday block above.
+  {
+    const srcMonth = (today.getMonth() + 6) % 12;
+    const lastDay = new Date(2018, srcMonth + 1, 0).getDate();
+    const bornOpposite = `2018-${pad(srcMonth + 1)}-${pad(Math.min(today.getDate(), lastDay))}`;
+    check(`a half-birthday (${bornOpposite}) gets no age line`,
+      birthdayAgeThisWeek(bornOpposite) === null,
+      `got ${birthdayAgeThisWeek(bornOpposite)}`);
+    if (srcMonth >= 5 && srcMonth <= 7) {
+      check('...and it really is a cake week, so the cake prints alone',
+        isCakeWeek(bornOpposite) === true);
+    }
+  }
+
+  // Date-independent invariant: an age can only ever accompany a REAL
+  // birthday week, so the words and the cake cannot disagree.
+  for (const bd of ['2018-01-05', '2018-06-15', '2017-12-30', '2019-02-28', `2018-${mmdd}`]) {
+    check(`an age for ${bd} implies a real birthday week`,
+      birthdayAgeThisWeek(bd) === null || isBirthdayWeek(bd) === true);
+  }
+
+  // Wiring, mirroring the isCakeWeek scan above: the same five label-render
+  // sites derive the age, so a reprint/preview/award label can't silently
+  // differ from the label that first printed.
+  const ageSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  const ageCalls = (ageSrc.match(/birthdayAgeThisWeek\(record\.Birthdate\)/g) || []).length;
+  // Re-assert the isCakeWeek/isBirthdayWeek counts the block above pins, so
+  // the birthdayWeekYear refactor is PROVEN not to have disturbed them.
+  check('the five cake sites are still exactly five',
+    (ageSrc.match(/= isCakeWeek\(record\.Birthdate\)/g) || []).length === 5);
+  check('the two real-birthday sites are still exactly two',
+    (ageSrc.match(/isBirthdayWeek\(record\.Birthdate\)/g) || []).length === 2);
+  check('all five label sites derive the age from the roster', ageCalls === 5, `found ${ageCalls}`);
+  check('the birth YEAR never reaches the sealed checkin contract',
+    !/birthYear|birthdayAge/.test(
+      require('fs').readFileSync(path.join(__dirname, '..', 'print-server', 'events.js'), 'utf8')));
+}
+
 console.log('twin-safe labels (#13) — disambiguate same-name kids');
 {
   const { twinDisambiguation } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
