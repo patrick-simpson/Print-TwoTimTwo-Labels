@@ -113,11 +113,15 @@ async function main() {
   // Distinct children per phase: the server suppresses a repeat print of the
   // same child within 25s, so reusing one name makes later phases test nothing.
   fs.writeFileSync(path.join(dataDir, 'clubbers.csv'),
-    'FirstName,LastName,Birthdate,Allergies,HandbookGroup,MedRelease\n'
-    + 'Amy,Tester,,peanut allergy,Sparks A,y\n'
-    + 'Bella,Tester,,,Sparks A,y\n'
-    + 'Cody,Tester,,,Sparks A,y\n'
-    + 'Dana,Tester,,,Sparks A,y\n');
+    // The Inactive column and Erin exist for the phone's Not-here-yet tab:
+    // loadClubbers() keeps every row the CSV ever had, so a former clubber
+    // would otherwise be listed as missing forever.
+    'FirstName,LastName,Birthdate,Allergies,HandbookGroup,MedRelease,Inactive\n'
+    + 'Amy,Tester,,peanut allergy,Sparks A,y,\n'
+    + 'Bella,Tester,,,Sparks A,y,\n'
+    + 'Cody,Tester,,,Sparks A,y,\n'
+    + 'Dana,Tester,,,Sparks A,y,\n'
+    + 'Erin,Former,,,Sparks A,y,y\n');
 
   // Pusher credentials so the publisher is "configured" — the FakePusher above
   // is what actually gets constructed.
@@ -285,6 +289,46 @@ async function main() {
     // ...and put the first one back so later phases can keep using it.
     await post('/config', { displayLoginPassphrase: PASSPHRASE });
     await post('/config', { slidesPublishToken: '' });
+
+    // ── The fleet-config URL (#394) ────────────────────────────────────────
+    // Non-secret, but it is persisted and shipped to every screen, so it is
+    // validated where it is STORED — a poisoned value must never be able to
+    // reach the fleet on the next heartbeat.
+    check('a non-https settings URL is refused with 400 and NOT persisted',
+      (await post('/config', { fleetConfigUrl: 'http://example.org/a.json' })).status === 400
+      && !onDisk().fleetConfigUrl);
+    check('a credentials-in-URL settings URL is refused too',
+      (await post('/config', { fleetConfigUrl: 'https://u:p@example.org/a.json' })).status === 400);
+    check('an over-long settings URL is refused',
+      (await post('/config', { fleetConfigUrl: `https://example.org/${'a'.repeat(200)}` })).status === 400);
+
+    const before3 = provisionFrames().length;
+    check('a valid https settings URL is accepted',
+      (await post('/config', { fleetConfigUrl: 'https://example.org/awana-display.json' })).status === 200);
+    check('and persisted', onDisk().fleetConfigUrl === 'https://example.org/awana-display.json');
+    await new Promise((r) => setTimeout(r, 50));
+    const f3 = provisionFrames();
+    let opened3 = null;
+    try { opened3 = events.openProvisionForTest(PASSPHRASE, f3[f3.length - 1].payload); } catch (e) { opened3 = { error: e.message }; }
+    check('saving it republishes a bundle carrying it, still sealed',
+      f3.length === before3 + 1 && opened3 && opened3.configUrl === 'https://example.org/awana-display.json',
+      JSON.stringify(opened3));
+    check('the display key still rides the same bundle — the URL changed nothing else',
+      opened3 && opened3.displayKey === KEY);
+    check('the settings URL is not readable on the wire',
+      !JSON.stringify(f3[f3.length - 1].payload).includes('example.org'));
+
+    const before4 = provisionFrames().length;
+    await post('/config', { fleetConfigUrl: '' });
+    await new Promise((r) => setTimeout(r, 50));
+    const f4 = provisionFrames();
+    let opened4 = null;
+    try { opened4 = events.openProvisionForTest(PASSPHRASE, f4[f4.length - 1].payload); } catch (e) { opened4 = { error: e.message }; }
+    check('clearing it deletes the key and ships an EMPTY string, which is how screens clear theirs',
+      !onDisk().fleetConfigUrl && f4.length === before4 + 1 && opened4 && opened4.configUrl === '',
+      JSON.stringify(opened4));
+    check('/health never carries the settings URL to a CORS-readable caller',
+      !JSON.stringify((await j('/health')).body).includes('awana-display.json'));
   }
 
   // ── 3. Names leave this process as ciphertext ──────────────────────────────
@@ -718,6 +762,25 @@ async function main() {
     const WANT_SHAPE = JSON.stringify(['at', 'clubName', 'clubberId', 'firstName', 'key', 'lastName', 'visitor']);
 
     const stats0 = (await j('/stats/tonight')).body;
+
+    // The roster payload the phone's "Not here yet" tab subtracts by. Pinned
+    // as a shape, because the tab exists to say who is MISSING and a dropped
+    // flag would turn that into a confident lie.
+    const ROSTER_SHAPE = JSON.stringify(['checkedIn', 'club', 'inactive', 'name', 'removedHere']);
+    const r0 = (await post('/phone/roster', {})).body;
+    check('/phone/roster answers with a kids array', Array.isArray(r0.kids));
+    check('every roster row is the explicit whitelist the Not-here-yet tab reads',
+      r0.kids.every((k) => JSON.stringify(Object.keys(k).sort()) === ROSTER_SHAPE),
+      r0.kids.map((k) => Object.keys(k).sort().join()).join(' | '));
+    check('checkedIn and inactive are real booleans on every row',
+      r0.kids.every((k) => typeof k.checkedIn === 'boolean' && typeof k.inactive === 'boolean'));
+    check('a former clubber is flagged inactive, not listed as missing',
+      !!r0.kids.find((k) => k.name === 'Erin Former' && k.inactive === true),
+      JSON.stringify(r0.kids.find((k) => k.name === 'Erin Former')));
+    check('with all four checked in, nobody active is waiting',
+      r0.kids.filter((k) => !k.checkedIn && !k.inactive).length === 0,
+      JSON.stringify(r0.kids.filter((k) => !k.checkedIn && !k.inactive)));
+
     const t0 = await post('/phone/tonight', {});
     check('/phone/tonight answers', t0.status === 200 && t0.body && Array.isArray(t0.body.entries), JSON.stringify(t0.body).slice(0, 160));
     check('its total is the SAME number the tally uses', t0.body.checkedIn === stats0.checkedIn && t0.body.entries.length === stats0.checkedIn,
@@ -740,6 +803,10 @@ async function main() {
       tallies.length >= 1 && tallies[tallies.length - 1].payload.total === stats0.checkedIn - 1, JSON.stringify(tallies.map((w) => w.payload.total)));
     const roster = (await post('/phone/roster', {})).body.kids.find((k) => k.name === 'Bella Tester');
     check('the phone roster frees Bella and marks her removed-here', roster && roster.checkedIn === false && roster.removedHere === true, JSON.stringify(roster));
+    check('and she is the one name the Not-here-yet tab would show',
+      (await post('/phone/roster', {})).body.kids
+        .filter((k) => !k.checkedIn && !k.inactive).map((k) => k.name).join() === 'Bella Tester',
+      JSON.stringify((await post('/phone/roster', {})).body.kids.filter((k) => !k.checkedIn && !k.inactive)));
     check('/phone/tonight no longer lists her', !(await post('/phone/tonight', {})).body.entries.some((e) => e.firstName === 'Bella'));
     const bellaRows = ((await j('/history')).body || []).filter((r) => r.firstName === 'Bella');
     check('her history row is flagged, not deleted',
@@ -769,6 +836,8 @@ async function main() {
       bellaBack.length === 1 && !bellaBack[0].undone && !('undoneBy' in bellaBack[0]) && !('undoneAt' in bellaBack[0]), JSON.stringify(bellaBack));
     const ledger2 = JSON.parse(fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8'));
     check('tonight is back in her ledger', ledger2['bella tester'] && ledger2['bella tester'].dates.includes(todayLocal), JSON.stringify(ledger2['bella tester']));
+    check('adding her back empties the waiting set again',
+      (await post('/phone/roster', {})).body.kids.filter((k) => !k.checkedIn && !k.inactive).length === 0);
     check('a second Add back is a 404', (await post('/phone/restore', { firstName: 'Bella', lastName: 'Tester' })).status === 404);
 
     // A reconcile-detected undo is TwoTimTwo's truth: not restorable from a phone.

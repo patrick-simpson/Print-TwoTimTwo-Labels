@@ -30,6 +30,16 @@
   .tabs { display: flex; gap: 6px; background: #e2e8f0; border-radius: 12px; padding: 4px; margin-bottom: 10px; }
   .tab { flex: 1; padding: 10px; border: none; border-radius: 9px; background: transparent; font-size: 14px; font-weight: 700; color: #475569; }
   .tab.on { background: #fff; color: #1e293b; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+  /* Three tabs do not fit one row on a 360px phone at 14px/10px padding — the
+     third label was clipped off the edge. Must stay AFTER the base .tab rule
+     or it loses the cascade. */
+  @media (max-width: 420px) { .tab { font-size: 12px; padding: 10px 4px; } }
+  .group-btn {
+    display: flex; align-items: center; justify-content: space-between; width: 100%;
+    background: none; border: none; padding: 14px 2px 2px; font-size: 12px; font-weight: 800;
+    color: #64748b; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .group-btn .caret { font-weight: 700; }
   .kid {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
@@ -106,6 +116,11 @@
   <div class="tabs" role="tablist">
     <button class="tab on" type="button" data-tab="checkin">Check in</button>
     <button class="tab" type="button" data-tab="tonight">Tonight <span id="tonight-n"></span></button>
+    <!-- Short label so three tabs fit a 360px phone; the view's own note
+         carries the full "not checked in yet" wording. The count stays blank
+         until a roster has actually loaded — "(0)" would read as "nobody is
+         missing", which is the one thing this tab must never say wrongly. -->
+    <button class="tab" type="button" data-tab="waiting">Not here <span id="waiting-n"></span></button>
   </div>
 
   <div id="checkin-view">
@@ -132,6 +147,12 @@
       <button class="btn" id="visitor-print" type="button">Print visitor label</button>
       <div class="err" id="visitor-status"></div>
     </div>
+  </div>
+
+  <div id="waiting-view" style="display:none">
+    <div class="total" id="waiting-total"></div>
+    <div class="note">On the roster and not checked in yet, as of the last roster sync. This is <b>not</b> a headcount — it only knows who has had a label printed tonight, so a nickname mismatch or a check-in done outside this server can read as missing.</div>
+    <div id="waiting-list"></div>
   </div>
 </div>
 
@@ -189,6 +210,14 @@ var STATE = {};
 var TONIGHT = { checkedIn: 0, visitors: 0, byClub: {}, entries: [] };
 var REMOVING = {};
 var activeTab = 'checkin';
+
+// "Not here yet" tab. `rosterLoaded` exists so an unknown roster can never be
+// rendered as a confident empty list ("everyone is here") — the same rule the
+// lobby screens' checkout board follows. In-memory only: no config key, no
+// storage key.
+var NO_CLUB = 'No club';
+var rosterLoaded = false;
+var waitingCollapsed = {};   // club label -> true
 
 var unlockedState = false;   // true once we're past the PIN screen
 var unlockInFlight = false;  // guards unlock() against double-taps / Enter-mashing
@@ -314,6 +343,10 @@ function handlePinInvalidated() {
   PIN = '';
   STATE = {};
   REMOVING = {};
+  // The next volunteer must not see the previous PIN's missing list, and an
+  // unknown roster must read as unknown again rather than as "nobody missing".
+  rosterLoaded = false;
+  waitingCollapsed = {};
   TONIGHT = { checkedIn: 0, visitors: 0, byClub: {}, entries: [] };
   // Volunteers' names came from a PIN-gated call, so they leave with the PIN.
   leaderSelection = {};
@@ -360,6 +393,7 @@ function unlock() {
     PIN = pinVal;
     sessionStorage.setItem('awanaPhonePin', PIN);
     KIDS = data.kids || [];
+    rosterLoaded = true;
     STATE = {};
     unlockedState = true;
     showMainScreen();
@@ -394,7 +428,9 @@ function setTab(name) {
   }
   document.getElementById('checkin-view').style.display = name === 'checkin' ? 'block' : 'none';
   document.getElementById('tonight-view').style.display = name === 'tonight' ? 'block' : 'none';
+  document.getElementById('waiting-view').style.display = name === 'waiting' ? 'block' : 'none';
   if (name === 'tonight') refreshTonight(); // catch up right away, don't wait for the tick
+  if (name === 'waiting') renderWaiting();  // no fetch: it re-reads the roster the page already polls
 }
 (function() {
   var tabs = document.querySelectorAll('.tab');
@@ -447,8 +483,111 @@ function render() {
   if (!shown.length) {
     list.innerHTML = '<div class="note">No kids match. The roster comes from the last CSV sync on the door laptop.</div>';
   }
+  // Driven from inside render() (not only from the poll) because render() is
+  // also what a check-in, an undo and the search box call — otherwise the
+  // waiting list would go stale the moment someone checked a kid in.
+  renderWaiting();
 }
 document.getElementById('search').addEventListener('input', render);
+
+// Waiting = on the roster, not in tonight's active set, still an active
+// clubber. A kid a phone Removed (removedHere) IS waiting — the server has
+// taken them out of the count — but the row says so, so nobody calls a family
+// whose child is standing in the room.
+//
+// Known limitation, inherited from the route rather than introduced here:
+// /phone/roster's checked-in set is name-keyed while the history is keyed by
+// clubberId, so two children with the same name both read as checked in once
+// either one is — one twin can be missing from this list. Not fixable in the
+// browser; the roster payload carries no id.
+function waitingKids() {
+  return KIDS.filter(function(k) { return !k.checkedIn && !k.inactive; });
+}
+
+// Awana order first (CLUBS, from /clubs), then anything unfamiliar the CSV
+// carries, then "No club" — the same ordering rule fillVisitorClubs() uses.
+function waitingClubRank(label) {
+  if (label === NO_CLUB) return 900;
+  var low = label.toLowerCase();
+  for (var i = 0; i < CLUBS.length; i++) {
+    if (low.indexOf(CLUBS[i].toLowerCase()) !== -1) return i;
+  }
+  return 500;
+}
+
+function renderWaiting() {
+  var badge = document.getElementById('waiting-n');
+  var total = document.getElementById('waiting-total');
+  var list = document.getElementById('waiting-list');
+  if (!badge || !total || !list) return;
+  // Unknown is not zero: with no roster in hand an empty list would read as
+  // "everyone is here", so the badge stays blank and the view says so.
+  if (!rosterLoaded) {
+    badge.textContent = '';
+    if (activeTab !== 'waiting') return;
+    total.textContent = 'Roster not loaded';
+    list.innerHTML = '<div class="note">This phone has not managed to read the roster yet, so it cannot say who is missing. It keeps retrying on its own.</div>';
+    return;
+  }
+  var waiting = waitingKids();
+  badge.textContent = '(' + waiting.length + ')';
+  if (activeTab !== 'waiting') return;   // badge always current, DOM only when visible
+  if (!KIDS.length) {
+    total.textContent = 'No roster';
+    list.innerHTML = '<div class="note">The roster is empty — sync the CSV on the door laptop. Nobody can be counted missing until it loads.</div>';
+    return;
+  }
+  total.textContent = waiting.length + ' not here yet';
+  list.innerHTML = '';
+  if (!waiting.length) {
+    list.innerHTML = '<div class="note">Everyone on the roster is checked in.</div>';
+    return;
+  }
+  var groups = {};
+  waiting.forEach(function(k) {
+    var g = (k.club || '').trim() || NO_CLUB;
+    (groups[g] = groups[g] || []).push(k);
+  });
+  var labels = Object.keys(groups).sort(function(a, b) {
+    var d = waitingClubRank(a) - waitingClubRank(b);
+    return d || a.localeCompare(b);
+  });
+  // A CSV with no Club column groups everyone under "No club" — one flat list
+  // reads better there than a single pointless header.
+  var single = labels.length === 1;
+  labels.forEach(function(g) {
+    var rows = groups[g].slice().sort(function(a, b) { return a.name.localeCompare(b.name); });
+    var collapsed = !!waitingCollapsed[g];
+    if (!single) {
+      var h = document.createElement('button');
+      h.type = 'button';
+      h.className = 'group-btn';
+      h.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      var lbl = document.createElement('span');
+      lbl.textContent = g + ' · ' + rows.length;
+      var caret = document.createElement('span');
+      caret.className = 'caret';
+      caret.textContent = collapsed ? '▸' : '▾';
+      h.appendChild(lbl); h.appendChild(caret);
+      h.addEventListener('click', function() {
+        if (waitingCollapsed[g]) delete waitingCollapsed[g]; else waitingCollapsed[g] = true;
+        renderWaiting();
+      });
+      list.appendChild(h);
+    }
+    if (collapsed && !single) return;
+    rows.forEach(function(k) {
+      var row = document.createElement('div'); row.className = 'kid';
+      var left = document.createElement('div');
+      var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k.name;
+      var sub = document.createElement('div'); sub.className = 'club';
+      sub.textContent = k.removedHere ? 'removed from tonight’s count on a phone' : (single ? (k.club || '') : '');
+      left.appendChild(nm); left.appendChild(sub);
+      row.appendChild(left);
+      list.appendChild(row);
+    });
+  });
+}
 
 function renderTonight() {
   var n = document.getElementById('tonight-n');
@@ -512,6 +651,7 @@ function renderTonight() {
 // wholesale, which is how another phone's check-in (or an undo) shows up
 // here without a manual refresh.
 function mergeRoster(serverKids) {
+  rosterLoaded = true;   // a payload actually arrived: the waiting tab may speak
   var oldByName = {};
   KIDS.forEach(function(k) { oldByName[k.name.toLowerCase()] = k; });
   KIDS = serverKids.map(function(sk) {
@@ -951,6 +1091,7 @@ document.getElementById('leader-print-selected').addEventListener('click', funct
 if (PIN) {
   fetchRoster(PIN).then(function(data) {
     KIDS = data.kids || [];
+    rosterLoaded = true;
     STATE = {};
     unlockedState = true;
     showMainScreen();

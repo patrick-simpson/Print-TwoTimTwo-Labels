@@ -253,6 +253,24 @@ async function main() {
       elsewhere.headers.get('access-control-allow-origin') === null);
   }
 
+  // ── 6b. The optional show window rides the publish surface end to end ──────
+  console.log('lobby-slides: a dated slide (#345)');
+  {
+    wire.length = 0;
+    const r = await post('/api/lobby-slides', {
+      slides: [
+        { text: 'AWANA STORE NEXT WEEK', showFrom: '2026-09-09', showUntil: '2026-09-16' },
+        { text: 'Always on', showUntil: 'whenever' },
+      ],
+    });
+    check('publish with a window accepted', r.status === 200 && r.body.ok === true, JSON.stringify(r.body));
+    const opened = openAll();
+    check('the sealed chunk carries the window verbatim',
+      opened[0].slides[0].showFrom === '2026-09-09' && opened[0].slides[0].showUntil === '2026-09-16');
+    check('a junk date is dropped, not published',
+      !('showUntil' in opened[0].slides[1]) && !JSON.stringify(opened).includes('whenever'));
+  }
+
   // ── 7. Size gates ────────────────────────────────────────────────────────────
   console.log('lobby-slides: the deck size gates');
   {

@@ -30,6 +30,7 @@ const {
   parseAllergies, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
   tonightCheckins, markManualUndo, clearManualUndo, computeTonightStats, isNonCheckinRow, splitFullName,
+  trophyBandFor, TROPHY_BAND_MAX,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -1031,6 +1032,102 @@ console.log('half-birthday cake (#8) — June–August birthdays, label only');
     /isBirthdayWeek\(r\.Birthdate\)/.test(src));
 }
 
+console.log('birthday age line (#291) — real birthday weeks only');
+{
+  const { parseBirthdate, isBirthdayWeek, isCakeWeek, birthdayAgeThisWeek } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  const today = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const mmdd = `${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const thisYear = today.getFullYear();
+
+  // Happy path, valid whichever day the suite runs: a kid born on today's
+  // month/day in 2018 turns (thisYear - 2018) this week.
+  check('born-today gives the age they turn this week',
+    birthdayAgeThisWeek(`2018-${mmdd}`) === thisYear - 2018,
+    `got ${birthdayAgeThisWeek(`2018-${mmdd}`)}, expected ${thisYear - 2018}`);
+
+  // The null contract. A caller passes this straight to generateLabel, so
+  // every unusable input has to come back as "no line", never as NaN.
+  for (const bad of ['', 'N/A', null, undefined, 'not a date', '18', '13/40/2018', '2/29/2019']) {
+    check(`birthdayAgeThisWeek(${JSON.stringify(bad)}) is null`,
+      birthdayAgeThisWeek(bad) === null, `got ${birthdayAgeThisWeek(bad)}`);
+  }
+
+  // Implausible for a club, both directions.
+  check('an 1899 birth year is too old to print (age > 21)',
+    birthdayAgeThisWeek(`1899-${mmdd}`) === null);
+  check('a future birth year never prints a negative age',
+    birthdayAgeThisWeek(`${thisYear + 2}-${mmdd}`) === null);
+
+  // The 1..21 boundary, computed against the matched year so it holds in
+  // the Dec→Jan wrap week too (where the match may be next year).
+  {
+    const yr = today.getMonth() === 11 && isBirthdayWeek(`${thisYear + 1}-01-01`) ? thisYear + 1 : thisYear;
+    check('exactly 21 still prints', birthdayAgeThisWeek(`${yr - 21}-${mmdd}`) === 21,
+      `got ${birthdayAgeThisWeek(`${yr - 21}-${mmdd}`)}`);
+    check('22 does not', birthdayAgeThisWeek(`${yr - 22}-${mmdd}`) === null);
+  }
+
+  // A two-digit slash year is NOT nulled — parseBirthdate's Date() fallback
+  // reads '3/15/18' as 2018-03-15. Documented as an equality, not as null,
+  // so nobody "fixes" it into a rejection later.
+  check("a 2-digit slash year resolves the same as its 4-digit form",
+    birthdayAgeThisWeek('3/15/18') === birthdayAgeThisWeek('2018-03-15'));
+  check('parseBirthdate maps 2-digit years to 20xx (why the above holds)', (() => {
+    const d = parseBirthdate('3/15/18');
+    return d && d.getFullYear() === 2018;
+  })());
+
+  // Not this week → no line, whatever the year.
+  {
+    const other = new Date(thisYear, today.getMonth() + 3, 15);
+    const shifted = `2018-${pad(other.getMonth() + 1)}-${pad(other.getDate())}`;
+    check(`a birthday ~3 months out (${shifted}) prints no age`,
+      birthdayAgeThisWeek(shifted) === null || isBirthdayWeek(shifted) === true);
+  }
+
+  // The half-birthday rule: a summer kid gets the cake and NO age. Same
+  // bornOpposite construction as the half-birthday block above.
+  {
+    const srcMonth = (today.getMonth() + 6) % 12;
+    const lastDay = new Date(2018, srcMonth + 1, 0).getDate();
+    const bornOpposite = `2018-${pad(srcMonth + 1)}-${pad(Math.min(today.getDate(), lastDay))}`;
+    check(`a half-birthday (${bornOpposite}) gets no age line`,
+      birthdayAgeThisWeek(bornOpposite) === null,
+      `got ${birthdayAgeThisWeek(bornOpposite)}`);
+    if (srcMonth >= 5 && srcMonth <= 7) {
+      check('...and it really is a cake week, so the cake prints alone',
+        isCakeWeek(bornOpposite) === true);
+    }
+  }
+
+  // Date-independent invariant: an age can only ever accompany a REAL
+  // birthday week, so the words and the cake cannot disagree.
+  for (const bd of ['2018-01-05', '2018-06-15', '2017-12-30', '2019-02-28', `2018-${mmdd}`]) {
+    check(`an age for ${bd} implies a real birthday week`,
+      birthdayAgeThisWeek(bd) === null || isBirthdayWeek(bd) === true);
+  }
+
+  // Wiring, mirroring the isCakeWeek scan above: the same five label-render
+  // sites derive the age, so a reprint/preview/award label can't silently
+  // differ from the label that first printed.
+  const ageSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  const ageCalls = (ageSrc.match(/birthdayAgeThisWeek\(record\.Birthdate\)/g) || []).length;
+  // Re-assert the isCakeWeek/isBirthdayWeek counts the block above pins, so
+  // the birthdayWeekYear refactor is PROVEN not to have disturbed them.
+  check('the five cake sites are still exactly five',
+    (ageSrc.match(/= isCakeWeek\(record\.Birthdate\)/g) || []).length === 5);
+  check('the two real-birthday sites are still exactly two',
+    (ageSrc.match(/isBirthdayWeek\(record\.Birthdate\)/g) || []).length === 2);
+  check('all five label sites derive the age from the roster', ageCalls === 5, `found ${ageCalls}`);
+  check('the birth YEAR never reaches the sealed checkin contract',
+    !/birthYear|birthdayAge/.test(
+      require('fs').readFileSync(path.join(__dirname, '..', 'print-server', 'events.js'), 'utf8')));
+}
+
 console.log('twin-safe labels (#13) — disambiguate same-name kids');
 {
   const { twinDisambiguation } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
@@ -1178,6 +1275,422 @@ console.log('musical printer (#11/#12) — the TSPL compiler');
     new Set(progs).size === TUNE_NAMES.length);
   check('an unknown tune falls back to the arpeggio, never throws',
     buildTuneTspl('freebird') === buildTuneTspl('arpeggio'));
+}
+
+console.log('spooler backlog (#256) — a jam must not look healthy');
+{
+  const {
+    summarizeSpoolerJobs, spoolerBacklogMessage, parseClearQueueResult,
+    SPOOLER_BACKLOG_JOBS, SPOOLER_STUCK_MS,
+  } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // Fixed clock: nothing below is wall-clock dependent.
+  const NOW = Date.parse('2026-09-09T19:05:00.000Z');
+  const job = (agoMs, status = 'Printing', id = '1') => ({
+    id: String(id),
+    status,
+    submitted: agoMs === null ? '' : new Date(NOW - agoMs).toISOString(),
+  });
+
+  // THE case this whole item exists to prevent: a readable, empty queue is a
+  // real count of ZERO, and must be distinguishable from "I could not read it".
+  {
+    const s = summarizeSpoolerJobs([], NOW);
+    check('an empty queue is a real zero, not unknown',
+      s.unknown === false && s.count === 0 && s.oldestAgeMs === null && s.stuck === false,
+      JSON.stringify(s));
+  }
+
+  {
+    const s = summarizeSpoolerJobs([job(5000)], NOW);
+    check('one fresh job is not a backlog',
+      s.count === 1 && s.oldestAgeMs === 5000 && s.stuck === false, JSON.stringify(s));
+  }
+
+  {
+    const s = summarizeSpoolerJobs([job(1000, 'Printing', 1), job(2000, 'Printing', 2), job(3000, 'Printing', 3)], NOW);
+    check('three fresh jobs are stuck by the COUNT rule alone',
+      s.count === 3 && s.stuck === true && s.oldestAgeMs === 3000, JSON.stringify(s));
+  }
+  check('the count threshold is the documented three', SPOOLER_BACKLOG_JOBS === 3);
+
+  {
+    const s = summarizeSpoolerJobs([job(120000, 'Printing', 1), job(1000, 'Printing', 2)], NOW);
+    check('two jobs with an old one are stuck by the AGE rule',
+      s.count === 2 && s.oldestAgeMs === 120000 && s.stuck === true, JSON.stringify(s));
+  }
+  // The boundary, both sides.
+  check(`exactly ${SPOOLER_STUCK_MS}ms old is stuck`,
+    summarizeSpoolerJobs([job(SPOOLER_STUCK_MS)], NOW).stuck === true);
+  check('one millisecond younger is not',
+    summarizeSpoolerJobs([job(SPOOLER_STUCK_MS - 1)], NOW).stuck === false);
+
+  // Status tokens: a paper-out can sit on a single fresh job, which is exactly
+  // the "looks perfectly healthy" case.
+  {
+    const s = summarizeSpoolerJobs([job(2000, 'PaperOut', 1), job(1000, 'Printing, Retained', 2)], NOW);
+    check('a PaperOut job is stuck even when fresh and alone in its status',
+      s.stuck === true && s.errorStatuses.length === 1 && s.errorStatuses[0] === 'PaperOut',
+      JSON.stringify(s));
+  }
+  check('a plain Printing job reports no error status',
+    summarizeSpoolerJobs([job(1000, 'Printing')], NOW).errorStatuses.length === 0);
+  check('a comma-separated flags string is split, and spacing/case tolerated',
+    summarizeSpoolerJobs([job(1000, 'Printing, User Intervention')], NOW).errorStatuses.length === 1);
+
+  // UNKNOWN must never collapse into zero — in either field.
+  for (const bad of [null, undefined, {}, 'not json', 42]) {
+    const s = summarizeSpoolerJobs(bad, NOW);
+    check(`${JSON.stringify(bad) === undefined ? 'undefined' : JSON.stringify(bad)} reports unknown, never a zero count`,
+      s.unknown === true && s.count === null && s.oldestAgeMs === null && s.stuck === false,
+      JSON.stringify(s));
+  }
+
+  // Unparseable times must not disarm the count rule.
+  {
+    const s = summarizeSpoolerJobs(
+      [{ id: '1', status: 'Printing', submitted: '' },
+       { id: '2', status: 'Printing', submitted: 'garbage' },
+       { id: '3', status: 'Printing' }], NOW);
+    check('three jobs with unreadable timestamps are still a backlog',
+      s.count === 3 && s.oldestAgeMs === null && s.stuck === true, JSON.stringify(s));
+  }
+
+  // Clock skew: a future-dated job must never fake a stuck queue.
+  {
+    const s = summarizeSpoolerJobs([job(-30000)], NOW);
+    check('a job submitted 30s in the future clamps to age 0, never negative',
+      s.oldestAgeMs === 0 && s.stuck === false, JSON.stringify(s));
+  }
+
+  // The message has to carry what the static WARNING_DESCRIPTIONS table can't.
+  {
+    const s = summarizeSpoolerJobs([job(192000, 'PaperOut', 1), job(5000, 'Printing', 2),
+      job(6000, 'Printing', 3), job(7000, 'Printing', 4)], NOW);
+    const msg = spoolerBacklogMessage('Brother QL-820NWB', s);
+    check('the backlog message names the count', /\b4 print jobs\b/.test(msg), msg);
+    check('...the printer', msg.includes('Brother QL-820NWB'), msg);
+    check('...the oldest job’s age', /oldest 3m 12s/.test(msg), msg);
+    check('...the spooler status', /status: PaperOut/.test(msg), msg);
+    check('...and points at the button', /clear the queue/i.test(msg), msg);
+  }
+  {
+    const s = summarizeSpoolerJobs([job(1000, 'Printing', 1), job(2000, 'Printing', 2), job(3000, 'Printing', 3)], NOW);
+    const msg = spoolerBacklogMessage('Test', s);
+    check('with no error status the message omits the status clause',
+      !/status:/.test(msg), msg);
+  }
+  {
+    const s = summarizeSpoolerJobs([{ id: '1', status: 'Printing', submitted: '' },
+      { id: '2', status: 'Printing', submitted: '' }, { id: '3', status: 'Printing', submitted: '' }], NOW);
+    check('with no readable time the message omits the age clause',
+      !/oldest/.test(spoolerBacklogMessage('Test', s)), spoolerBacklogMessage('Test', s));
+  }
+
+  // The clear-queue parser: a garbled result must not read as "removed 0".
+  check('a well-formed clear result parses', (() => {
+    const r = parseClearQueueResult('{"ok":true,"removed":4,"failed":0}');
+    return r && r.removed === 4 && r.failed === 0;
+  })());
+  for (const bad of ['', 'null', 'not json', '{"ok":false}', '{"ok":true,"removed":-1,"failed":0}',
+    '{"ok":true,"removed":"4","failed":0}', '{"ok":true,"removed":4}']) {
+    check(`clear result ${JSON.stringify(bad)} is rejected, not read as zero`,
+      parseClearQueueResult(bad) === null);
+  }
+
+  // Wiring: the probe must never be reachable from the print path, and the
+  // dashboard must not swallow the dynamic backlog message.
+  const spoolSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('checkPrinterWarnings still has exactly one caller (GET /health)',
+    (spoolSrc.match(/await checkPrinterWarnings\(\)/g) || []).length === 1,
+    'a second caller would put a PowerShell probe on the print path');
+  check('nothing on the print path reads the queue',
+    (spoolSrc.match(/readSpoolerQueue\(/g) || []).length === 2,
+    'the definition plus its single call inside checkPrinterWarnings');
+  check('clearPrintQueue is only ever reachable from its own route',
+    (spoolSrc.match(/clearPrintQueue\(/g) || []).length === 2,
+    'the definition plus the POST /printer/clear-queue handler');
+  check('neither queue script interpolates anything',
+    !/PS_(READ|CLEAR)_QUEUE = `[^`]*\$\{/.test(spoolSrc));
+  check('both queue scripts read the printer from the environment',
+    (spoolSrc.match(/\$env:AWANA_QUEUE_PRINTER/g) || []).length === 2);
+  check('the queue projection carries only id, status and submitted time',
+    /\$jobs \+= @\{ id = \[string\]\$j\.Id; status = \[string\]\$j\.JobStatus; submitted = \$sub \}/.test(spoolSrc),
+    'a spool job title or a Windows username must never reach CORS-readable /health');
+  check('neither queue script names DocumentName or UserName',
+    !/\$j\.(DocumentName|UserName)/.test(spoolSrc));
+  const dash = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'public', 'index.html'), 'utf8');
+  check('the dashboard registers spoolerCheckFailed as a static description',
+    /spoolerCheckFailed:/.test(dash));
+  check('...but NOT spoolerBacklog, whose numbers must reach the screen',
+    !/spoolerBacklog:/.test(dash));
+  check('a backlog turns the traffic light red, not a mild yellow',
+    /hasError[\s\S]{0,220}spoolerBacklog/.test(dash));
+}
+
+console.log('range reprint (#257) — which of tonight’s rows come back out');
+{
+  const { selectReprintRange, REPRINT_RANGE_MAX, localDayISO } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // Today's local day, so isOnLocalDay agrees whatever timezone CI runs in.
+  const base = new Date();
+  base.setHours(18, 0, 0, 0);
+  const TODAY = localDayISO(base);
+  const at = (mins) => new Date(base.getTime() + mins * 60000).toISOString();
+  // History is newest-first, so a test array is built oldest-first and reversed.
+  const row = (over) => Object.assign(
+    { firstName: 'Kid', lastName: 'One', clubName: 'Sparks', timestamp: at(0), success: true }, over);
+  const sel = (rows, over) => selectReprintRange(Object.assign(
+    { history: rows, today: TODAY, fromISO: at(0), toISO: at(60) }, over));
+  const names = (r) => (r.rows || []).map((x) => `${x.firstName} ${x.lastName}`);
+
+  // Inclusive at both ends — an operator typing "6:00 to 6:30" means both.
+  {
+    const r = sel([
+      row({ firstName: 'Late', timestamp: at(61) }),
+      row({ firstName: 'End', timestamp: at(60) }),
+      row({ firstName: 'Mid', timestamp: at(30) }),
+      row({ firstName: 'Start', timestamp: at(0) }),
+      row({ firstName: 'Early', timestamp: at(-1) }),
+    ]);
+    check('the window is inclusive at both ends and excludes either side',
+      r.count === 3 && names(r).join(',') === 'End One,Mid One,Start One', JSON.stringify(names(r)));
+  }
+
+  // Another local day never rides along, even inside the clock window.
+  {
+    const yday = new Date(base.getTime() - 24 * 3600000).toISOString();
+    const r = sel([row({ firstName: 'Yesterday', timestamp: yday }), row({ firstName: 'Today' })],
+      { fromISO: new Date(base.getTime() - 48 * 3600000).toISOString() });
+    check('a row from another local day is excluded', r.count === 1 && names(r)[0] === 'Today One',
+      JSON.stringify(names(r)));
+  }
+
+  // The four unconditional exclusions.
+  {
+    const r = sel([
+      row({ firstName: 'Failed', success: false }),
+      row({ firstName: 'Award', isAward: true }),
+      row({ firstName: 'Card', isConnectCard: true }),
+      row({ firstName: 'Leader', isLeader: true }),
+      row({ firstName: 'Undone', undone: true }),
+      row({ firstName: 'Real' }),
+    ]);
+    check('only the real check-in row is selected', r.count === 1 && names(r)[0] === 'Real One',
+      JSON.stringify(names(r)));
+    check('the skip breakdown counts each reason',
+      r.skipped.failed === 1 && r.skipped.nonCheckin === 3 && r.skipped.undone === 1,
+      JSON.stringify(r.skipped));
+  }
+  // There is deliberately NO flag that can re-admit an award: routing one
+  // through the kid path would record a row without isAward, and tonight's
+  // tally would then count a recognition slip as a child.
+  {
+    const r = sel([row({ firstName: 'Award', isAward: true })], { includeAwards: true });
+    check('no option can re-admit an award slip', r.count === 0, JSON.stringify(r));
+  }
+
+  // Dedupe: newest row per identity wins, and two same-named children with
+  // distinct ids stay two children.
+  {
+    const r = sel([
+      row({ firstName: 'Kid', clubberId: '1', timestamp: at(40) }),   // newest
+      row({ firstName: 'Kid', clubberId: '1', timestamp: at(10) }),
+    ]);
+    check('a child already reprinted in the window prints once', r.count === 1, JSON.stringify(r));
+    check('...and it is the NEWEST row that is kept',
+      r.rows[0].timestamp === at(40), r.rows[0].timestamp);
+    check('the duplicate is reported, not silently dropped', r.skipped.duplicate === 1);
+  }
+  {
+    const r = sel([
+      row({ firstName: 'Mia', lastName: 'Castor', clubberId: '9001' }),
+      row({ firstName: 'Mia', lastName: 'Delphinus', clubberId: '9002' }),
+    ]);
+    check('twins with distinct ids stay two labels', r.count === 2, JSON.stringify(names(r)));
+  }
+
+  // The club filter folds spellings through clubKey, like the labels do.
+  {
+    const rows = [
+      row({ firstName: 'A', clubName: 'T&T' }),
+      row({ firstName: 'B', clubName: 'TnT' }),
+      row({ firstName: 'C', clubName: 't & t ' }),
+      row({ firstName: 'D', clubName: 'Sparks' }),
+    ];
+    const r = sel(rows, { club: 'T&T' });
+    check('the club filter folds T&T / TnT / "t & t" together',
+      r.count === 3 && !names(r).some((n) => n.startsWith('D')), JSON.stringify(names(r)));
+    check('the other club is reported as skipped', r.skipped.otherClub === 1, JSON.stringify(r.skipped));
+    check('an empty club means every club', sel(rows, { club: '' }).count === 4);
+    check('an unrecognised club is an ERROR, not a silent match-everything',
+      sel(rows, { club: 'Nonsense' }).error === 'bad-club');
+  }
+
+  // Bad windows.
+  check('from after to is refused', sel([row({})], { fromISO: at(60), toISO: at(0) }).error === 'bad-range');
+  check('a malformed start is refused', sel([row({})], { fromISO: 'not a time' }).error === 'bad-range');
+  check('a missing end is refused', sel([row({})], { toISO: undefined }).error === 'bad-range');
+
+  // The cap exists because printImage blocks the event loop per label.
+  {
+    const many = [];
+    for (let i = 0; i < 25; i++) many.push(row({ firstName: 'K' + i, clubberId: String(i), timestamp: at(i) }));
+    const r = sel(many.reverse());
+    check(`${REPRINT_RANGE_MAX} eligible rows is the cap`, r.rows.length === REPRINT_RANGE_MAX
+      && r.count === REPRINT_RANGE_MAX, JSON.stringify({ rows: r.rows.length, count: r.count }));
+    check('...and the operator is told it was capped', r.capped === true);
+  }
+  check('the cap is 20, not 40 (printImage blocks the loop up to ~31s per label)',
+    REPRINT_RANGE_MAX === 20);
+
+  // A nameless row can't be printed and must not occupy a slot.
+  check('a row with no name is skipped',
+    sel([row({ firstName: '', lastName: '' }), row({ firstName: 'Real' })]).count === 1);
+
+  // An empty result still reports the breakdown, so the UI can explain itself.
+  {
+    const r = sel([row({ firstName: 'Leader', isLeader: true })]);
+    check('an empty selection still carries a skip breakdown',
+      r.count === 0 && r.rows.length === 0 && r.skipped.nonCheckin === 1, JSON.stringify(r));
+  }
+
+  // Wiring: the range must reuse the single-row path, not grow a second one.
+  const rangeSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('both /reprint and /reprint-range go through reprintRow()',
+    (rangeSrc.match(/await reprintRow\(/g) || []).length === 2, 'a second render path would drift');
+  check('the range never records attendance', !/reprint-range[\s\S]{0,2600}recordAttendance\(/.test(rangeSrc));
+  check('the range never publishes a tally or a checkin',
+    !/reprint-range[\s\S]{0,2600}(publishTally\(|events\.publish\()/.test(rangeSrc));
+  check('the inter-label gap is an awaited setTimeout, never Atomics.wait',
+    /reprint-range[\s\S]{0,2600}await new Promise\(done => setTimeout\(done, REPRINT_RANGE_GAP_MS\)\)/.test(rangeSrc));
+  check('the range suppresses the musical printer (20 tunes in a burst)',
+    /reprintRow\(sel\.rows\[i\], printerName, \{ silent: true \}\)/.test(rangeSrc));
+}
+
+// ── Trophy band (#293): the band text and the completed-books feed ──────────
+// The band is a decoration derived from a scraped CSV, so everything here is
+// about refusing to print a wrong or stale celebration — never about making
+// one print harder.
+console.log('\ntrophy band (#293): band text + completed-books window');
+{
+  feeds._resetForTests();
+
+  check('the band names the book', trophyBandFor('Wingrunner') === 'Finished Wingrunner',
+    trophyBandFor('Wingrunner'));
+  const long = trophyBandFor('W'.repeat(200));
+  check('an over-long book title is clipped to the renderer\'s 48-char extras cap',
+    long.length === TROPHY_BAND_MAX && long.indexOf('Finished ') === 0, `${long.length}: ${long}`);
+  check('the cap really is 48 (the same slice generateLabel applies)', TROPHY_BAND_MAX === 48);
+  for (const bad of ['', '   ', null, undefined, 42, {}, []]) {
+    check(`a malformed title (${JSON.stringify(bad)}) prints no band at all`, trophyBandFor(bad) === '');
+  }
+  check('control characters never reach the label',
+    !/[\u0000-\u001f]/.test(trophyBandFor('Wing\nrun\tner')), JSON.stringify(trophyBandFor('Wing\nrun\tner')));
+
+  // Validation: truncate rather than reject, and drop the rows that cannot be
+  // trusted instead of failing the whole batch.
+  const NOW = Date.parse('2026-09-09T18:30:00Z');
+  check('a non-object body is refused', feeds.validateCompletedBooksBody(null, NOW).ok === false);
+  const noArr = feeds.validateCompletedBooksBody({}, NOW);
+  check('a missing entries array is refused, and says so',
+    noArr.ok === false && /array/.test(noArr.reason), JSON.stringify(noArr));
+  {
+    const many = [];
+    for (let i = 0; i < 600; i++) many.push({ name: `Kid${i} Sample`, book: 'Wingrunner', date: '2026-09-02' });
+    const r = feeds.validateCompletedBooksBody({ entries: many }, NOW);
+    check('an over-cap batch is truncated, never rejected',
+      r.ok === true && r.payload.entries.length === feeds.COMPLETED_BOOKS_MAX,
+      JSON.stringify({ ok: r.ok, n: r.payload && r.payload.entries.length }));
+  }
+  {
+    const r = feeds.validateCompletedBooksBody({ entries: [
+      { name: '', book: 'Wingrunner', date: '2026-09-02' },
+      { name: 'Nameless Book', book: '', date: '2026-09-02' },
+      { name: 'Bad Date', book: 'Wingrunner', date: 'sometime last spring' },
+      { name: 'Future Kid', book: 'Wingrunner', date: '2027-01-01' },
+      { name: 'Good Kid', book: 'Wingrunner', date: '2026-09-02' },
+    ] }, NOW);
+    check('rows with no name, no book, an unreadable date or a future date are dropped — the batch still lands',
+      r.ok === true && r.payload.entries.length === 1 && r.payload.entries[0].key === 'good kid',
+      JSON.stringify(r.payload.entries));
+  }
+
+  // The report's Name-column ordering is undocumented, so both must key alike.
+  check('"Last, First" and "First Last" key the same child',
+    feeds.normalizeChildName('Sample, Testkid') === 'testkid sample'
+    && feeds.normalizeChildName('  Testkid   Sample ') === 'testkid sample',
+    `${feeds.normalizeChildName('Sample, Testkid')} vs ${feeds.normalizeChildName('  Testkid   Sample ')}`);
+
+  check('a readable ISO and US date both parse', feeds.parseBookDate('2026-09-02', NOW) === '2026-09-02'
+    && feeds.parseBookDate('9/2/2026', NOW) === '2026-09-02' && feeds.parseBookDate('9/2/26', NOW) === '2026-09-02');
+  check('an unreadable date is null, never today', feeds.parseBookDate('last Wednesday', NOW) === null
+    && feeds.parseBookDate('', NOW) === null && feeds.parseBookDate('13/40/2026', NOW) === null);
+
+  // The lookup the print path uses.
+  feeds._resetForTests();
+  check('no feed at all means no band (the stock label, instantly)',
+    feeds.getCompletedBook('Testkid Sample', NOW) === null);
+  const sub = feeds.submitCompletedBooks({ entries: [
+    { name: 'Sample, Testkid', book: 'Sparks Wingrunner', date: '2026-09-07' },
+    { name: 'Olddie Sample', book: 'Sparks Hangglider', date: '2026-08-01' },
+  ] }, NOW);
+  check('a well-formed post is accepted', sub.valid === true && sub.throttled === false, JSON.stringify(sub));
+  check('a two-day-old completion matches by either name ordering',
+    (feeds.getCompletedBook('Testkid Sample', NOW) || {}).book === 'Sparks Wingrunner'
+    && (feeds.getCompletedBook('Sample, Testkid', NOW) || {}).book === 'Sparks Wingrunner');
+  check('a completion older than the 14-day window is not carried', feeds.getCompletedBook('Olddie Sample', NOW) === null);
+  check('the second post inside the throttle window is reported, not applied',
+    feeds.submitCompletedBooks({ entries: [{ name: 'Throttled Kid', book: 'Wingrunner', date: '2026-09-07' }] }, NOW).throttled === true
+    && feeds.getCompletedBook('Throttled Kid', NOW) === null);
+  // One POST per club: a second club's payload must MERGE, not replace.
+  const later = NOW + 10000;
+  feeds.submitCompletedBooks({ entries: [{ name: 'Second Club', book: 'Grand Prix', date: '2026-09-07' }] }, later);
+  check('a second club\'s post merges rather than replacing the first',
+    (feeds.getCompletedBook('Testkid Sample', later) || {}).book === 'Sparks Wingrunner'
+    && (feeds.getCompletedBook('Second Club', later) || {}).book === 'Grand Prix');
+  feeds.submitCompletedBooks({ entries: [{ name: 'Testkid Sample', book: 'Sparks Skystormer', date: '2026-09-09' }] }, later + 10000);
+  check('a newer completion for the same child wins',
+    (feeds.getCompletedBook('Testkid Sample', later + 10000) || {}).book === 'Sparks Skystormer');
+  // Read-time window check: a server left running for a month must not still
+  // be banding September.
+  check('the window is re-checked on READ, not only on write',
+    feeds.getCompletedBook('Testkid Sample', NOW + 30 * 24 * 60 * 60 * 1000) === null);
+  feeds._resetForTests();
+  check('_resetForTests clears the feed', feeds.getCompletedBook('Testkid Sample', NOW) === null);
+
+  // Wiring: this feed must never reach the public channel, and the band must
+  // never sit in front of a print.
+  const trophySrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('/feed/completed-books is not registered as a publishing feed',
+    /app\.post\('\/feed\/completed-books', \(req, res\) => \{/.test(trophySrc)
+    && !/app\.post\('\/feed\/completed-books',\s*makeFeedRoute/.test(trophySrc)
+    && !/FEED_NAMES = \[[^\]]*completed/.test(
+      require('fs').readFileSync(path.join(__dirname, '..', 'print-server', 'feeds.js'), 'utf8')));
+  check('the band lookup is synchronous — no await between a child and a label',
+    !/await feeds\.getCompletedBook/.test(trophySrc));
+  check('the band lookup is wrapped so a feed error cannot stop the print',
+    /feeds\.getCompletedBook[\s\S]{0,900}catch \{ \/\* a decoration must never stop a label/.test(trophySrc));
+  const feedsSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'feeds.js'), 'utf8');
+  check('the completed-books state is never published from feeds.js',
+    !/completedBooksState[\s\S]{0,400}events\.publish/.test(feedsSrc));
+  const extSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'chrome-extension', 'feeds.js'), 'utf8');
+  check('the extension posts completed books to the print server only',
+    /postFeed\('\/feed\/completed-books'/.test(extSrc));
+  check('the extension header no longer claims no full name ever leaves it',
+    /\/feed\/completed-books/.test(extSrc.slice(0, 2000)),
+    'a stated invariant that quietly stops being true is worse than one never written');
+  check('the completed-books scrape is club-night only',
+    /case 'completedBooks':[\s\S]{0,300}isInClubWindow\(\) \? 10 \* 60 \* 1000 : Infinity/.test(extSrc));
+  check('the scheduler knows the task in all three tables',
+    /completedBooks: 0/.test(extSrc) && /completedBooks: runCompletedBooks/.test(extSrc));
 }
 
 console.log('');

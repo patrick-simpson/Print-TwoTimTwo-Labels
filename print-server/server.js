@@ -962,14 +962,18 @@ function parseBirthdate(birthdateStr) {
   return isNaN(bday.getTime()) ? null : bday;
 }
 
-// True when the given month/day (0-indexed month) falls in the same ISO week
-// as today. Tested in both this calendar year and the next: the old code
-// rolled an already-passed birthday forward a year before comparing, so the
-// cake vanished the day after the birthday even though the documented
-// behavior is "the whole calendar week containing it". Checking next year as
-// well keeps the Dec→Jan ISO-week wrap working (e.g. today Dec 29 in ISO
-// week 1, target Jan 2).
-function isWeekOfMonthDay(month, day) {
+// Which calendar year's occurrence of the given month/day (0-indexed month)
+// falls in the same ISO week as today — or null when neither does. Tested in
+// both this calendar year and the next: the old code rolled an already-passed
+// birthday forward a year before comparing, so the cake vanished the day
+// after the birthday even though the documented behavior is "the whole
+// calendar week containing it". Checking next year as well keeps the Dec→Jan
+// ISO-week wrap working (e.g. today Dec 29 in ISO week 1, target Jan 2).
+//
+// Returning the MATCHED YEAR rather than a bare boolean is what lets the
+// birthday-age line (#291) compute the age from exactly the occurrence the
+// cake icon keys on — the two can never disagree across the year wrap.
+function birthdayWeekYear(month, day) {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -990,13 +994,18 @@ function isWeekOfMonthDay(month, day) {
       const lastDay = new Date(yr, month + 1, 0).getDate();
       const candidate = new Date(yr, month, Math.min(day, lastDay));
       const w = getWeekNumber(candidate);
-      if (w.year === todayWeek.year && w.week === todayWeek.week) return true;
+      if (w.year === todayWeek.year && w.week === todayWeek.week) return yr;
     }
-    return false;
+    return null;
   } catch {
     // Any unexpected error (timezone edge case, etc.) — safe fallback
-    return false;
+    return null;
   }
+}
+
+// True when the given month/day falls in the same ISO week as today.
+function isWeekOfMonthDay(month, day) {
+  return birthdayWeekYear(month, day) !== null;
 }
 
 function isBirthdayWeek(birthdateStr) {
@@ -1026,6 +1035,30 @@ function isHalfBirthdayWeek(birthdateStr) {
 // kid's half-birthday week.
 function isCakeWeek(birthdateStr) {
   return isBirthdayWeek(birthdateStr) || isHalfBirthdayWeek(birthdateStr);
+}
+
+// The age a child turns this birthday week (#291), printed as words beside the
+// cake so a leader can greet the exact age instead of just noticing an icon.
+//
+// REAL birthday weeks only, deliberately: a summer kid's half-birthday cake
+// gets no age line, because "turning 7 in six months" is not a fact anyone
+// wants on a badge. The two windows are mutually exclusive, so no tie-break is
+// needed — a half-birthday week simply returns null here.
+//
+// Uses the SAME matched year the cake keys on (birthdayWeekYear), so the icon
+// and the words can never disagree at the Dec→Jan wrap.
+//
+// Returns null for anything unparseable, not-this-week, or implausible for a
+// club (outside 1–21), so a caller can pass the result straight through to
+// generateLabel and a malformed birth year degrades to today's plain cake.
+// The birth YEAR itself never leaves this function: only the derived age does.
+function birthdayAgeThisWeek(birthdateStr) {
+  const bday = parseBirthdate(birthdateStr);
+  if (!bday) return null;
+  const yr = birthdayWeekYear(bday.getMonth(), bday.getDate());
+  if (yr === null) return null;
+  const age = yr - bday.getFullYear();
+  return (Number.isInteger(age) && age >= 1 && age <= 21) ? age : null;
 }
 
 // ── Allergy parser ────────────────────────────────────────────────────────────
@@ -1461,7 +1494,8 @@ async function generateLabel(input) {
   }
   let {
     firstName, lastName, clubName, clubImageBuffer,
-    allergyTokens = [], handbookGroup = '', isBirthday = false, isVisitor = false,
+    allergyTokens = [], handbookGroup = '', isBirthday = false, birthdayAge = null,
+    isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
     streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
@@ -1503,6 +1537,15 @@ async function generateLabel(input) {
   if (awanaShares !== null && awanaShares !== undefined) {
     const n = Number(awanaShares);
     awanaShares = (Number.isFinite(n) && n >= 0) ? Math.floor(n) : null;
+  }
+  // Birthday age (#291): the age a kid turns this week, printed beside the
+  // cake. Same coercion discipline as awanaShares — a malformed birth year
+  // must never print "Turning NaN". 1–21 is the plausible club range; anything
+  // else (0, negative, 22+, a string, Infinity, an object) degrades to no line
+  // at all, i.e. to exactly today's plain cake.
+  if (birthdayAge !== null && birthdayAge !== undefined) {
+    const n = Number(birthdayAge);
+    birthdayAge = (Number.isFinite(n) && n >= 1 && n <= 21) ? Math.floor(n) : null;
   }
   // Streak flame (#14): same coercion discipline as awanaShares — a malformed
   // value must never print "🔥 NaN".
@@ -1688,7 +1731,10 @@ async function generateLabel(input) {
   const hasGroup = stepUp ? !!stepUpGroupText
     : (greeting.length > 0 || (handbookGroup.length > 0 && tplOn('showGroupLine')));
   const hasAllergy = allergyTokens.length > 0;
-  const hasFooter = footerText.length > 0 && tplOn('showFooter');
+  // The trophy band (#293) takes the footer's slot rather than adding a fourth
+  // bottom-left line: the stack tops out at three before it crowds the name
+  // block, and the operator footer is branding while the band is the news.
+  const hasFooter = footerText.length > 0 && tplOn('showFooter') && !(extras && extras.trophyBand);
 
   // Reserve room for the bottom band: right side is the coin/cake/allergy icon
   // row, left side is the goTo/milestone/footer stack. 20pt covers the icon row
@@ -1697,7 +1743,8 @@ async function generateLabel(input) {
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
   const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid || collectibleIndex != null;
-  const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
+  const bottomLineCount = ((extras && extras.trophyBand) ? 1 : 0)
+    + ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
     + (hasFooter ? 1 : 0);
   const ALLERGY_STRIP_H = Math.max(
@@ -1707,6 +1754,19 @@ async function generateLabel(input) {
 
   // Pick a font personality based on the child's Awana club
   const fontFamily = getClubFontFamily(clubName);
+
+  // Birthday age line (#291): a few words beside the cake, so the icon becomes
+  // a conversation instead of a silent glyph. Gated on isBirthday a SECOND time
+  // here — the age is an annotation ON the cake, never a standalone line, so a
+  // caller passing birthdayAge with isBirthday:false renders byte-identically
+  // to no age at all.
+  const AGE_TEXT_SIZE = 10;
+  const ageFull  = (isBirthday && birthdayAge != null) ? `Turning ${birthdayAge} this week!` : '';
+  const ageShort = ageFull ? `Turning ${birthdayAge}!` : '';
+  // How much of the bottom band the right-anchored icon row may occupy before
+  // it would run into the icon panel (or the badge's left padding when there
+  // is none). 178pt with a panel present.
+  const ICON_ROW_MAX_W = (BX + BW - 6) - (hasIcon ? TEXT_X : BX + 8);
 
   // Twin-safe (#13): the middle initial rides the first-name line so the
   // width fit below accounts for it; the birth-month hint is its own small
@@ -1826,7 +1886,21 @@ async function generateLabel(input) {
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
       (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0) +
       (isNewKid ? 1 : 0) + (collectibleIndex != null ? 1 : 0);
-    const reservedRight = iconCount > 0 ? iconCount * 25 + 10 : 0;
+    // The age words (#291) sit in that same right-anchored row and are much
+    // wider than an icon slot (~89pt, roughly 3.5 slots), so they have to be
+    // measured rather than estimated — otherwise the handbook group runs
+    // straight under them, the exact collision this reservation exists for.
+    const iconReserve = iconCount > 0 ? iconCount * 25 + 10 : 0;
+    let ageReserve = 0;
+    if (ageFull) {
+      ctx.font = `${AGE_TEXT_SIZE}px ${fontFamily}`;
+      // Bounded by what is actually LEFT of the band: when the icons alone
+      // already fill it, the ladder below will drop the words, and reserving
+      // for text that never gets drawn would truncate this line for nothing.
+      ageReserve = Math.max(0, Math.min(
+        ctx.measureText(ageFull).width + 3, ICON_ROW_MAX_W - iconReserve));
+    }
+    const reservedRight = iconReserve + ageReserve;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
     groupStr = truncateTextCanvas(ctx, groupStr, groupFont, groupMaxW);
@@ -1899,8 +1973,17 @@ async function generateLabel(input) {
       // new names fast. Subtle by design - no text, small glyph.
       glyphs.push({ ch: '\u2728', size: EMOJI_SIZE });
     }
+    let ageGlyph = null;
     if (isBirthday) {
       glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      if (ageFull) {
+        // Right of the cake (#291), so the allergy/no-photo safety icons keep
+        // their familiar right-edge positions and the row reads "\uD83C\uDF70 Turning 7
+        // this week!". Carries its own text font \u2014 the emoji stack would
+        // rasterise the words with whatever fallback it happens to reach.
+        ageGlyph = { ch: ageFull, size: AGE_TEXT_SIZE, font: fontFamily };
+        glyphs.push(ageGlyph);
+      }
     }
     allergyTokens.forEach(function(t) {
       glyphs.push({ ch: ALLERGY_EMOJI[t] || '\u26A0', size: ALLERGY_EMOJI_SIZE });
@@ -1916,12 +1999,32 @@ async function generateLabel(input) {
     let totalW = 0;
     glyphs.forEach(function(g, i) {
       if (!g.draw) {
-        ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+        ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
         g.w = ctx.measureText(g.ch).width;
       }
       totalW += g.w;
       if (i < glyphs.length - 1) totalW += SPACING;
     });
+
+    // Width ladder for the age words (#291): full string, then a short form,
+    // then nothing. The CAKE never goes, and neither does any allergy or
+    // no-photo glyph — those are safety content. Only the words yield, so a
+    // crowded label degrades to exactly today's icon row.
+    if (ageGlyph && totalW > ICON_ROW_MAX_W) {
+      ctx.font = `${ageGlyph.size}px ${ageGlyph.font}`;
+      const shortW = ctx.measureText(ageShort).width;
+      if (totalW - ageGlyph.w + shortW <= ICON_ROW_MAX_W) {
+        totalW += shortW - ageGlyph.w;
+        ageGlyph.ch = ageShort;
+        ageGlyph.w = shortW;
+      } else {
+        // The age is never the only glyph — the cake is always beside it — so
+        // dropping it always removes exactly one SPACING as well.
+        totalW -= ageGlyph.w + SPACING;
+        glyphs.splice(glyphs.indexOf(ageGlyph), 1);
+        ageGlyph = null;
+      }
+    }
 
     let ex = BX + BW - PAD - totalW;
     iconRowLeftX = ex;
@@ -1932,7 +2035,7 @@ async function generateLabel(input) {
         ex += g.w + SPACING;
         return;
       }
-      ctx.font = `${g.size}px ${EMOJI_FONT_STACK}`;
+      ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
       ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
       ctx.fillText(g.ch, ex, ey);
       if (g.slash) {
@@ -1960,6 +2063,10 @@ async function generateLabel(input) {
   // Room 4"). milestoneLine: attendance milestones ("10th club night!").
   // Anchored bottom-left so they never collide with the bottom-right icons.
   const extraLines = [];
+  // trophyBand (#293): "Finished Sparks Wingrunner", drawn as an inverse chip
+  // so the room notices it from across the lobby. Pushed FIRST so the reversed
+  // draw below puts it highest in the stack, closest to the name.
+  if (extras && extras.trophyBand) extraLines.push({ text: String(extras.trophyBand).slice(0, 48), bold: true, band: true });
   if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
   if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
   // Operator-configured footer (#8: church name, a verse, service times) —
@@ -1979,8 +2086,19 @@ async function generateLabel(input) {
     let ly = BY + BH - 6;
     for (const line of extraLines.reverse()) {
       ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
-      ctx.fillStyle = COLOR.group;
-      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), lineX, ly);
+      // The band reuses the visitor pill's inverse pair, so it stays readable
+      // on an inverted (first-timer / award) label as well as a white one.
+      const drawn = truncateTextCanvas(ctx, line.text, ctx.font, line.band ? maxW - 8 : maxW);
+      if (line.band) {
+        const bandW = ctx.measureText(drawn).width;
+        ctx.fillStyle = COLOR.visitorBg;
+        roundedRect(ctx, lineX - 3, ly - 9, bandW + 6, 12, 3);
+        ctx.fill();
+        ctx.fillStyle = COLOR.visitorText;
+      } else {
+        ctx.fillStyle = COLOR.group;
+      }
+      ctx.fillText(drawn, lineX, ly);
       ly -= 13;
     }
     ctx.textAlign = 'center';
@@ -2350,6 +2468,22 @@ function recordAttendance(firstName, lastName, clubberId = null) {
 
 function milestoneLineFor(count) {
   return MILESTONES.includes(count) ? `⭐ ${count}th club night tonight!` : '';
+}
+
+// #293: the trophy band's text. Pure and exported so the clip is pinned by a
+// unit test — the renderer's own 48-character cap is inside generateLabel and
+// returns nothing testable. A book title arrives from a scraped CSV, so it is
+// stripped of control characters and bounded before it ever reaches a label.
+const TROPHY_BAND_MAX = 48;
+function trophyBandFor(book) {
+  // A book title comes off a scraped CSV column, so it is always a string when
+  // it is real. Anything else is garbage from a drifted parser and prints
+  // nothing at all — "Finished 42" or "Finished [object Object]" on a child's
+  // label is worse than no band.
+  if (typeof book !== 'string') return '';
+  const clean = security.sanitizeStoredText(book, 60);
+  if (!clean) return '';
+  return `Finished ${clean}`.slice(0, TROPHY_BAND_MAX);
 }
 
 // ── Group schedule (#28) ──────────────────────────────────────────────────────
@@ -2727,12 +2861,13 @@ app.post('/label', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens, handbookGroup, birthday, noPhoto;
+  let allergyTokens, handbookGroup, birthday, birthdayAge, noPhoto;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print: the group is judged
     // against the club that actually prints, so a club-less request for a
@@ -2744,6 +2879,7 @@ app.post('/label', async (req, res) => {
     allergyTokens = [];
     handbookGroup = '';
     birthday = false;
+    birthdayAge = null;
     noPhoto = false;
   }
 
@@ -2767,7 +2903,7 @@ app.post('/label', async (req, res) => {
     const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, isBirthday: birthday, isVisitor: !!visitor,
+      allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
@@ -2808,6 +2944,7 @@ async function performCheckinPrint(input) {
     stepUpNight   = false,
     awanaShares   = null,
     clubberId     = null,
+    suppressConnectCard = false,
     demo          = false
   } = input || {};
 
@@ -2853,7 +2990,7 @@ async function performCheckinPrint(input) {
   // Attempt to enrich the label with data from the CSV
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens, handbookGroup, birthday, cakeWeek, noPhoto;
+  let allergyTokens, handbookGroup, birthday, cakeWeek, birthdayAge, noPhoto;
   let effectiveClubName = clubName;
   if (record) {
     // TwoTimTwo CSV has "Notes" instead of a dedicated "Allergies" column.
@@ -2862,6 +2999,7 @@ async function performCheckinPrint(input) {
     allergyTokens = parseAllergies(allergySource);
     birthday      = isBirthdayWeek(record.Birthdate);   // real — feeds the display event
     cakeWeek      = isCakeWeek(record.Birthdate);       // label icon: real or half-birthday
+    birthdayAge   = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
@@ -2879,6 +3017,7 @@ async function performCheckinPrint(input) {
     handbookGroup = '';
     birthday      = false;
     cakeWeek      = false;
+    birthdayAge   = null;
     noPhoto       = false;
     if (firstName || lastName) {
       console.log(`[csv] '${firstName} ${lastName}' not found in CSV — printing basic label`);
@@ -2943,6 +3082,29 @@ async function performCheckinPrint(input) {
       } catch { /* ledger trouble must not stop the print */ }
     }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
+    // Trophy band (#293): pure decoration off a cached LOCAL feed, in its own
+    // try/catch. A missing, stale or malformed feed prints the stock label and
+    // never delays it — printing is never gated on the pipe. Demo prints are
+    // excluded on purpose: they skip history, so a demo band could not be
+    // deduped (same reason a demo skips the ledger-derived milestone).
+    let trophyBook = '';
+    if (!isDemo && config.trophyBand !== false) {
+      try {
+        const hit = feeds.getCompletedBook(`${firstName} ${lastName}`);
+        if (hit && hit.book) {
+          // Once per child per club night, the same way the auto connect card
+          // dedupes: a lost label or a second station must not band twice.
+          const todayIso = localDayISO();
+          const alreadyBanded = loadHistory().some(e => e && e.trophyBook && e.success !== false
+            && isOnLocalDay(e.timestamp, todayIso)
+            && historyRowMatches(e, firstName, lastName, clubberId));
+          if (!alreadyBanded) {
+            const band = trophyBandFor(hit.book);
+            if (band) { extras.trophyBand = band; trophyBook = hit.book; }
+          }
+        }
+      } catch { /* a decoration must never stop a label */ }
+    }
     // The operator's explicit visitor flag and the ledger heuristic converge
     // here for the connect card and the display's welcome treatment. The
     // label's inverted palette deliberately stays on the EXPLICIT flag only:
@@ -2954,7 +3116,7 @@ async function performCheckinPrint(input) {
     const twin = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup, isBirthday: cakeWeek, isVisitor: !!visitor,
+      allergyTokens, handbookGroup, isBirthday: cakeWeek, birthdayAge, isVisitor: !!visitor,
       stepUp, stepUpNextClub, awanaShares, noPhoto, streakCount, isNewKid: newKid,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       testBanner: isDemo,   // a demo label is visibly marked
@@ -2985,8 +3147,15 @@ async function performCheckinPrint(input) {
     // a re-print past the 25s dedup window (lost label, roster fix, a second
     // station) must not hand the family a second welcome card, and firstEver
     // alone can't see that because tonight is still the kid's only ledger date.
+    // A visiting FAMILY (#323) is several independent prints — one per child —
+    // that share one household, so every child after the first asks for its
+    // card to be suppressed and the family gets ONE welcome card, not four.
+    // Absent or garbage means "print the card": that is today's behaviour, and
+    // POST /phone/visitor (which never sends the field) and the extension's
+    // offline queue both depend on it.
+    const suppressCard = suppressConnectCard === true || suppressConnectCard === 'true';
     let shouldConnectCard = false;
-    if (config.connectCard) {
+    if (config.connectCard && !suppressCard) {
       if (visitor) {
         shouldConnectCard = true;
       } else if (autoFirstTimer) {
@@ -3042,10 +3211,13 @@ async function performCheckinPrint(input) {
       events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
       pushEventToBuffer(checkinEvent);
 
-      // Log to print history
+      // Log to print history. trophyBook is the once-per-night marker for
+      // #293's band — written on SUCCESS only, so a jammed label (which nobody
+      // ever saw) still gets its band on the reprint.
       addHistoryEntry({
         firstName, lastName, clubName: effectiveClubName, clubImageData,
-        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId
+        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId,
+        trophyBook,
       });
 
       publishTally();
@@ -3088,7 +3260,7 @@ app.post('/print', async (req, res) => {
     firstName, lastName,
     clubName: body.clubName, clubImageData: body.clubImageData, printerName: body.printerName,
     visitor: body.visitor, stepUpNight: body.stepUpNight, awanaShares: body.awanaShares,
-    clubberId: body.clubberId, demo: body.demo,
+    clubberId: body.clubberId, suppressConnectCard: body.suppressConnectCard, demo: body.demo,
   });
   res.status(out.status).json(out.body);
 });
@@ -3348,6 +3520,74 @@ function isNonCheckinRow(e) {
   return !!(e && (e.isAward || e.isConnectCard || e.isLeader));
 }
 
+// ── Reprint a whole stretch of tonight (#257) ────────────────────────────────
+// A jam or a torn roll eats eight labels in a rush, and the operator had to
+// reprint one Print History row at a time while a line formed at the door.
+//
+// Cap of 20, not 40: printImage is execSync with a 15s timeout plus one retry
+// preceded by a SYNCHRONOUS 750ms wait, i.e. up to ~31s of blocked event loop
+// per label. Forty labels could stall POST /print for a child at the door for
+// minutes. The inter-label gap below is an awaited setTimeout for the same
+// reason — never Atomics.wait, which would defeat the point entirely.
+const REPRINT_RANGE_MAX = 20;
+const REPRINT_RANGE_GAP_MS = 400;
+
+// Pure: takes a history array and a window, returns the rows to reprint. No
+// fs, no config, no clock beyond what the caller passes, so every exclusion
+// rule below is exhaustively testable.
+//
+// Awards, connect cards and leader tags are excluded UNCONDITIONALLY — there
+// is no includeAwards flag, deliberately. POST /reprint branches only on
+// isLeader; an isAward row would fall into the kid path and record a history
+// row WITHOUT its isAward flag, so isNonCheckinRow() would stop excluding it
+// and tonight's tally would count an award slip as a child on every screen.
+function selectReprintRange(opts) {
+  const {
+    history = [], today = localDayISO(), fromISO, toISO,
+    club = '', max = REPRINT_RANGE_MAX,
+  } = opts || {};
+
+  const from = new Date(fromISO);
+  const to = new Date(toISO);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+    return { error: 'bad-range' };
+  }
+
+  let want = '';
+  if (String(club || '').trim()) {
+    want = clubKey(club);
+    // An unrecognised club string must NOT silently match everything — that
+    // would print the whole night when the operator meant one club.
+    if (!want) return { error: 'bad-club' };
+  }
+
+  const skipped = { nonCheckin: 0, failed: 0, undone: 0, otherClub: 0, duplicate: 0 };
+  const seen = new Set();
+  const rows = [];
+  for (const r of history) {
+    if (!r || !isOnLocalDay(r.timestamp, today)) continue;
+    const t = new Date(r.timestamp);
+    if (t < from || t > to) continue;                 // inclusive at both ends
+    if (r.success === false) { skipped.failed++; continue; }
+    if (isNonCheckinRow(r)) { skipped.nonCheckin++; continue; }
+    // Reconciled away by the checkin report or a volunteer's Remove on the
+    // phone: that child is not here, so a fresh label must not come out.
+    if (r.undone) { skipped.undone++; continue; }
+    if (want && clubKey(r.clubName) !== want) { skipped.otherClub++; continue; }
+    if (!`${r.firstName || ''} ${r.lastName || ''}`.trim()) continue;
+    // History is newest-first, so the FIRST row seen per identity is the
+    // newest. Without this a stretch spanning an earlier reprint would print
+    // the same child twice.
+    const key = historyIdentityKey(r);
+    if (seen.has(key)) { skipped.duplicate++; continue; }
+    seen.add(key);
+    rows.push(r);
+  }
+
+  const capped = rows.length > max;
+  return { rows: rows.slice(0, max), count: Math.min(rows.length, max), capped, skipped };
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -3369,6 +3609,12 @@ function addHistoryEntry(entry) {
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
     award: security.sanitizeStoredText(entry.award || ''),
+    // #293: which handbook this label's trophy band celebrated. A marker, not
+    // display data — it is what stops a second band for the same child tonight.
+    // (MAX_HISTORY caps the log at 200 rows, so on a huge night this marker can
+    // be evicted and a much-later reprint could band once more. Acceptable for
+    // a decoration; not worth an unbounded store.)
+    trophyBook: security.sanitizeStoredText(entry.trophyBook || '', 60),
     // Connect cards (#10) are flagged for the same reason award slips are:
     // they show in /history so the operator can see the card went out, but
     // isNonCheckinRow() keeps them out of every place that counts check-ins.
@@ -3649,6 +3895,223 @@ function reconcileHandler(req, res) {
 app.get('/reconcile', reconcileHandler);
 app.post('/reconcile', reconcileHandler);
 
+// ── Attendance audit (#311) ──────────────────────────────────────────────────
+// attendance.json drives milestones, the streak flame, the new-kid sparkle and
+// the auto connect card, and nothing has ever checked it against the source of
+// truth. A night the printer was down leaves a permanent hole that quietly
+// prints wrong milestones for the rest of the season.
+//
+// So: the extension scrapes TwoTimTwo's own /report/attendance_grid (one column
+// per meeting date) and posts it here; this diffs it against the ledger. Two
+// disciplines run through all of it:
+//
+//   1. UNKNOWN IS NOT ZERO. A failed or absent grid reports "not checked",
+//      never "you attended nothing" and never "agrees".
+//   2. APPLY IS ADDITIVE ONLY. The ledger legitimately holds walk-in guests
+//      TwoTimTwo never saw, so a date the grid lacks is not an error to delete;
+//      it is information the site does not have.
+//
+// In memory only, like sourceCount above: it is a periodic second opinion, and
+// persisting it would mainly create the chance to show a stale one. The rows
+// carry children's FULL names, so this route is standalone and never published
+// — see the comment on the POST below.
+let attendanceGrid = null; // { season, meetingDates, clubsRead, clubsFailed, rows, at }
+
+const ATTENDANCE_GRID_STALE_MS = 8 * 24 * 60 * 60 * 1000; // a week plus slack
+
+const ATTENDANCE_GRID_MAX_ROWS = 600;
+const ATTENDANCE_GRID_MAX_DATES = 60;
+
+// Validated INLINE like /feed/source-count, and deliberately NOT registered in
+// FEED_NAMES / routed through makeFeedRoute(): that helper publishes every
+// registered feed to the PUBLIC Pusher channel, and these rows carry full
+// names. Same never-published class as /feed/checkin-report,
+// /feed/unverified-checkins and /feed/completed-books.
+app.post('/feed/attendance-grid', (req, res) => {
+  const b = req.body || {};
+  const bad = (msg) => res.status(400).json({ ok: false, error: msg });
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return bad('body must be an object');
+  if (!Array.isArray(b.meetingDates) || !b.meetingDates.length
+      || b.meetingDates.length > ATTENDANCE_GRID_MAX_DATES
+      || !b.meetingDates.every(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))) {
+    // A missing/garbled date list is NOT an empty grid: without it every ledger
+    // date would read as "the site does not have this", which is a fabricated
+    // discrepancy report.
+    return bad('meetingDates must be a non-empty array of YYYY-MM-DD strings');
+  }
+  const clubsRead = Array.isArray(b.clubsRead)
+    ? b.clubsRead.map(c => security.sanitizeStoredText(c, 60)).filter(Boolean).slice(0, 12) : [];
+  if (!clubsRead.length) return bad('clubsRead must name at least one club that was actually read');
+  const clubsFailed = Array.isArray(b.clubsFailed)
+    ? b.clubsFailed.map(c => security.sanitizeStoredText(c, 60)).filter(Boolean).slice(0, 12) : [];
+  if (!Array.isArray(b.rows) || b.rows.length > ATTENDANCE_GRID_MAX_ROWS) {
+    return bad(`rows must be an array of at most ${ATTENDANCE_GRID_MAX_ROWS} entries`);
+  }
+  const dateSet = new Set(b.meetingDates);
+  const rows = [];
+  for (const raw of b.rows) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return bad('every row must be an object');
+    const name = security.sanitizeStoredText(raw.name || '', 80);
+    if (!name) return bad('every row needs a name');
+    if (!Array.isArray(raw.dates) || raw.dates.length > ATTENDANCE_GRID_MAX_DATES) {
+      return bad('every row needs a dates array');
+    }
+    for (const d of raw.dates) {
+      // A date outside the grid's own meeting list means the parser and the
+      // header disagree — refuse the whole post rather than audit against it.
+      if (typeof d !== 'string' || !dateSet.has(d)) return bad('every row date must be one of meetingDates');
+    }
+    rows.push({ name, club: security.sanitizeStoredText(raw.club || '', 60), dates: raw.dates.slice() });
+  }
+  attendanceGrid = {
+    season: security.sanitizeStoredText(b.season || '', 20),
+    meetingDates: b.meetingDates.slice(),
+    clubsRead, clubsFailed, rows, at: Date.now(),
+  };
+  res.json({ ok: true, rows: rows.length, clubs: clubsRead.length });
+});
+
+// Pure, so unknown-vs-zero and additive-only are unit-tested without a browser
+// (same discipline as compareCounts and reconcileHistoryWithReport).
+function auditAttendance(ledger, grid, now = Date.now(), today = localDayISO()) {
+  if (!grid) return { known: false, reason: 'no-grid' };
+  const ageMs = now - grid.at;
+  if (ageMs > ATTENDANCE_GRID_STALE_MS) {
+    return { known: false, reason: 'stale', ageMs, at: grid.at };
+  }
+  // Only PAST meetings the grid itself lists are in scope. Everything else —
+  // prior seasons the ledger never prunes, a future meeting, a date only one
+  // side has ever heard of — is out of scope, not a discrepancy.
+  const scope = new Set((grid.meetingDates || []).filter(d => d <= today));
+  if (!scope.size) return { known: false, reason: 'no-meetings', ageMs, at: grid.at };
+
+  const clubOf = (c) => clubKey(c) || String(c || '').trim().toLowerCase();
+  const readClubs = new Set((grid.clubsRead || []).map(clubOf));
+
+  // The grid's Clubber column ordering was never observed, so "Last, First"
+  // has to key the same child as "First Last".
+  const normName = (raw) => {
+    let s = String(raw == null ? '' : raw).replace(/&amp;/gi, '&').trim();
+    const comma = s.indexOf(',');
+    if (comma !== -1) s = `${s.slice(comma + 1).trim()} ${s.slice(0, comma).trim()}`;
+    return s.toLowerCase().replace(/\s+/g, ' ').trim();
+  };
+
+  const gridByName = new Map();
+  for (const r of (grid.rows || [])) {
+    const k = normName(r.name);
+    if (!k) continue;
+    if (!gridByName.has(k)) gridByName.set(k, []);
+    gridByName.get(k).push(r);
+  }
+  const ledgerByName = new Map();
+  for (const [key, entry] of Object.entries(ledger || {})) {
+    if (!entry || !Array.isArray(entry.dates)) continue;
+    const k = normName(entry.name);
+    if (!k) continue;
+    if (!ledgerByName.has(k)) ledgerByName.set(k, []);
+    ledgerByName.get(k).push({ key, entry });
+  }
+
+  const rows = [];
+  const ambiguous = [];
+  const notOnRoster = [];
+  const neverPrinted = [];
+
+  for (const [k, hits] of ledgerByName) {
+    const gridHits = gridByName.get(k) || [];
+    if (hits.length > 1 || gridHits.length > 1) {
+      // Two children sharing a name: matching either one would be a guess, and
+      // a guess here writes into the season ledger. Named, never applied.
+      ambiguous.push(hits[0].entry.name);
+      continue;
+    }
+    if (!gridHits.length) {
+      // A walk-in guest TwoTimTwo never saw, or a child in an unread club.
+      notOnRoster.push(hits[0].entry.name);
+      continue;
+    }
+    const g = gridHits[0];
+    if (readClubs.size && !readClubs.has(clubOf(g.club))) continue; // club not read: out of scope
+    const { key, entry } = hits[0];
+    const theirs = new Set((g.dates || []).filter(d => scope.has(d)));
+    const mine = new Set((entry.dates || []).filter(d => scope.has(d)));
+    const missingHere = [...theirs].filter(d => !mine.has(d)).sort();
+    const ledgerOnly = [...mine].filter(d => !theirs.has(d)).sort();
+    // A ledger date the grid has no meeting for at all is recorded separately:
+    // it is not the site disagreeing, it is a night the site never held.
+    const noMeeting = (entry.dates || []).filter(d => typeof d === 'string' && d <= today && !scope.has(d)).sort();
+    if (missingHere.length || ledgerOnly.length) {
+      rows.push({ name: entry.name, club: g.club || '', key, missingHere, ledgerOnly, noMeeting });
+    }
+  }
+  for (const [k, gridHits] of gridByName) {
+    if (ledgerByName.has(k)) continue;
+    if (readClubs.size && !readClubs.has(clubOf(gridHits[0].club))) continue;
+    // On TwoTimTwo but never printed here (likely another station). Reported,
+    // never added: this machine has no ledger entry to add dates to, and
+    // inventing one would fabricate a child's attendance history.
+    neverPrinted.push(gridHits[0].name);
+  }
+
+  const missing = rows.reduce((n, r) => n + r.missingHere.length, 0);
+  const only = rows.reduce((n, r) => n + r.ledgerOnly.length, 0);
+  return {
+    known: true, at: grid.at, ageMs, season: grid.season || '',
+    scopeDates: scope.size,
+    clubsRead: (grid.clubsRead || []).slice(),
+    clubsUnread: (grid.clubsFailed || []).slice(),
+    rows,
+    totals: { missing, ledgerOnly: only },
+    matches: rows.length === 0,
+    ambiguous, notOnRoster, neverPrinted,
+  };
+}
+
+app.get('/attendance-audit', (req, res) => {
+  res.json(auditAttendance(loadAttendance(), attendanceGrid));
+});
+
+// ADDITIVE ONLY, and confirm-gated like /reset-tonight. It recomputes the audit
+// server-side rather than trusting a client-supplied date list, adds only dates
+// for children who already have a ledger entry and matched exactly one grid
+// row, and never deletes anything — the ledger's extra dates are walk-in
+// guests, not errors.
+app.post('/attendance-audit/apply', (req, res) => {
+  if ((req.body || {}).confirm !== true) {
+    return res.status(400).json({ error: 'confirm: true required — this writes dates into the season ledger' });
+  }
+  const ledger = loadAttendance();
+  const today = localDayISO();
+  const audit = auditAttendance(ledger, attendanceGrid, Date.now(), today);
+  if (!audit.known) {
+    return res.status(409).json({ error: 'No readable attendance grid — nothing to apply', reason: audit.reason });
+  }
+  const scope = new Set(attendanceGrid.meetingDates.filter(d => d <= today));
+  let added = 0;
+  const touched = [];
+  for (const row of audit.rows) {
+    const entry = ledger[row.key];
+    if (!entry || !Array.isArray(entry.dates)) continue;
+    let mine = 0;
+    for (const d of row.missingHere) {
+      if (!scope.has(d) || d > today) continue;
+      if (entry.dates.includes(d)) continue;
+      entry.dates.push(d);
+      added++; mine++;
+    }
+    if (mine) {
+      // Sorted so the min-date and club-night walks in recordAttendance stay
+      // predictable.
+      entry.dates.sort();
+      touched.push(row.name);
+    }
+  }
+  if (added) saveAttendance(ledger);
+  console.log(`[audit] Applied ${added} missing attendance date(s) across ${touched.length} child(ren); 0 deleted`);
+  res.json({ ok: true, added, children: touched, deleted: 0 });
+});
+
 // ── Label preview ────────────────────────────────────────────────────────────
 app.get('/preview', async (req, res) => {
   const { name, firstName: qFirst, lastName: qLast } = req.query;
@@ -3671,12 +4134,13 @@ app.get('/preview', async (req, res) => {
   // Enrich from CSV if available
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName);
-  let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
+  let allergyTokens = [], handbookGroup = '', birthday = false, birthdayAge = null, noPhoto = false;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto = noPhotoFor(record);
     // Same roster fill (and same ordering) as /print — a preview must show the
     // label the same request would PRINT, pseudo-group suppression included.
@@ -3701,7 +4165,7 @@ app.get('/preview', async (req, res) => {
     const twinP = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName,
-      allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
+      allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, noPhoto,
       isVisitor: previewVisitor,
       middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
@@ -3720,6 +4184,112 @@ app.get('/preview', async (req, res) => {
 });
 
 // ── Reprint ──────────────────────────────────────────────────────────────────
+// One history row, reprinted. Factored out of POST /reprint unchanged so the
+// range reprint (#257) reuses the SAME path rather than growing a second one —
+// which is what keeps the ledger, the tally and the sealed checkin event out
+// of it: a reprint is never a check-in, and this function calls neither
+// recordAttendance nor events.publish nor publishTally.
+//
+// Returns { ok: true, name, leader? } or { ok: false, name, error }. It never
+// throws and never touches `res`.
+//
+// opts.silent skips the musical-printer tune (range mode only): at
+// config.musicalPrinter === true a burst of 20 would play 20 tunes, and each
+// failure costs a synchronous 400ms wait inside playTuneIfEnabled.
+async function reprintRow(entry, printerName, opts = {}) {
+  const fullName = `${entry.firstName} ${entry.lastName}`;
+  const effectivePrinter = (printerName && printerName.trim()) || entry.printer || PRINTER_NAME;
+  const silent = opts.silent === true;
+
+  // A leader tag reprinted by index must come back out as a leader tag: the
+  // kid path below would render allergy/birthday enrichment for a same-named
+  // child and record an UNFLAGGED row — turning an adult's name tag into a
+  // counted check-in, the exact thing isLeader exists to prevent.
+  if (entry.isLeader) {
+    let leaderPng = null;
+    try {
+      const result = await renderLeaderLabel({ firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName });
+      leaderPng = result.pngPath;
+      if (!silent) playTuneIfEnabled(effectivePrinter);
+      printImage(leaderPng, effectivePrinter);
+      addHistoryEntry({
+        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+        printer: effectivePrinter, success: true, isLeader: true,
+      });
+      console.log(`[reprint] leader tag ${fullName}`);
+      return { ok: true, name: fullName, leader: true };
+    } catch (err) {
+      console.error('[reprint] Error:', err.message);
+      addHistoryEntry({
+        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+        printer: effectivePrinter, success: false, isLeader: true,
+      });
+      recordPrintFailure(fullName.trim(), entry.clubName, err.message);
+      return { ok: false, name: fullName, error: err.message };
+    } finally {
+      if (leaderPng) fs.unlink(leaderPng, () => {});
+    }
+  }
+
+  let pngPath = null;
+  try {
+    clubbers = loadClubbers();
+    const record = findClubber(entry.firstName, entry.lastName);
+    let allergyTokens = [], handbookGroup = '', birthday = false, birthdayAge = null, noPhoto = false;
+    if (record) {
+      const allergySource = record.Allergies || record.Notes || '';
+      allergyTokens = parseAllergies(allergySource);
+      handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, entry.clubName);
+      birthday = isCakeWeek(record.Birthdate);
+      // Re-derived from the roster, not restored from the history row (which
+      // stores no birthdate), so a reprint matches the label that first
+      // printed instead of silently dropping its age line.
+      birthdayAge = birthdayAgeThisWeek(record.Birthdate);
+      noPhoto = noPhotoFor(record);
+    }
+
+    const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
+    // NOTE: visitor, stepUp, awanaShares, goToLine and milestoneLine are all
+    // absent here because print history never stored them, so a reprint has
+    // quietly differed from the original label. Naming the fields makes that
+    // omission visible rather than hidden in a run of positional `false`s.
+    const twinR = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
+    const result = await generateLabel({
+      firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
+      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, noPhoto,
+      middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
+      footerText: labelFooterText(),
+      season: currentLabelSeason(),
+      collectibleIndex: currentCollectibleIndex(),
+      template: labelTemplateFor(entry.clubName),
+    });
+    pngPath = result.pngPath;
+
+    if (!silent) playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
+    printImage(pngPath, effectivePrinter);
+
+    addHistoryEntry({
+      firstName: entry.firstName, lastName: entry.lastName,
+      clubName: entry.clubName, clubImageData: entry.clubImageData,
+      printer: effectivePrinter, success: true, clubberId: entry.clubberId
+    });
+
+    console.log(`[reprint] ${fullName}`);
+    return { ok: true, name: fullName };
+  } catch (err) {
+    console.error('[reprint] Error:', err.message);
+    addHistoryEntry({
+      firstName: entry.firstName, lastName: entry.lastName,
+      clubName: entry.clubName, clubImageData: entry.clubImageData,
+      printer: effectivePrinter, success: false, clubberId: entry.clubberId
+    });
+    recordPrintFailure(fullName.trim(), entry.clubName, err.message);
+    return { ok: false, name: fullName, error: err.message };
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+}
+
 app.post('/reprint', async (req, res) => {
   const { name, index, clubberId = null } = req.body || {};
   const history = loadHistory();
@@ -3746,91 +4316,74 @@ app.post('/reprint', async (req, res) => {
     return res.status(404).json({ error: 'No matching print history entry found' });
   }
 
-  const effectivePrinter = (req.body.printerName && req.body.printerName.trim()) || entry.printer || PRINTER_NAME;
+  const r = await reprintRow(entry, req.body.printerName);
+  if (!r.ok) return res.status(500).json({ error: r.error });
+  return res.json(Object.assign({ success: true, name: r.name }, r.leader ? { leader: true } : {}));
+});
 
-  // A leader tag reprinted by index must come back out as a leader tag: the
-  // kid path below would render allergy/birthday enrichment for a same-named
-  // child and record an UNFLAGGED row — turning an adult's name tag into a
-  // counted check-in, the exact thing isLeader exists to prevent.
-  if (entry.isLeader) {
-    let leaderPng = null;
-    try {
-      const result = await renderLeaderLabel({ firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName });
-      leaderPng = result.pngPath;
-      playTuneIfEnabled(effectivePrinter);
-      printImage(leaderPng, effectivePrinter);
-      addHistoryEntry({
-        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
-        printer: effectivePrinter, success: true, isLeader: true,
-      });
-      console.log(`[reprint] leader tag ${entry.firstName} ${entry.lastName}`);
-      return res.json({ success: true, name: `${entry.firstName} ${entry.lastName}`, leader: true });
-    } catch (err) {
-      console.error('[reprint] Error:', err.message);
-      addHistoryEntry({
-        firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
-        printer: effectivePrinter, success: false, isLeader: true,
-      });
-      recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
-      return res.status(500).json({ error: err.message });
-    } finally {
-      if (leaderPng) fs.unlink(leaderPng, () => {});
-    }
+// Reprint a whole stretch of tonight (#257). A jam or a torn roll eats eight
+// labels in a rush; this reprints the run at once instead of one row at a time
+// while a line forms at the door.
+//
+// Two-step by design: without confirm:true it is a DRY RUN that names the
+// count and prints nothing — the count comes from the server, not the client.
+app.post('/reprint-range', async (req, res) => {
+  const { fromTs, toTs, club = '', confirm = false, printerName = '' } = req.body || {};
+
+  // /reprint predates rehearsal mode and is not rehearsal-aware, but a range
+  // reprint is inherently a real-night action — refuse rather than spray 20
+  // TEST labels at a jammed printer.
+  if (isRehearsalActive()) {
+    return res.status(409).json({ error: 'Rehearsal mode is armed — disarm it before reprinting a stretch.' });
+  }
+  if (printerName && !isSafePrinterName(printerName)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
   }
 
-  let pngPath = null;
-  try {
-    clubbers = loadClubbers();
-    const record = findClubber(entry.firstName, entry.lastName);
-    let allergyTokens = [], handbookGroup = '', birthday = false, noPhoto = false;
-    if (record) {
-      const allergySource = record.Allergies || record.Notes || '';
-      allergyTokens = parseAllergies(allergySource);
-      handbookGroup = effectiveHandbookGroup(record.HandbookGroup || record.Group, entry.clubName);
-      birthday = isCakeWeek(record.Birthdate);
-      noPhoto = noPhotoFor(record);
-    }
-
-    const clubImageBuffer = await resolveImageBuffer(entry.clubImageData);
-    // NOTE: visitor, stepUp, awanaShares, goToLine and milestoneLine are all
-    // absent here because print history never stored them, so a reprint has
-    // quietly differed from the original label. Naming the fields makes that
-    // omission visible rather than hidden in a run of positional `false`s.
-    const twinR = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
-    const result = await generateLabel({
-      firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
-      clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, noPhoto,
-      middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
-      footerText: labelFooterText(),
-      season: currentLabelSeason(),
-      collectibleIndex: currentCollectibleIndex(),
-      template: labelTemplateFor(entry.clubName),
+  const sel = selectReprintRange({ history: loadHistory(), fromISO: fromTs, toISO: toTs, club });
+  if (sel.error) {
+    return res.status(400).json({
+      error: sel.error === 'bad-club'
+        ? 'Unknown club'
+        : 'Give a start time before an end time (both on today).',
     });
-    pngPath = result.pngPath;
-
-    playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
-    printImage(pngPath, effectivePrinter);
-
-    addHistoryEntry({
-      firstName: entry.firstName, lastName: entry.lastName,
-      clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: true, clubberId: entry.clubberId
-    });
-
-    console.log(`[reprint] ${entry.firstName} ${entry.lastName}`);
-    res.json({ success: true, name: `${entry.firstName} ${entry.lastName}` });
-  } catch (err) {
-    console.error('[reprint] Error:', err.message);
-    addHistoryEntry({
-      firstName: entry.firstName, lastName: entry.lastName,
-      clubName: entry.clubName, clubImageData: entry.clubImageData,
-      printer: effectivePrinter, success: false, clubberId: entry.clubberId
-    });
-    recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
-    res.status(500).json({ error: err.message });
-  } finally {
-    if (pngPath) fs.unlink(pngPath, () => {});
   }
+  if (!sel.count) {
+    return res.json({ confirmed: false, count: 0, rows: [], skipped: sel.skipped });
+  }
+  if (confirm !== true) {
+    return res.json({
+      confirmed: false,
+      count: sel.count,
+      capped: sel.capped,
+      skipped: sel.skipped,
+      rows: sel.rows.map(r => ({
+        name: `${r.firstName} ${r.lastName}`.trim(),
+        clubName: r.clubName || '',
+        at: r.timestamp,
+      })),
+    });
+  }
+
+  const printed = [];
+  let stopped = null;
+  for (let i = 0; i < sel.rows.length; i++) {
+    const r = await reprintRow(sel.rows[i], printerName, { silent: true });
+    // Stop on the FIRST failure: a jam would otherwise fire 19 more ops
+    // print-failure events and write 19 more failed history rows.
+    if (!r.ok) { stopped = { name: r.name, error: r.error }; break; }
+    printed.push(r.name);
+    // Awaited, never Atomics.wait — the point is that a queued POST /print for
+    // a child at the door gets served between reprints.
+    if (i < sel.rows.length - 1) await new Promise(done => setTimeout(done, REPRINT_RANGE_GAP_MS));
+  }
+
+  console.log(`[reprint-range] ${printed.length}/${sel.rows.length} label(s)${stopped ? ` — stopped at ${stopped.name}` : ''}`);
+  // Always 200 so the client can render a partial run rather than a bare
+  // "failed" after most of the stretch actually came out.
+  return res.json({
+    success: !stopped, printed, count: sel.rows.length, capped: sel.capped, stoppedAt: stopped,
+  });
 });
 
 // ── Award slip labels ─────────────────────────────────────────────────────────
@@ -3888,12 +4441,13 @@ app.post('/print-award', async (req, res) => {
   clubbers = loadClubbers();
   const record = findClubber(firstName, lastName, clubberId);
 
-  let allergyTokens = [], birthday = false, noPhoto = false;
+  let allergyTokens = [], birthday = false, birthdayAge = null, noPhoto = false;
   let effectiveClubName = clubName;
   if (record) {
     const allergySource = record.Allergies || record.Notes || '';
     allergyTokens = parseAllergies(allergySource);
     birthday = isCakeWeek(record.Birthdate);
+    birthdayAge = birthdayAgeThisWeek(record.Birthdate);   // words beside the cake (#291)
     noPhoto  = noPhotoFor(record);
     if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
   }
@@ -3906,7 +4460,7 @@ app.post('/print-award', async (req, res) => {
     const twinA = record ? twinDisambiguation(record, clubbers) : { middleInitial: '', nameHint: '' };
     const result = await generateLabel({
       firstName, lastName, clubName: effectiveClubName, clubImageBuffer,
-      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, noPhoto,
+      allergyTokens, handbookGroup: medalLine, isBirthday: birthday, birthdayAge, noPhoto,
       middleInitial: twinA.middleInitial, nameHint: twinA.nameHint,
       footerText: labelFooterText(),
       season: currentLabelSeason(),
@@ -4513,6 +5067,19 @@ app.post('/feed/unverified-checkins', (req, res) => {
   res.json({ ok: true, count: result.payload.entries.length });
 });
 
+// #293: who finished a handbook recently, so the NEXT label that child prints
+// carries a trophy band. Carries full names and is therefore in the same
+// loopback/PIN-gated, NEVER-published class as the two feeds above —
+// deliberately NOT registered in FEED_NAMES/makeFeedRoute, which publishes to
+// the public Pusher channel. Merge semantics: the extension posts one payload
+// per club, so a second club's post must not wipe the first's.
+app.post('/feed/completed-books', (req, res) => {
+  const result = feeds.submitCompletedBooks(req.body, Date.now());
+  if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
+  if (result.throttled) return res.json({ ok: true, throttled: true });
+  res.json({ ok: true, count: result.payload.entries.length });
+});
+
 // Reset tonight (operator request): one button on the widget zeroes the
 // night — every active check-in row today is marked undone (history is a
 // log, rows are never deleted), tonight's date comes OUT of the attendance
@@ -4806,6 +5373,11 @@ async function publishProvision() {
     displayKey: config.displayKey,
     slidesPublishToken: config.slidesPublishToken || '',
     issuedAt: new Date().toISOString(),
+    // NON-SECRET (#394): where a screen fetches its display settings JSON.
+    // It rides inside the same sealed bundle purely because the bundle is
+    // already going there — one passphrase now sets a replacement screen up
+    // completely instead of leaving weather/calendar/widgets to be typed.
+    configUrl: config.fleetConfigUrl || '',
   });
   if (!frame) return false;
   const ok = await events.publish(pusher, PROVISION_CHANNEL, events.PROVISION_EVENT, frame);
@@ -4974,8 +5546,187 @@ app.get('/config/church', (req, res) => {
 });
 
 // ── Enhanced health check ────────────────────────────────────────────────────
-let cachedPrinterCheck = { warnings: [], checkedAt: 0 };
+let cachedPrinterCheck = { warnings: [], checkedAt: 0, spooler: null };
 const PRINTER_CHECK_INTERVAL = 60000; // 60 seconds
+
+// ── Windows spooler backlog (#256) ───────────────────────────────────────────
+// checkPrinterWarnings only ever asked Get-Printer whether the configured name
+// still EXISTS, so a paper-out or a jam looked perfectly healthy from the
+// dashboard while jobs piled up behind it and everyone believed the labels had
+// printed. These thresholds and the probe below close that gap.
+//
+// Deliberately module constants, not config.json keys: nothing about a jam is
+// operator-tunable, and staying out of config keeps this away from
+// SECRET_CONFIG_KEYS, applySavedConfig and the /config export entirely.
+const SPOOLER_BACKLOG_JOBS = 3;             // three or more jobs waiting
+const SPOOLER_STUCK_MS = 90000;             // or one job older than 90s
+// Half the Get-Printer probe's 8000ms on purpose. checkPrinterWarnings is
+// awaited by GET /health on a single-threaded server where printImage's
+// execSync can already block ~31s, so /health's worst case must not double.
+const SPOOLER_PROBE_TIMEOUT_MS = 4000;
+const SPOOLER_CLEAR_TIMEOUT_MS = 15000;
+// JobStatus is a comma-separated flags string. A paper-out can sit on a SINGLE
+// job for well under 90 seconds, which is exactly the "looks healthy" case
+// this item exists for, so an error status is a third stuck trigger.
+const SPOOLER_ERROR_TOKENS = ['error', 'offline', 'paperout', 'paused', 'blocked', 'userintervention'];
+
+// Reads the queue. Its own script, its own temp file, its own execSync — the
+// raw queue commands never touch printImage/sendRawToPrinter or POST /print.
+//
+// SECURITY: the printer name is validated by isSafePrinterName AND handed to
+// the child as an environment variable read back with $env:, exactly as
+// printPdf does. Nothing is interpolated into the script text or the command
+// line — validation alone is the weaker half of the 5.2.0 fix.
+const PS_READ_QUEUE = `
+$ErrorActionPreference = 'Stop'
+$p = $env:AWANA_QUEUE_PRINTER
+$jobs = @()
+foreach ($j in @(Get-PrintJob -PrinterName $p)) {
+  $sub = ''
+  if ($j.SubmittedTime) { $sub = $j.SubmittedTime.ToUniversalTime().ToString('o') }
+  $jobs += @{ id = [string]$j.Id; status = [string]$j.JobStatus; submitted = $sub }
+}
+ConvertTo-Json -Compress -Depth 4 -InputObject @{ ok = $true; jobs = $jobs }
+`.trim();
+
+// Same discipline, the write half. Remove-PrintJob has NO whole-printer or
+// wildcard form — -ID is mandatory in the printerName parameter set — so the
+// queue is enumerated and each job removed through -InputObject. The per-job
+// try/catch is deliberate: it turns the common race (a job finishing between
+// enumerate and remove) and the rare foreign-user job that needs "Manage
+// Documents" into an honest `failed` count instead of an exception.
+const PS_CLEAR_QUEUE = `
+$ErrorActionPreference = 'Stop'
+$p = $env:AWANA_QUEUE_PRINTER
+$removed = 0
+$failed = 0
+foreach ($j in @(Get-PrintJob -PrinterName $p)) {
+  try { Remove-PrintJob -InputObject $j -ErrorAction Stop; $removed++ } catch { $failed++ }
+}
+ConvertTo-Json -Compress -InputObject @{ ok = $true; removed = $removed; failed = $failed }
+`.trim();
+
+// Returns an array of { id, status, submitted } jobs, or null meaning UNKNOWN.
+// NEVER [] on failure: an empty queue and an unreadable queue are opposite
+// facts, and collapsing "I could not read it" into a zero is the whole bug.
+function readSpoolerQueue(printerName) {
+  if (process.platform !== 'win32') return null;
+  // isSafePrinterName returns true for '' ("use the default"), so the
+  // truthiness check comes first — -PrinterName is mandatory and cannot take ''.
+  if (!printerName || !isSafePrinterName(printerName)) return null;
+  // 'awana-print' keeps the file inside sweepOrphanedTempFiles' regex, so a
+  // crash mid-probe leaves nothing behind.
+  const psPath = tmpFilePath('awana-print', 'ps1');
+  try {
+    fs.writeFileSync(psPath, PS_READ_QUEUE, 'utf8');
+    const raw = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: SPOOLER_PROBE_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { AWANA_QUEUE_PRINTER: printerName }),
+    });
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok !== true || !Array.isArray(parsed.jobs)) return null;
+    return parsed.jobs;
+  } catch {
+    return null;
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
+}
+
+// Pure verdict, so the one piece of judgement here is exhaustively testable on
+// a machine with no spooler at all — which is every CI runner this repo has.
+function summarizeSpoolerJobs(jobs, now = Date.now()) {
+  if (!Array.isArray(jobs)) {
+    return { unknown: true, count: null, oldestAgeMs: null, stuck: false, errorStatuses: [] };
+  }
+  let oldestAgeMs = null;
+  const errorStatuses = [];
+  for (const j of jobs) {
+    const t = (j && j.submitted) ? Date.parse(j.submitted) : NaN;
+    if (Number.isFinite(t)) {
+      // Clamped: clock skew or a future-dated job must never fake a stuck
+      // queue or report a negative age.
+      const age = Math.max(0, now - t);
+      if (oldestAgeMs === null || age > oldestAgeMs) oldestAgeMs = age;
+    }
+    for (const part of String((j && j.status) || '').split(',')) {
+      const spelling = part.trim();
+      if (!spelling) continue;
+      const norm = spelling.toLowerCase().replace(/[\s_]/g, '');
+      if (SPOOLER_ERROR_TOKENS.includes(norm) && !errorStatuses.includes(spelling)) {
+        errorStatuses.push(spelling);
+      }
+    }
+  }
+  const count = jobs.length;
+  const stuck = count >= SPOOLER_BACKLOG_JOBS
+    || (oldestAgeMs !== null && oldestAgeMs >= SPOOLER_STUCK_MS)
+    || errorStatuses.length > 0;
+  return { unknown: false, count, oldestAgeMs, stuck, errorStatuses };
+}
+
+// One sentence built from the real numbers. Deliberately NOT registered in the
+// dashboard's WARNING_DESCRIPTIONS table — that table is static literals, and
+// a static literal would swallow the count, the age and the status.
+function spoolerBacklogMessage(printerName, s) {
+  const n = s.count;
+  const parts = [`${n} print job${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} waiting on "${printerName}"`];
+  const detail = [];
+  if (s.oldestAgeMs !== null) {
+    const secs = Math.round(s.oldestAgeMs / 1000);
+    detail.push(`oldest ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`}`);
+  }
+  if (s.errorStatuses.length) detail.push(`status: ${s.errorStatuses.join(', ')}`);
+  if (detail.length) parts.push(` (${detail.join(', ')})`);
+  return parts.join('')
+    + '. Labels are NOT coming out — check paper and power, then clear the queue on the Diagnostics tab.';
+}
+
+// Parses PS_CLEAR_QUEUE's output. null unless both counters came back as real
+// non-negative integers — a garbled result must not be reported as "removed 0".
+function parseClearQueueResult(raw) {
+  try {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok !== true) return null;
+    const removed = parsed.removed, failed = parsed.failed;
+    if (!Number.isInteger(removed) || removed < 0) return null;
+    if (!Number.isInteger(failed) || failed < 0) return null;
+    return { removed, failed };
+  } catch {
+    return null;
+  }
+}
+
+// Manual only: never called by anything automatic, so nothing ever clears the
+// queue on its own. Returns { removed, failed } or null.
+function clearPrintQueue(printerName) {
+  if (process.platform !== 'win32') return null;
+  if (!printerName || !isSafePrinterName(printerName)) return null;
+  const psPath = tmpFilePath('awana-print', 'ps1');
+  try {
+    fs.writeFileSync(psPath, PS_CLEAR_QUEUE, 'utf8');
+    const raw = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: SPOOLER_CLEAR_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { AWANA_QUEUE_PRINTER: printerName }),
+    });
+    return parseClearQueueResult(raw);
+  } catch {
+    return null;
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
+}
+
+const SPOOLER_UNKNOWN = Object.freeze(
+  { unknown: true, count: null, oldestAgeMs: null, stuck: false, errorStatuses: [] });
 
 async function checkPrinterWarnings() {
   const now = Date.now();
@@ -5003,7 +5754,9 @@ async function checkPrinterWarnings() {
   } catch (e) { /* ignore */ }
 
   // Check printer (Windows only)
+  let spooler = SPOOLER_UNKNOWN;
   if (PRINTER_NAME && process.platform === 'win32') {
+    let printerFound = false;
     try {
       const raw = execSync(
         'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name | ConvertTo-Json -Compress"',
@@ -5012,15 +5765,33 @@ async function checkPrinterWarnings() {
       let parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) parsed = [parsed];
       const names = parsed.map(p => p.Name);
-      if (!names.includes(PRINTER_NAME)) {
+      printerFound = names.includes(PRINTER_NAME);
+      if (!printerFound) {
         warnings.push({ type: 'printerNotFound', message: `Printer "${PRINTER_NAME}" not found` });
       }
     } catch (e) {
       warnings.push({ type: 'printerCheckFailed', message: 'Could not query printers' });
     }
+
+    // The spooler probe (#256) sits OUTSIDE that try/catch so a queue failure
+    // can never be mislabelled printerCheckFailed, and is skipped entirely
+    // when the printer itself is missing — the operator wants one clear
+    // warning, not two confusing ones, and /health's worst-case synchronous
+    // block must not double.
+    if (printerFound) {
+      spooler = summarizeSpoolerJobs(readSpoolerQueue(PRINTER_NAME), now);
+      if (spooler.unknown) {
+        warnings.push({
+          type: 'spoolerCheckFailed',
+          message: `Could not read the print queue for "${PRINTER_NAME}" — the backlog is unknown, not zero.`,
+        });
+      } else if (spooler.stuck) {
+        warnings.push({ type: 'spoolerBacklog', message: spoolerBacklogMessage(PRINTER_NAME, spooler) });
+      }
+    }
   }
 
-  cachedPrinterCheck = { warnings, checkedAt: now };
+  cachedPrinterCheck = { warnings, checkedAt: now, spooler };
   return warnings;
 }
 
@@ -5202,6 +5973,14 @@ app.get('/health', async (req, res) => {
     // the exact Win32 error when the RAW path fails — "it just prints
     // normal" must be diagnosable from the dashboard.
     musicalTune: { enabled: config.musicalPrinter === true, last: lastTune },
+    // Windows spooler backlog (#256), as NUMBERS rather than prose, so the
+    // Night Status card and any future UI don't have to parse a sentence.
+    // Counts, ages and spooler status tokens only — deliberately never a
+    // DocumentName or a UserName: /health is CORS-readable from the check-in
+    // site, which is exactly why the extension folder path is loopback-gated
+    // just above. `unknown: true` means the queue could not be read; it is
+    // never a zero.
+    spooler: cachedPrinterCheck.spooler || SPOOLER_UNKNOWN,
     extensionRunning: lastExtensionReport,
     lastCanary,
     printFailures: printFailures.length,
@@ -5397,6 +6176,7 @@ app.post('/config', (req, res) => {
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
     musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
+    trophyBand, fleetConfigUrl,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
@@ -5489,6 +6269,25 @@ app.post('/config', (req, res) => {
         next.displayLoginPassphrase = wanted;
       }
     }
+    // The fleet-config URL handed to screens by the display login (#394).
+    // NOT a secret — it is the same address an operator can already put in a
+    // screen's `?config=` — but it is https-only and length-capped here, at
+    // the point it is PERSISTED, so a bad value can never be poisoned once
+    // and shipped to every screen on the next provision heartbeat. Clearing
+    // it deletes the key and the next frame carries '' , which is how a
+    // cleared URL reaches screens that already applied one.
+    if (fleetConfigUrl !== undefined) {
+      const wanted = String(fleetConfigUrl).trim();
+      if (wanted === '') {
+        delete next.fleetConfigUrl;
+      } else if (!events.isValidFleetConfigUrl(wanted)) {
+        return res.status(400).json({
+          error: `Settings URL must be an https:// link of at most ${events.PROVISION_CONFIG_URL_MAX} characters`,
+        });
+      } else {
+        next.fleetConfigUrl = wanted;
+      }
+    }
     // Binding beyond loopback is an explicit choice, not a default. Takes
     // effect on restart (the listening socket is already bound).
     if (lanAccess !== undefined) next.lanAccess = !!lanAccess;
@@ -5497,6 +6296,10 @@ app.post('/config', (req, res) => {
       next.historyRetentionDays = security.normalizeRetentionDays(historyRetentionDays);
     }
     if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
+    // Trophy band (#293): the finished-handbook banner on a child's next
+    // label. Default ON (read as `config.trophyBand !== false` at the call
+    // site), so an operator who never opens Settings still gets it.
+    if (trophyBand !== undefined) next.trophyBand = !!trophyBand;
     if (connectCard !== undefined) next.connectCard = !!connectCard;
     // Label footer (#8): one short operator line (church name, a verse, service
     // times) rendered along the bottom of every label. Clearing it deletes the
@@ -5640,6 +6443,44 @@ app.post('/play-tune', (req, res) => {
   res.json({ ok, tune: lastTune ? lastTune.tune : null, error: !ok && lastTune ? lastTune.error : undefined });
 });
 
+// Clear a jammed printer's backlog (#256). Gated the way /play-tune and
+// /rehearsal are — trusted origin only, NOT merely the phone PIN: a volunteer's
+// phone on the venue Wi-Fi must not be able to bin labels that are about to
+// print. Confirm-gated too, and never invoked automatically by anything.
+//
+// The body is validated BEFORE the platform short-circuit, exactly as
+// POST /print-pdf does, so the 400s stay observable from Linux CI.
+app.post('/printer/clear-queue', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The print queue can only be cleared from the dashboard on this computer' });
+  }
+  const wanted = String((req.body || {}).printerName || '').trim();
+  if (wanted && !isSafePrinterName(wanted)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
+  if ((req.body || {}).confirm !== true) {
+    return res.status(400).json({ error: 'confirm:true is required' });
+  }
+  const target = wanted || PRINTER_NAME;
+  if (!target || !isSafePrinterName(target)) {
+    return res.status(400).json({ error: 'No usable printer is configured' });
+  }
+  if (process.platform !== 'win32') {
+    return res.status(501).json({ error: 'Clearing the print queue requires Windows' });
+  }
+  try {
+    const result = clearPrintQueue(target);
+    if (!result) return res.status(500).json({ error: 'Could not clear the print queue' });
+    // So the next /health tells the truth instead of a 60s-stale backlog.
+    cachedPrinterCheck.checkedAt = 0;
+    console.log(`[queue] Cleared ${result.removed} job(s) on ${target}${result.failed ? `, ${result.failed} refused` : ''}`);
+    return res.json({ ok: true, printer: target, removed: result.removed, failed: result.failed });
+  } catch (e) {
+    console.error('[queue] clear failed:', e.message);
+    return res.status(500).json({ error: 'Could not clear the print queue' });
+  }
+});
+
 // ── Per-club label templates (#1) — endpoints ─────────────────────────────────
 app.get('/config/label-templates', (req, res) => {
   res.json({
@@ -5705,10 +6546,20 @@ app.post('/phone/roster', (req, res) => {
   const removedHere = new Set(
     t.entries.filter(e => e.undone && e.undoneBy === 'phone').map(nameOf).filter(n => !checkedIn.has(n))
   );
+  // `inactive` so the phone's Not-here-yet tab can leave former clubbers out
+  // of a call list — loadClubbers() returns every row the CSV ever carried, so
+  // without this a kid who left the program reads as missing forever. Same
+  // idiom as twinDisambiguation(): any non-blank Inactive cell means inactive.
   const kids = clubbers.map(r => {
     const name = `${r.FirstName || ''} ${r.LastName || ''}`.trim();
     const key = name.toLowerCase();
-    return { name, club: r.Club || '', checkedIn: checkedIn.has(key), removedHere: removedHere.has(key) };
+    return {
+      name,
+      club: r.Club || '',
+      checkedIn: checkedIn.has(key),
+      removedHere: removedHere.has(key),
+      inactive: !!String(r.Inactive || '').trim(),
+    };
   }).filter(k => k.name);
   res.json({ kids });
 });
@@ -6120,6 +6971,12 @@ module.exports = {
   // (short, over, explained by walk-ins, stale, no source) is unit-tested
   // without a browser or a live report.
   compareCounts, countsForCompare, SOURCE_COUNT_STALE_MS,
+  // Attendance audit (#311) — the diff is PURE so "unknown is not zero" and
+  // "additive only" are exhaustively testable without a browser or a scrape.
+  auditAttendance, ATTENDANCE_GRID_STALE_MS,
+  // Trophy band (#293) — pure, so the 48-character clip and the malformed-title
+  // cases are pinned without rendering a label.
+  trophyBandFor, TROPHY_BAND_MAX,
   // Phone Tonight tab: the shared "who is checked in" set and the manual
   // undo/restore that must survive reconcile — pure, so they are unit-tested.
   tonightCheckins, markManualUndo, clearManualUndo, splitFullName,
@@ -6128,6 +6985,11 @@ module.exports = {
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
   recordAttendance, isNonCheckinRow,
+  // Range reprint (#257) — the selector is pure, so every exclusion rule
+  // (awards, leader tags, failed rows, undone rows, the club filter, the
+  // newest-row-per-child dedupe and the cap) is testable without printing.
+  selectReprintRange, REPRINT_RANGE_MAX, REPRINT_RANGE_GAP_MS,
+  localDayISO, historyIdentityKey, clubKey,
   // Remembered leaders + the one club list every dropdown reads. Pure but for
   // their file, so the upsert/cap/season rules and the club-table agreement
   // are unit-tested against a temp AWANA_DATA_DIR.
@@ -6135,7 +6997,7 @@ module.exports = {
   CLUB_LIST, CLUB_DISPLAY_NAMES, CLUB_MONOGRAM, LEADERS_MAX, LEADER_ACTIVE_DAYS,
   // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
   // pinning (June–August gate, day clamping, ISO-week reuse).
-  parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek,
+  parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek, birthdayAgeThisWeek,
   // Twin-safe labels (#13) — collision detection + hint preference order.
   twinDisambiguation,
   // Seasonal art (#16) — the computus and the calendar tiling are date math
@@ -6145,6 +7007,11 @@ module.exports = {
   collectibleIndexForDate, COLLECTIBLE_SERIES,
   // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
   buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION,
+  // Spooler backlog (#256). The verdict and both parsers are PURE so the one
+  // piece of judgement here is exhaustively testable on a machine with no
+  // Windows spooler at all — which is every CI runner this repo has.
+  summarizeSpoolerJobs, spoolerBacklogMessage, parseClearQueueResult,
+  SPOOLER_BACKLOG_JOBS, SPOOLER_STUCK_MS,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

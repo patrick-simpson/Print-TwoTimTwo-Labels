@@ -290,6 +290,59 @@ console.log('envelope: display login (provision) derives, seals and opens per th
   check('a junk token is coerced to the empty string, not shipped', junkTok.slidesPublishToken === '');
   const frame = events.buildProvisionFrame({ displayKey: KEY, slidesPublishToken: '' });
   check('the frame carries exactly v, kdf, envelope', JSON.stringify(Object.keys(frame).sort()) === JSON.stringify(['envelope', 'kdf', 'v']));
+
+  // ── The fleet-config URL (#394) ────────────────────────────────────────────
+  // NON-SECRET, sealed with the rest simply because the bundle is already
+  // going to that screen. It must never be able to turn a good frame into no
+  // frame: an unusable value becomes '', it is never shipped and never fatal.
+  const withUrl = events.openProvisionForTest(P.testPassphrase, events.buildProvisionFrame({
+    displayKey: KEY, slidesPublishToken: '', configUrl: 'https://example.org/awana-display.json',
+  }));
+  check('a valid https config URL rides inside the sealed bundle',
+    withUrl.configUrl === 'https://example.org/awana-display.json');
+  check('the bundle key set is exactly the fixture\'s',
+    JSON.stringify(Object.keys(withUrl).sort()) === JSON.stringify(Object.keys(P.bundle).sort()),
+    Object.keys(withUrl).join(','));
+  check('the config URL is NOT in the clear on the wire',
+    !JSON.stringify(events.buildProvisionFrame({
+      displayKey: KEY, slidesPublishToken: '', configUrl: 'https://example.org/awana-display.json',
+    })).includes('example.org'));
+  for (const bad of [
+    'http://example.org/a.json',                    // plain http: mixed-content-blocked, and tamperable
+    'ftp://example.org/a.json',
+    'javascript:alert(1)',
+    '//example.org/a.json',
+    'https://user:pw@example.org/a.json',           // credentials in the URL
+    `https://example.org/${'a'.repeat(200)}.json`,  // over the 200-char cap
+    'https://example.org/a\nb.json',                // interior control character —
+                                                    // WHATWG URL silently STRIPS \n, so the
+                                                    // check has to run before parsing
+    '   ', '', null, undefined, 42, {},
+  ]) {
+    const opened = events.openProvisionForTest(P.testPassphrase, events.buildProvisionFrame({
+      displayKey: KEY, slidesPublishToken: '', configUrl: bad,
+    }));
+    check(`a bad config URL (${JSON.stringify(bad)}) is coerced to '' — never shipped, never fatal`,
+      opened && opened.configUrl === '' && opened.displayKey === KEY, JSON.stringify(opened && opened.configUrl));
+  }
+  check('isValidFleetConfigUrl agrees on the https-only rule',
+    events.isValidFleetConfigUrl('https://example.org/a.json') === true
+    && events.isValidFleetConfigUrl('http://example.org/a.json') === false
+    && events.isValidFleetConfigUrl(`https://example.org/${'a'.repeat(200)}`) === false
+    && events.PROVISION_CONFIG_URL_MAX === 200);
+  check('a config URL does not change the pad rung — the frame still fits Pusher',
+    Buffer.byteLength(JSON.stringify(events.buildProvisionFrame({
+      displayKey: KEY, slidesPublishToken: 'tok_AbCdEfGhIjKlMnOpQrStUvWx',
+      configUrl: `https://example.org/${'a'.repeat(170)}`,
+    }))) < events.PUSHER_MAX_BYTES);
+  check('fail closed still wins: no login configured, no frame, URL or not',
+    (() => {
+      events.setDisplayLogin('', '');
+      const none = events.buildProvisionFrame({ displayKey: KEY, configUrl: 'https://example.org/a.json' });
+      events.setDisplayLogin(P.testPassphrase, P.testSalt);
+      const noKey = events.buildProvisionFrame({ displayKey: '', configUrl: 'https://example.org/a.json' });
+      return none === null && noKey === null;
+    })());
   check('the frame stays under Pusher\'s ceiling', Buffer.byteLength(JSON.stringify(frame)) < events.PUSHER_MAX_BYTES);
   check('a provision bundle pads onto the first ladder rung (2048)', events.paddedSize('provision', 200) === 2048);
   check('provision is NOT one of the display-key-sealed events', !events.ENCRYPTED_EVENTS.has('provision'));

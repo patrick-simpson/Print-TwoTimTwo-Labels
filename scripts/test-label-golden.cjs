@@ -177,6 +177,10 @@ const CASES = [
   { name: 'allergies-one',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', allergyTokens: ['NUTS'] } },
   { name: 'allergies-all',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'] } },
   { name: 'birthday',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isBirthday: true } },
+  // Birthday age (#291): the words beside the cake. Inserted HERE and not at
+  // the end of CASES — the determinism block renders CASES[CASES.length - 1]
+  // and expects that to still be the torture case.
+  { name: 'birthday-age',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isBirthday: true, birthdayAge: 7 } },
   { name: 'visitor',          model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true } },
   { name: 'visitor-inverted', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isVisitor: true, extras: { inverted: true } } },
   { name: 'step-up',          model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', stepUp: true, stepUpNextClub: 'T&T' } },
@@ -235,6 +239,12 @@ const CASES = [
   // the logo must flip to WHITE ink or it vanishes into its own background —
   // found by review, black-on-#1f2937, invisible on paper.
   { name: 'logo-inverted-visitor', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo(), isVisitor: true, extras: { inverted: true } } },
+  // Trophy band (#293): the inverse chip that names a finished handbook. The
+  // second case is the one that earns its keep — it proves the footer yields
+  // its slot so the bottom-left stack stays at three lines, and that the band
+  // does not collide with the goTo/milestone lines above the icon row.
+  { name: 'trophy-band',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { trophyBand: 'Finished Sparks Wingrunner' } } },
+  { name: 'trophy-band-stack', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { trophyBand: 'Finished Sparks Wingrunner', goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 10th club night tonight!' } } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -621,6 +631,67 @@ async function main() {
       check('white-on-dark: the white lettering survives as holes', bar.a === 0,
         JSON.stringify(bar));
     }
+  }
+
+  // ── Birthday age line (#291) ──────────────────────────────────────────────
+  // Font-independent: every check below compares two LIVE renders byte for
+  // byte, so it means the same thing on a runner whose fonts differ from the
+  // ones that made the baselines. This is the half CI actually enforces.
+  {
+    const base = { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isBirthday: true };
+    const plainCake = await render(base);
+
+    // A malformed birth year must never print "Turning NaN": every bad value
+    // degrades to EXACTLY today's plain-cake label, not to a broken one.
+    for (const bad of [null, undefined, 0, -3, 22, 99, 'seven', NaN, Infinity, {}, []]) {
+      const got = await render({ ...base, birthdayAge: bad });
+      check(`birthdayAge ${JSON.stringify(bad) === undefined ? 'undefined' : JSON.stringify(bad)}: renders the plain cake, no words`,
+        Buffer.compare(got, plainCake) === 0);
+    }
+    check('birthdayAge 7: actually changes the label',
+      Buffer.compare(await render({ ...base, birthdayAge: 7 }), plainCake) !== 0);
+
+    // The age is an annotation ON the cake, never a standalone line.
+    const noCake = await render({ ...base, isBirthday: false });
+    check('an age without a cake prints nothing at all',
+      Buffer.compare(await render({ ...base, isBirthday: false, birthdayAge: 7 }), noCake) === 0);
+
+    // The width ladder: on a crowded row the WORDS yield, never the cake and
+    // never a safety icon, so the icon row can't be pushed further left than
+    // the allergy glyphs already put it.
+    const crowded = {
+      ...base,
+      allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'],
+      noPhoto: true, awanaShares: 99, streakCount: 12, isNewKid: true,
+    };
+    const leftmostInk = async (buf) => {
+      const px = await pixels(buf);
+      const SCALE = 300 / 72;
+      const y0 = Math.round((6 + 132 - 30) * SCALE);
+      const y1 = Math.min(px.h, Math.round((6 + 132) * SCALE));
+      let minX = px.w;
+      for (let y = y0; y < y1; y++) {
+        for (let x = 0; x < minX; x++) {
+          const i = (y * px.w + x) * 4;
+          const lum = 0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2];
+          if (lum < 128) { minX = x; break; }
+        }
+      }
+      return minX;
+    };
+    const without = await leftmostInk(await render(crowded));
+    const withAge = await leftmostInk(await render({ ...crowded, birthdayAge: 7 }));
+    check('a crowded icon row is never pushed left by the age words',
+      withAge >= Math.min(without, Math.round(90 * (300 / 72))),
+      `leftmost ink ${withAge} with the age vs ${without} without it`);
+
+    // Two allergies + a camera leaves room for the short form but not the
+    // long one, so the ladder's middle rung is exercised rather than assumed.
+    const mid = { ...base, allergyTokens: ['NUTS', 'DAIRY'], noPhoto: true };
+    const midPlain = await render(mid);
+    const midAge = await render({ ...mid, birthdayAge: 7 });
+    check('a moderately crowded row still says something about the age',
+      Buffer.compare(midAge, midPlain) !== 0);
   }
 
   if (updated) {

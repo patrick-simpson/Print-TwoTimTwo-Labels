@@ -220,6 +220,18 @@ async function main() {
       const forgetBad = await request({ host: lan, method: 'POST', pathname: '/leaders/forget', body: { pin: PIN } });
       check('LAN POST /leaders/forget with no key is a 400 (through the gate, refused by validation)',
         forgetBad.status === 400, `status ${forgetBad.status}`);
+
+      // Clearing the print queue (#256) BINS labels that are about to print,
+      // so it is gated on isTrustedConfigOrigin like /play-tune and
+      // /rehearsal — deliberately stricter than the PIN, which is LAN trust
+      // and not authorization to throw away a child's label. Checked HERE,
+      // before the refusal sweep below trips the rate limiter.
+      const queue = await request({
+        host: lan, method: 'POST', pathname: '/printer/clear-queue',
+        headers: { 'X-Awana-Pin': PIN }, body: { confirm: true },
+      });
+      check('LAN POST /printer/clear-queue is refused even WITH a valid PIN',
+        queue.status === 403, `status ${queue.status}`);
     }
 
     // Secrets stay on the machine even for an authenticated LAN caller.
@@ -291,6 +303,13 @@ async function main() {
       // check-in machine. An unauthenticated caller must not be able to plant
       // a second opinion that makes a real shortfall look like agreement.
       ['/feed/source-count', { date: '2026-09-02', checkedIn: 999 }],
+      // The completed-books feed carries children's FULL names (it decides
+      // whose next label gets a trophy band), so it is gated like the roster.
+      ['/feed/completed-books', { entries: [{ name: 'Stranger Leakcanary', book: 'Wingrunner', date: '2026-09-02' }] }],
+      // The attendance grid carries full names too, and its apply route writes
+      // into the season ledger — neither may be reachable without a PIN.
+      ['/feed/attendance-grid', { meetingDates: ['2026-09-02'], clubsRead: ['Sparks'], rows: [{ name: 'Stranger Leakcanary', club: 'Sparks', dates: ['2026-09-02'] }] }],
+      ['/attendance-audit/apply', { confirm: true }],
     ];
     for (const [p, body] of PII_POST_PATHS) {
       const res = await request({ host: lan, method: 'POST', pathname: p, body });
@@ -422,6 +441,45 @@ async function main() {
       headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' },
     });
     check('a stranger preflight is refused', res.status === 403, `status ${res.status}`);
+  }
+
+  // ── The print queue is dashboard-only (#256) ────────────────────────────────
+  // Clearing the queue BINS labels that are about to print, so it is gated on
+  // isTrustedConfigOrigin — the same gate as /play-tune and /rehearsal, and
+  // deliberately stricter than the phone PIN, which is LAN trust rather than
+  // authorization to throw away a child's label.
+  {
+    {
+      const res = await request({
+        host: '127.0.0.1', method: 'POST', pathname: '/printer/clear-queue',
+        headers: { Origin: 'http://evil.example:' + PORT }, body: { confirm: true },
+      });
+      check('a foreign origin on loopback cannot clear the queue',
+        res.status === 403, `status ${res.status}`);
+    }
+    {
+      const res = await request({
+        host: '127.0.0.1', method: 'POST', pathname: '/printer/clear-queue',
+        body: { printerName: 'x"; rm -rf /', confirm: true },
+      });
+      check('an unsafe printer name is refused before any platform branch',
+        res.status === 400, `status ${res.status} ${res.body.slice(0, 120)}`);
+    }
+    {
+      const res = await request({
+        host: '127.0.0.1', method: 'POST', pathname: '/printer/clear-queue', body: {},
+      });
+      check('clearing the queue without confirm:true is a 400',
+        res.status === 400, `status ${res.status}`);
+    }
+    if (process.platform !== 'win32') {
+      const res = await request({
+        host: '127.0.0.1', method: 'POST', pathname: '/printer/clear-queue',
+        body: { printerName: 'Brother QL-820NWB', confirm: true },
+      });
+      check('off Windows the route reports 501 rather than shelling out',
+        res.status === 501, `status ${res.status} ${res.body.slice(0, 120)}`);
+    }
   }
 
   // ── checkinUrl validation (the shell.openExternal / Start-Process sink) ─────

@@ -116,6 +116,24 @@ Every chunk of a publish carries identical `deckRev` + `publishedAt`:
 | `total` | int, 1–12 | Chunk count for this publish. |
 | `slides` | array | `{ id? (≤64), eyebrow (≤60), text (required, ≤500, multi-line), theme (whitelist else "auto"), textSize (whitelist else "auto"), durationSec (0 or 3–600) }`. ≤50 per deck. `slides: []` is legal only when `total` is 1 — an explicitly cleared deck propagates. |
 
+A slide may also carry an optional **show window** so a dated announcement
+retires itself instead of advertising last month's store night:
+
+| Field | Type | Notes |
+|---|---|---|
+| `showFrom` | OPTIONAL `YYYY-MM-DD` | First day the slide may show. Absent = from the beginning. |
+| `showUntil` | OPTIONAL `YYYY-MM-DD` | Last day it may show, inclusive. Absent = forever. |
+
+Both are **bare local calendar dates with no timezone**, exactly as the
+operator typed them. Every consumer compares them against ITS OWN local date
+key — never a `toISOString()`-derived one, which in a US-Eastern evening has
+already rolled to tomorrow, i.e. exactly club hours. The publisher DROPS a
+value that is not a real calendar date (`2026-02-30`, `next Wednesday`), so a
+junk window means the slide always shows, never that it silently never does.
+A deck whose every slide has expired is still a published deck; what a screen
+does with an empty visible set is the consumer's business (this repo's display
+falls back to its calendar slides).
+
 The publisher refuses — at publish time, before committing anything — any
 deck that cannot be broadcast within the 12-chunk ceiling (greedy packing
 can strand slack per chunk, so a raw byte cap alone is not a guarantee),
@@ -228,11 +246,22 @@ provisioned by typing a passphrase instead of pasting keys:
   above, sealed under `PBKDF2-SHA256(NFKC(trim(passphrase)), salt,
   iterations, 32 bytes)` with AAD `utf8("1:provision")`, padded on the
   standard ladder; `kid` is the wrapping key's fingerprint.
-- **Bundle (inside `ct`):** `{ v: 1, displayKey, slidesPublishToken, issuedAt }`
-  — `displayKey` base64 of 32 bytes, `slidesPublishToken` either `""` or
-  24–64 URL-safe characters, `issuedAt` ISO 8601. A display rejects any bundle
-  that fails those shapes and applies nothing; it ignores a bundle whose
+- **Bundle (inside `ct`):** `{ v: 1, displayKey, slidesPublishToken, issuedAt,
+  configUrl }` — `displayKey` base64 of 32 bytes, `slidesPublishToken` either
+  `""` or 24–64 URL-safe characters, `issuedAt` ISO 8601. A display rejects any
+  bundle that fails those shapes and applies nothing; it ignores a bundle whose
   `issuedAt` is older than the last one it applied (replay).
+- **`configUrl` is NOT a secret** — it is the fleet-config address a screen
+  already accepts as `?config=<url>`, a plain JSON file of display settings,
+  and it rides inside the sealed bundle only because the bundle is already
+  going to that screen. `""` or an **https** URL of at most 200 characters with
+  no credentials in it; the publisher coerces anything else to `""` rather than
+  shipping it, and a bad value must never turn a good frame into no frame.
+  `""` means "cleared" and a display clears its stored one; an ABSENT
+  `configUrl` (a publisher that predates the field) means "no news" and a
+  display keeps what it has. The display writes it into its OWN storage entry
+  and applies it through the existing remote-config path — it never enters the
+  settings object, so it can never ride the Settings export or `?config=`.
 - **It is not one of the display-contract events.** It is never routed through
   the event sanitizers, never rendered, and not in the encrypted-events set
   (it is sealed under the wrapping key, not the display key). Opening it only

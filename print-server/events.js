@@ -328,6 +328,10 @@ const SLIDE_MAX_DURATION_SEC = 600;
 // One chunk's JSON must seal into the 4096 pad rung (4 length-prefix bytes
 // spare), and 12 chunks must cover any deck the size gate below admits. The
 // budget leaves margin for the {deckRev, publishedAt, seq, total} wrapper.
+// The optional showFrom/showUntil pair costs 49 more bytes per slide, which
+// eats into this budget: the worst deck the caps admit (50 slides, 500-char
+// text, a 60-char eyebrow and both dates) needs 10 of the 12 chunks, pinned
+// in scripts/test-contracts.cjs so a future field cannot quietly overflow it.
 const SLIDES_CHUNK_JSON_BUDGET = 3900;
 const SLIDES_TOTAL_MAX = 12;
 // Coarse publish-time cap on the whole sanitized deck's serialized size —
@@ -348,6 +352,32 @@ function slideText(value, max) {
     out += code === 0x0a ? '\n' : ((code < 0x20 || code === 0x7f) ? ' ' : s[i]);
   }
   return out.trim().slice(0, max);
+}
+
+// Optional per-slide date window (#345): "AWANA STORE NEXT WEEK" retires
+// itself instead of advertising a night that already happened.
+//
+// A BARE LOCAL DATE, on purpose. The value is exactly the YYYY-MM-DD the
+// operator typed, carries no timezone, and is never converted to one here —
+// every consumer compares it against ITS OWN local date key (never
+// toISOString(), which in a US-Eastern evening has already rolled to
+// tomorrow, i.e. exactly club hours). Anything that is not a real calendar
+// date is DROPPED, never guessed at: a slide with a junk window shows
+// always, which is the same behaviour as a slide with no window at all and
+// strictly better than a slide that silently never appears.
+const SLIDE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function slideDate(value) {
+  const m = SLIDE_DATE_RE.exec(typeof value === 'string' ? value.trim() : '');
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  // Date.UTC is used ONLY to ask "does this calendar date exist" (leap years,
+  // month lengths). Nothing derived from it is stored or compared — the string
+  // the operator typed is what rides the wire.
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return null;
+  return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
 /**
@@ -374,6 +404,12 @@ function buildSlidesDeck(rawSlides) {
     if (Number.isFinite(dur) && dur > 0) {
       slide.durationSec = Math.min(SLIDE_MAX_DURATION_SEC, Math.max(SLIDE_MIN_DURATION_SEC, Math.round(dur)));
     }
+    // The optional show window. Omitted (not null, not '') when absent or
+    // unparseable, so a deck without dates is byte-identical to before.
+    const showFrom = slideDate(item.showFrom);
+    if (showFrom) slide.showFrom = showFrom;
+    const showUntil = slideDate(item.showUntil);
+    if (showUntil) slide.showUntil = showUntil;
     // The display keys its React lists and dedupe on ids; a clean one passes
     // through, anything else is omitted and the consumer mints its own.
     if (typeof item.id === 'string' && item.id.trim() && item.id.length <= SLIDE_ID_MAX
@@ -681,6 +717,29 @@ const LOGIN_PASSPHRASE_MAX = 128;
 // What the lobby-slides publish token must look like (server.js validates the
 // operator's value with it; the bundle refuses to carry anything else).
 const SLIDES_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+// The optional FLEET-CONFIG URL the same login can hand a new screen (#394):
+// where that screen fetches its display settings JSON from — the address the
+// display already accepts as `?config=<url>`. NOT a secret; it rides inside
+// the sealed bundle only because it is already there, which turns "type the
+// Pusher key, log in, then hand-configure weather/calendar/widgets" into one
+// step. https ONLY (a display served over https cannot fetch http without
+// mixed-content blocking, and an http URL is trivially tamperable in a church
+// lobby) and length-capped, with credentials-in-URL refused. Anything else is
+// DROPPED — a screen that gets no config URL is exactly today's behaviour,
+// while a bad one would be a fleet-wide fetch failure nobody would think to
+// look for.
+const PROVISION_CONFIG_URL_MAX = 200;
+function isValidFleetConfigUrl(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s || s.length > PROVISION_CONFIG_URL_MAX) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(s)) return false;
+  let url;
+  try { url = new URL(s); } catch { return false; }
+  if (url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+  return true;
+}
 
 function provisionChannelFor(channel) {
   return `cache-${channel}-provision`;
@@ -763,17 +822,29 @@ function getDisplayLoginState() {
  * configured, or no usable display key. Publishing a bundle with an EMPTY
  * display key would make every logged-in screen drop its key and fall back to
  * plaintext — an authenticated downgrade — so the whole frame fails closed.
+ *
+ * FAIL CLOSED IS THE WHOLE RULE HERE: if the seal cannot be produced, nothing
+ * is published — never a plaintext bundle, never a partial one. The optional
+ * configUrl rides inside the same sealed bundle and can never change that: an
+ * unusable URL becomes '', it never turns a good frame into no frame.
  */
-function buildProvisionFrame({ displayKey, slidesPublishToken, issuedAt } = {}) {
+function buildProvisionFrame({ displayKey, slidesPublishToken, issuedAt, configUrl } = {}) {
   if (!loginState) return null;
   const key = String(displayKey == null ? '' : displayKey).trim();
   if (!isValidDisplayKey(key)) return null;
   const token = String(slidesPublishToken == null ? '' : slidesPublishToken).trim();
+  const url = String(configUrl == null ? '' : configUrl).trim();
   const bundle = {
     v: 1,
     displayKey: key,
     slidesPublishToken: SLIDES_TOKEN_RE.test(token) ? token : '',
     issuedAt: issuedAt || nowIso(),
+    // ALWAYS present, '' when unset or refused — the empty string is how a
+    // cleared URL propagates to screens that already applied one. (A bundle
+    // from a publisher that predates the field simply omits it, and a display
+    // treats that as "no news" rather than a clear.) A junk value is coerced
+    // to '' rather than shipped, exactly like the publish token above.
+    configUrl: isValidFleetConfigUrl(url) ? url : '',
   };
   const envelope = sealWith(loginState.keyBytes, loginState.kid, PROVISION_EVENT, bundle);
   if (!envelope) return null;
@@ -897,6 +968,7 @@ module.exports = {
   buildNotice,
   buildSlidesDeck,
   buildSlidesChunks,
+  slideDate,
   slidesDeckJsonBytes,
   SLIDES_MAX,
   SLIDES_TOTAL_MAX,
@@ -931,6 +1003,8 @@ module.exports = {
   LOGIN_PASSPHRASE_MIN,
   LOGIN_PASSPHRASE_MAX,
   SLIDES_TOKEN_RE,
+  PROVISION_CONFIG_URL_MAX,
+  isValidFleetConfigUrl,
   provisionChannelFor,
   normalizePassphrase,
   isValidLoginPassphrase,

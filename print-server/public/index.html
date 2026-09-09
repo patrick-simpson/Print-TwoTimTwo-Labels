@@ -286,6 +286,7 @@
       <div class="tab" data-tab="preview">Label Preview</div>
       <div class="tab" data-tab="settings">Settings</div>
       <div class="tab" data-tab="diagnostics">Diagnostics</div>
+      <div class="tab" data-tab="attendance">Attendance Audit</div>
     </div>
     <div class="card" style="border-top-left-radius:0">
       <!-- History tab -->
@@ -293,6 +294,13 @@
         <div class="card-header">
           <span>Recent Prints</span>
           <button class="btn btn-secondary btn-sm" onclick="loadHistory()">Refresh</button>
+        </div>
+        <div id="reprint-range" style="padding:10px 14px;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <label style="font-size:12px;color:#64748b">From<br><input type="time" id="rr-from"></label>
+          <label style="font-size:12px;color:#64748b">To<br><input type="time" id="rr-to"></label>
+          <label style="font-size:12px;color:#64748b">Club<br><select id="rr-club"><option value="">All clubs</option></select></label>
+          <button class="btn btn-secondary btn-sm" onclick="reprintRangePreview()">Reprint this stretch</button>
+          <div id="rr-note" style="font-size:12px;color:#64748b;flex:1 0 100%"></div>
         </div>
         <div class="card-body" style="padding:0">
           <table>
@@ -437,6 +445,22 @@
                 <button type="button" class="btn btn-secondary btn-sm" onclick="clearDisplayLogin()">Clear</button>
               </div>
               <p id="display-login-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
+              <div style="margin-top:10px">
+                <label style="font-size:11px">Screen settings URL (optional)</label>
+                <p style="font-size:11px; color:#64748b; margin-bottom:6px">
+                  Hand every screen its settings file too, so weather, calendar and corner widgets set
+                  themselves up instead of being typed in one at a time. This is the same address a screen
+                  accepts as <code>?config=</code> &mdash; a plain JSON file of display settings, <strong>not</strong>
+                  a secret and never children&rsquo;s data. It rides inside the same sealed login frame simply
+                  because that frame is already going there. <strong>https only</strong>, up to 200 characters;
+                  leave it blank and screens are set up by hand exactly as before. Clearing it here clears it on
+                  every logged-in screen at the next heartbeat.
+                </p>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                  <input type="text" id="settings-fleet-config-url" placeholder="https://example.org/awana-display.json" autocomplete="off" style="flex:1 1 240px">
+                </div>
+                <p style="font-size:10px;color:#94a3b8;margin-top:6px">Saved with <strong>Save Settings</strong> below.</p>
+              </div>
             </div>
             <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Check-in Features</label>
@@ -476,6 +500,9 @@
               <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px; font-size:12px">
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-ft-inverted"> Visitor labels use the inverted (black) palette
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-trophy-band"> Band the next label of a child who finished a handbook
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-connect-card"> Print a second "connect card" label for visitors
@@ -539,6 +566,7 @@
         <div class="card-header">
           <span>System Diagnostics</span>
           <span>
+            <button class="btn btn-secondary btn-sm" onclick="clearPrintQueue()">Clear print queue</button>
             <button class="btn btn-secondary btn-sm" onclick="playTune()">Play test tune</button>
             <button class="btn btn-primary btn-sm" onclick="runDiagnostics()">Run Diagnostics</button>
           </span>
@@ -561,6 +589,29 @@
               <span id="extension-copy-note" style="font-size:11px;color:#94a3b8;align-self:center"></span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Attendance Audit tab (#311) -->
+      <div id="tab-attendance" class="tab-content">
+        <div class="card-header">
+          <span>Attendance Audit</span>
+          <span>
+            <span id="audit-age" style="font-weight:400;font-size:12px;color:#64748b">Loading&hellip;</span>
+            <button class="btn btn-secondary btn-sm" onclick="loadAttendanceAudit()">Refresh</button>
+          </span>
+        </div>
+        <div class="card-body">
+          <div id="audit-note" style="font-size:12px;color:#475569;line-height:1.5"></div>
+          <div id="audit-body" style="margin-top:10px"></div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" id="audit-apply-btn" onclick="applyAuditAdditions()" disabled>Apply missing dates</button>
+            <span id="audit-apply-note" style="font-size:11px;color:#94a3b8"></span>
+          </div>
+          <p style="font-size:11px;color:#94a3b8;margin-top:10px">
+            Nothing is ever deleted. The ledger legitimately holds walk-in guests TwoTimTwo never saw,
+            so a night only this machine knows about is information, not an error.
+          </p>
         </div>
       </div>
     </div>
@@ -663,7 +714,11 @@ var WARNING_DESCRIPTIONS = {
   csvEmpty: 'The roster file has no data. Labels will print without allergy or birthday info.',
   csvStale: 'The roster data hasn\'t been updated recently. It may be missing new kids or allergy changes.',
   printerNotFound: 'The configured printer was not found. Check that it\'s connected and turned on.',
-  printerCheckFailed: 'Could not check printer status. This may resolve on its own.'
+  printerCheckFailed: 'Could not check printer status. This may resolve on its own.',
+  // spoolerBacklog is deliberately NOT in this table: its message carries the
+  // live job count, the oldest job's age and the spooler status, and a static
+  // literal here would swallow all three.
+  spoolerCheckFailed: 'Could not read the Windows print queue, so a backlog would be invisible. The queue length is unknown, not zero.'
 };
 
 // Load health status
@@ -731,7 +786,11 @@ function loadHealth() {
     var tt = document.getElementById('traffic-text');
     var tdet = document.getElementById('traffic-detail');
 
-    var hasError = warnings.some(function(w) { return w.type === 'printerNotFound'; });
+    // A jam is at least as bad as a missing printer: in both cases nothing is
+    // coming out of the printer, so it reads RED rather than a mild yellow.
+    var hasError = warnings.some(function(w) {
+      return w.type === 'printerNotFound' || w.type === 'spoolerBacklog';
+    });
     var hasWarning = warnings.length > 0;
 
     if (hasError) {
@@ -818,6 +877,116 @@ function loadCountCheck() {
       + Math.abs(v.unexplained) + (short ? ' with no label printed' : ' more than TwoTimTwo has')
       + (clubs ? '<br><span style="color:#64748b">' + clubs + '</span>' : '');
   }).catch(function() { /* dashboard shows server trouble elsewhere */ });
+}
+
+// ── Attendance Audit (#311) ──────────────────────────────────────────────────
+// The season ledger against TwoTimTwo's own attendance grid. Two rules the
+// copy here must never break: an absent or unreadable grid says "Not checked",
+// never "agrees" and never a zero; and the Apply button only ever ADDS.
+function auditDays(ms) { return Math.max(0, Math.round(ms / 86400000)); }
+
+function loadAttendanceAudit() {
+  var age = document.getElementById('audit-age');
+  var note = document.getElementById('audit-note');
+  var body = document.getElementById('audit-body');
+  var btn = document.getElementById('audit-apply-btn');
+  if (!age || !note || !body || !btn) return;
+  fetch(BASE + '/attendance-audit').then(function(r) { return r.json(); }).then(function(v) {
+    btn.disabled = true;
+    btn.textContent = 'Apply missing dates';
+    body.innerHTML = '';
+    if (!v || !v.known) {
+      age.style.color = '#64748b';
+      age.textContent = 'Not checked';
+      var why = 'Not checked \u2014 no attendance grid has been read yet. Open TwoTimTwo in Chrome with the extension loaded (outside club hours) and this fills in on its own.';
+      if (v && v.reason === 'stale') {
+        why = 'Not checked \u2014 the last grid read is ' + auditDays(v.ageMs) + ' day(s) old, too stale to trust. It refreshes on its own from a TwoTimTwo tab.';
+      } else if (v && v.reason === 'no-meetings') {
+        why = 'Not checked \u2014 the grid held no past meeting dates, so there is nothing to compare.';
+      }
+      note.textContent = why;
+      return;
+    }
+    age.style.color = '#64748b';
+    age.textContent = 'Grid read ' + auditDays(v.ageMs) + ' day(s) ago'
+      + (v.season ? ' \u00B7 season ' + v.season : '');
+    var unread = (v.clubsUnread || []).length
+      ? ' Not included: ' + (v.clubsUnread || []).map(esc).join(', ') + ' (could not be read).'
+      : '';
+    if (v.matches) {
+      note.innerHTML = '<span style="color:#15803d;font-weight:600">\u2713 Agrees with TwoTimTwo across '
+        + esc(v.scopeDates) + ' meeting(s)</span>' + (unread ? '<span style="color:#64748b">' + unread + '</span>' : '');
+    } else {
+      note.innerHTML = '<span style="color:#b45309;font-weight:600">\u26A0 '
+        + esc(v.totals.missing) + ' night(s) TwoTimTwo has that this ledger does not, and '
+        + esc(v.totals.ledgerOnly) + ' this ledger has that TwoTimTwo does not</span>'
+        + '<br><span style="color:#64748b">A night only this machine knows about is usually a walk-in guest \u2014 those are never removed.'
+        + esc(unread) + '</span>';
+      var html = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+        + '<tr style="text-align:left;color:#64748b"><th style="padding:4px 6px">Child</th><th style="padding:4px 6px">Club</th>'
+        + '<th style="padding:4px 6px">Missing here</th><th style="padding:4px 6px">Only here</th></tr>';
+      (v.rows || []).forEach(function(r) {
+        html += '<tr style="border-top:1px solid #e2e8f0">'
+          + '<td style="padding:4px 6px">' + esc(r.name) + '</td>'
+          + '<td style="padding:4px 6px;color:#64748b">' + esc(r.club) + '</td>'
+          + '<td style="padding:4px 6px;color:#b91c1c">' + (r.missingHere.length ? esc(r.missingHere.join(', ')) : '\u2014') + '</td>'
+          + '<td style="padding:4px 6px;color:#64748b">' + (r.ledgerOnly.length ? esc(r.ledgerOnly.join(', ')) : '\u2014') + '</td>'
+          + '</tr>';
+      });
+      html += '</table>';
+      body.innerHTML = html;
+      if (v.totals.missing > 0) {
+        btn.disabled = false;
+        btn.textContent = 'Apply ' + v.totals.missing + ' missing date(s)';
+      }
+    }
+    // The four buckets that are never discrepancies and never applied.
+    var buckets = [
+      ['Same name twice \u2014 skipped on purpose', v.ambiguous],
+      ['Walk-in guests TwoTimTwo never saw', v.notOnRoster],
+      ['On TwoTimTwo but never printed here \u2014 not added', v.neverPrinted],
+      ['Clubs that could not be read', v.clubsUnread]
+    ].filter(function(b) { return (b[1] || []).length; });
+    if (buckets.length) {
+      body.innerHTML += '<div style="margin-top:10px;font-size:11px;color:#94a3b8">'
+        + buckets.map(function(b) {
+          return '<div title="' + esc(b[0]) + '">' + esc(b[0]) + ': ' + b[1].length
+            + ' \u2014 ' + b[1].slice(0, 8).map(esc).join(', ') + (b[1].length > 8 ? '\u2026' : '') + '</div>';
+        }).join('')
+        + '</div>';
+    }
+  }).catch(function() {
+    age.style.color = '#b91c1c';
+    age.textContent = 'Unknown \u2014 server offline';
+    note.textContent = 'The audit could not be read, so nothing is known about the ledger either way.';
+    body.innerHTML = '';
+    btn.disabled = true;
+  });
+}
+
+function applyAuditAdditions() {
+  var btn = document.getElementById('audit-apply-btn');
+  var out = document.getElementById('audit-apply-note');
+  if (!confirm('Add the missing night(s) to the season ledger?\n\nThis changes streaks and milestone counts for the rest of the season (a child jumping past 5 nights will not get their 5-night line). Nothing is ever deleted.')) return;
+  btn.disabled = true;
+  fetch(BASE + '/attendance-audit/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d && d.ok) {
+      out.style.color = '#15803d';
+      out.textContent = 'Added ' + d.added + ' date(s) across ' + (d.children || []).length + ' child(ren) \u00B7 0 deleted';
+    } else {
+      out.style.color = '#b91c1c';
+      out.textContent = (d && d.error) ? d.error : 'Could not apply';
+    }
+    loadAttendanceAudit();
+  }).catch(function() {
+    out.style.color = '#b91c1c';
+    out.textContent = 'Could not reach the print server';
+    loadAttendanceAudit();
+  });
 }
 
 // Tonight at a glance
@@ -934,17 +1103,97 @@ function reprintLeader(index) {
 function loadClubs() {
   fetch(BASE + '/clubs').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
     if (!d || !Array.isArray(d.clubs)) return;
-    var sel = document.getElementById('leader-club');
-    if (!sel) return;
-    var keep = sel.value;
-    sel.innerHTML = '<option value="">No club</option>';
-    d.clubs.forEach(function(c) {
-      var o = document.createElement('option');
-      o.value = c; o.textContent = c;
-      sel.appendChild(o);
+    // Two dropdowns read the same one list: the leader card's club, and the
+    // range-reprint filter on the History tab.
+    [['leader-club', 'No club'], ['rr-club', 'All clubs']].forEach(function(pair) {
+      var sel = document.getElementById(pair[0]);
+      if (!sel) return;
+      var keep = sel.value;
+      sel.innerHTML = '<option value=""></option>';
+      sel.firstChild.textContent = pair[1];
+      d.clubs.forEach(function(c) {
+        var o = document.createElement('option');
+        o.value = c; o.textContent = c;
+        sel.appendChild(o);
+      });
+      if (keep) sel.value = keep;
     });
-    if (keep) sel.value = keep;
-  }).catch(function() { /* leave the No-club-only list */ });
+  }).catch(function() { /* leave the default-only lists */ });
+}
+
+// ── Reprint a whole stretch of tonight (#257) ────────────────────────────────
+// Two steps on purpose. The first press is a DRY RUN: the server returns the
+// count and the names and prints nothing, and that IS the confirm sheet — the
+// number the operator agrees to comes from the server, not from this page.
+var rrPending = null;
+
+// The time inputs are LOCAL wall clock; history timestamps are ISO/UTC. Build
+// the boundary from today's local date so a stretch means what the clock on
+// the wall said. From takes :00 seconds, To takes :59, so both ends are
+// inclusive of the whole minute the operator typed.
+function rrIso(id, endOfMinute) {
+  var v = (document.getElementById(id) || {}).value || '';
+  var m = /^(\d{1,2}):(\d{2})$/.exec(v);
+  if (!m) return null;
+  var now = new Date();
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+    Number(m[1]), Number(m[2]), endOfMinute ? 59 : 0, endOfMinute ? 999 : 0);
+  return d.toISOString();
+}
+
+function rrNote(html) { document.getElementById('rr-note').innerHTML = html; }
+
+function reprintRangePreview() {
+  var from = rrIso('rr-from', false);
+  var to = rrIso('rr-to', true);
+  rrPending = null;
+  if (!from || !to) { rrNote('Enter both a start and an end time.'); return; }
+  var club = (document.getElementById('rr-club') || {}).value || '';
+  var body = { fromTs: from, toTs: to, club: club };
+  rrNote('Checking\u2026');
+  fetch(BASE + '/reprint-range', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { rrNote(esc((res.d && res.d.error) || 'Could not read the print history.')); return; }
+      var d = res.d;
+      if (!d.count) { rrNote('Nothing to reprint in that stretch.'); return; }
+      rrPending = body;
+      var names = (d.rows || []).map(function(r) {
+        return esc(r.name) + (r.clubName ? ' (' + esc(r.clubName) + ')' : '');
+      }).join(', ');
+      rrNote('<strong>' + d.count + ' label' + (d.count === 1 ? '' : 's') + '</strong> will reprint: ' + names
+        + (d.capped ? ' \u2014 capped at 20; run a narrower stretch for the rest' : '')
+        + '. Awards, leader tags and removed kids are skipped. '
+        + '<button class="btn btn-primary btn-sm" onclick="reprintRangeGo()">Print ' + d.count + ' label'
+        + (d.count === 1 ? '' : 's') + '</button>');
+    })
+    .catch(function() { rrNote('Could not reach the server.'); });
+}
+
+function reprintRangeGo() {
+  if (!rrPending) { rrNote('Press "Reprint this stretch" again \u2014 the list is stale.'); return; }
+  var body = { fromTs: rrPending.fromTs, toTs: rrPending.toTs, club: rrPending.club, confirm: true };
+  rrPending = null;
+  rrNote('Printing\u2026');
+  fetch(BASE + '/reprint-range', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { rrNote(esc((res.d && res.d.error) || 'Could not reprint that stretch.')); return; }
+      var d = res.d;
+      var n = (d.printed || []).length;
+      if (d.stoppedAt) {
+        rrNote('Printed ' + n + ' label' + (n === 1 ? '' : 's') + ', then failed on <strong>'
+          + esc(d.stoppedAt.name) + '</strong> \u2014 clear the jam and run the rest.');
+      } else {
+        rrNote('Reprinted ' + n + ' label' + (n === 1 ? '' : 's') + '.');
+      }
+      loadHistory();
+    })
+    .catch(function() { rrNote('Could not reach the server.'); });
 }
 
 // ── Remembered leaders ───────────────────────────────────────────────────────
@@ -1203,6 +1452,25 @@ function playTune() {
     .catch(function() { alert('Could not reach the server.'); });
 }
 
+// Clear a jammed printer's backlog (#256). Stays enabled unconditionally — a
+// queue the probe could not read is precisely when the operator needs it.
+function clearPrintQueue() {
+  if (!confirm('Clear every waiting print job on this printer?\n\nAny label still in the queue will NOT print. Use this after a jam or a paper-out, once the printer is fixed.')) return;
+  fetch(BASE + '/printer/clear-queue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true })
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { alert(res.d && res.d.error ? res.d.error : 'Could not clear the print queue.'); return; }
+      var f = res.d.failed ? ' (' + res.d.failed + ' could not be removed)' : '';
+      alert('Removed ' + res.d.removed + ' waiting job' + (res.d.removed === 1 ? '' : 's') + f + '.');
+      loadHealth();
+    })
+    .catch(function() { alert('Could not reach the server.'); });
+}
+
 // Settings
 function scheduleRowHtml(row) {
   row = row || {};
@@ -1248,6 +1516,7 @@ function loadSettings() {
     document.getElementById('settings-musical').checked = config.musicalPrinter === true;
     document.getElementById('settings-update-beacon').checked = config.updateBeacon === true;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
+    document.getElementById('settings-trophy-band').checked = config.trophyBand !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
     document.getElementById('settings-connect-greeting').value = config.connectCardGreeting || '';
@@ -1258,6 +1527,7 @@ function loadSettings() {
     // someone to "copy" it into a screen.
     setDisplayKeyState(config.displayKey || '');
     setDisplayLoginState(config.displayLoginPassphrase || '');
+    document.getElementById('settings-fleet-config-url').value = config.fleetConfigUrl || '';
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
     (config.schedule || []).forEach(addScheduleRow);
@@ -1584,16 +1854,25 @@ function saveSettings() {
       musicalPrinter: document.getElementById('settings-musical').checked,
       updateBeacon: document.getElementById('settings-update-beacon').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
+      trophyBand: document.getElementById('settings-trophy-band').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,
       connectCardGreeting: document.getElementById('settings-connect-greeting').value.trim(),
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
       lanAccess: document.getElementById('settings-lan-access').checked,
       displayKey: document.getElementById('settings-display-key').value.trim(),
-      displayLoginPassphrase: document.getElementById('settings-display-login').value.trim()
+      displayLoginPassphrase: document.getElementById('settings-display-login').value.trim(),
+      fleetConfigUrl: document.getElementById('settings-fleet-config-url').value.trim()
     })
   }).then(function(r) {
-    if (!r.ok) throw new Error('config save failed');
+    if (!r.ok) {
+      // Surface WHY (e.g. a non-https settings URL) — a generic "saving
+      // failed" leaves the operator retyping a value the server will refuse
+      // again for a reason it already knows.
+      return r.json().catch(function() { return {}; }).then(function(b) {
+        throw new Error(b && b.error ? b.error : 'config save failed');
+      });
+    }
     return fetch(BASE + '/config/schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1605,7 +1884,11 @@ function saveSettings() {
       el.style.display = 'block';
       setTimeout(function() { el.style.display = 'none'; }, 3000);
     }
-  }).catch(function() { alert('Saving settings failed — is the server running?'); });
+  }).catch(function(e) {
+    alert((e && e.message && e.message !== 'config save failed')
+      ? ('Saving settings failed: ' + e.message)
+      : 'Saving settings failed — is the server running?');
+  });
 }
 
 // Night Status — event-bus + selector health from the extended /health payload
@@ -1820,6 +2103,9 @@ loadRoster();
 loadHistory();
 loadTonightStats();
 loadCountCheck();
+// No setInterval: the grid feed refreshes at most every 6 hours, so this
+// reads once at load and on the tab's own Refresh button.
+loadAttendanceAudit();
 loadClubs();
 loadLeaderChips();
 loadSettings();

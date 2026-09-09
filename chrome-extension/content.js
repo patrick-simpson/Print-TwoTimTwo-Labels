@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.4.0';
+  const EXTENSION_VERSION = '6.13.0';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -10,6 +10,10 @@
   // retrying it is exactly what double-printed labels. The server also
   // suppresses same-name duplicates as a second layer of defence.
   const PRINT_TIMEOUT_MS = 35000;
+  // A visiting family typed into one form (#323). Four is the practical cap a
+  // desk can handle without a line forming; each child is still printed by its
+  // own independent POST /print, never a batch endpoint.
+  const MAX_GUEST_FAMILY = 4;
   const BATCH_DELAY = 400;
   const DEBOUNCE_MS = 100;
   const STATUS_TIMEOUT = 3000;
@@ -145,6 +149,56 @@
     // fallback the id-keyed lookup misses the name-keyed record and reconcile
     // prints a SECOND label for the same child.
     return printedNames.has('nm:' + nameKeyOf(name));
+  }
+
+  // ── Walk-in guest FAMILY (#323) ──────────────────────────────────────────
+  // Pure: turns the guest form's rows into the /print payloads, in print
+  // order. Row 0 is the "First Last" the operator typed; the extra rows carry
+  // their own first name and club and inherit row 0's LAST name — a visiting
+  // mother with three children should type the surname once.
+  //
+  // Only row 0 may print the family's connect card: four welcome cards for one
+  // household is a stack of paper nobody wants. Every row is otherwise a
+  // completely ordinary single-child payload, so each label goes through the
+  // exact same path, dedup key and history row as a lone walk-in does today.
+  //
+  // Deliberately NOT a roster lookup: there is no household index, no
+  // roster-derived grouping and no auto-batching of registered children here —
+  // this is only the rows a human typed. (The sibling check-in feature was
+  // removed in v6.1.0 and stays removed.)
+  function buildGuestFamilyPayloads(primaryName, extraRows, shared) {
+    var parts = String(primaryName == null ? '' : primaryName).trim().split(/\s+/).filter(Boolean);
+    var first = parts[0] || '';
+    var last = parts.slice(1).join(' ');
+    if (!first) return [];
+    var s = shared || {};
+    var rows = [{ firstName: first, club: s.club || '' }];
+    (extraRows || []).forEach(function(r) {
+      rows.push({
+        firstName: String((r && r.firstName) || '').trim(),
+        club: (r && r.club) || ''
+      });
+    });
+    var out = [];
+    var seen = {};
+    rows.forEach(function(r) {
+      if (!r.firstName) return;                        // a blank extra row is just not a child
+      var full = (r.firstName + (last ? ' ' + last : '')).trim();
+      var k = full.toLowerCase().replace(/\s+/g, ' ');
+      // The same child twice would be eaten by the server's 25s duplicate
+      // window, and one of the two children would leave with no label.
+      if (seen[k]) return;
+      seen[k] = true;
+      if (out.length >= MAX_GUEST_FAMILY) return;
+      var p = {
+        name: full, clubName: r.club || '', clubImageData: null,
+        printerName: s.printerName || '', stepUpNight: !!s.stepUpNight
+      };
+      if (s.visitor) p.visitor = true;
+      if (out.length > 0) p.suppressConnectCard = true;   // one card per family
+      out.push(p);
+    });
+    return out;
   }
   // Secondary name → identityKey index lookup, so ROSTER_CACHE (keyed by
   // identity) stays reachable from code that only has a display name (widget
@@ -1115,22 +1169,42 @@
     // fallback below is only for a server that is not running yet; it is
     // replaced the moment /clubs answers.
     var CLUB_FALLBACK = ['Puggles', 'Cubbies', 'Sparks', 'T&T', 'Trek', 'Journey'];
-    function renderClubOptions(clubs) {
-      var keep = clubSelect.value;
-      clubSelect.textContent = '';
+    // The list the server last gave us, remembered so a family row added AFTER
+    // /clubs answered is not stuck on the offline fallback (#323).
+    var CLUB_LIST = CLUB_FALLBACK.slice();
+    var CLUB_SELECTS = [clubSelect];
+    function renderClubOptions(sel, clubs) {
+      var keep = sel.value;
+      sel.textContent = '';
       [''].concat(clubs).forEach(function(c) {
         var opt = document.createElement('option');
         opt.value = c;
         opt.textContent = c === '' ? '(no club)' : c;
-        clubSelect.appendChild(opt);
+        sel.appendChild(opt);
       });
-      if (keep) clubSelect.value = keep;   // a mid-refresh fetch must not clear the operator's pick
+      if (keep) sel.value = keep;   // a mid-refresh fetch must not clear the operator's pick
     }
-    renderClubOptions(CLUB_FALLBACK);
+    function renderAllClubOptions(clubs) {
+      CLUB_LIST = clubs.slice();
+      CLUB_SELECTS.forEach(function(sel) { renderClubOptions(sel, CLUB_LIST); });
+    }
+    // A club dropdown for one family row, styled exactly like the main one.
+    function makeClubSelect() {
+      var sel = document.createElement('select');
+      Object.assign(sel.style, {
+        flex: '1', padding: '5px 8px', borderRadius: '6px',
+        border: '1px solid #e2e8f0', fontSize: '11px',
+        background: '#f8fafc', color: '#475569'
+      });
+      CLUB_SELECTS.push(sel);
+      renderClubOptions(sel, CLUB_LIST);
+      return sel;
+    }
+    renderClubOptions(clubSelect, CLUB_FALLBACK);
     fetch(PRINT_SERVER + '/clubs', { signal: AbortSignal.timeout(4000) })
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(d) {
-        if (d && Array.isArray(d.clubs) && d.clubs.length) renderClubOptions(d.clubs);
+        if (d && Array.isArray(d.clubs) && d.clubs.length) renderAllClubOptions(d.clubs);
       })
       .catch(function() { /* offline: the fallback list stands */ });
 
@@ -1189,6 +1263,12 @@
       }
       leaderCheck.style.color = on ? '#b45309' : '#64748b';
       leaderCheck.style.fontWeight = on ? '700' : 'normal';
+      // A leader tag is one adult, so the family rows (#323) are meaningless
+      // here — hidden AND cleared, so a leftover row cannot print a child
+      // label out of leader mode.
+      familyWrap.style.display = on ? 'none' : 'flex';
+      if (on) clearFamilyRows();
+      syncFamilyUi();
     }
     leaderCb.addEventListener('change', applyLeaderMode);
 
@@ -1238,16 +1318,22 @@
     var phoneInput     = regFieldInput('Guardian phone', 'tel');
     var birthdateInput = regFieldInput('Birthdate', 'date');
 
-    var genderSelect = document.createElement('select');
-    Object.assign(genderSelect.style, {
-      flex: '1', padding: '5px 8px', borderRadius: '6px',
-      border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
-    });
-    [['M', 'Boy'], ['F', 'Girl']].forEach(function(pair) {
-      var o = document.createElement('option');
-      o.value = pair[0]; o.textContent = pair[1];
-      genderSelect.appendChild(o);
-    });
+    // Factored out so each extra family row (#323) gets its own identical
+    // control — TwoTimTwo requires gender, grade AND birthdate per child.
+    function makeGenderSelect() {
+      var sel = document.createElement('select');
+      Object.assign(sel.style, {
+        flex: '1', padding: '5px 8px', borderRadius: '6px',
+        border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
+      });
+      [['M', 'Boy'], ['F', 'Girl']].forEach(function(pair) {
+        var o = document.createElement('option');
+        o.value = pair[0]; o.textContent = pair[1];
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+    var genderSelect = makeGenderSelect();
 
     // grade_id \u2192 club mapping from the real registration form (docs \u00A74).
     var GRADE_OPTIONS = [
@@ -1266,22 +1352,26 @@
       { id: 21, label: 'Gr 9 (Journey)' },
       { id: 23, label: 'Gr 10 (Journey)' }
     ];
-    var gradeSelect = document.createElement('select');
-    Object.assign(gradeSelect.style, {
-      flex: '1', padding: '5px 8px', borderRadius: '6px',
-      border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
-    });
-    var gradePlaceholder = document.createElement('option');
-    gradePlaceholder.value = '';
-    gradePlaceholder.textContent = 'Grade\u2026';
-    gradePlaceholder.disabled = true;
-    gradePlaceholder.selected = true;
-    gradeSelect.appendChild(gradePlaceholder);
-    GRADE_OPTIONS.forEach(function(g) {
-      var o = document.createElement('option');
-      o.value = String(g.id); o.textContent = g.label;
-      gradeSelect.appendChild(o);
-    });
+    function makeGradeSelect() {
+      var sel = document.createElement('select');
+      Object.assign(sel.style, {
+        flex: '1', padding: '5px 8px', borderRadius: '6px',
+        border: '1px solid #e2e8f0', fontSize: '11px', background: '#fff', color: '#1e293b'
+      });
+      var placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Grade\u2026';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      sel.appendChild(placeholder);
+      GRADE_OPTIONS.forEach(function(g) {
+        var o = document.createElement('option');
+        o.value = String(g.id); o.textContent = g.label;
+        sel.appendChild(o);
+      });
+      return sel;
+    }
+    var gradeSelect = makeGradeSelect();
 
     var genderGradeRow = document.createElement('div');
     Object.assign(genderGradeRow.style, { display: 'flex', gap: '4px' });
@@ -1292,6 +1382,133 @@
     Object.assign(registerStatus.style, { fontSize: '10px', color: '#94a3b8' });
 
     registerFields.append(registerHint, guardianInput, phoneInput, birthdateInput, genderGradeRow, registerStatus);
+
+    // ── A whole visiting family in one submission (#323) ──────────────────
+    // A visiting mother with three children used to mean typing the same
+    // surname, club and guardian details three times while a line formed
+    // behind her. "+ Add another child" adds a row with its own first name and
+    // club (and, when registering, its own birthdate/gender/grade, all three of
+    // which TwoTimTwo requires per child); the surname, guardian and phone come
+    // from the row above. Each child is still printed by its OWN sequential
+    // POST /print — no batch endpoint — and only the first prints the family's
+    // connect card.
+    var familyWrap = document.createElement('div');
+    Object.assign(familyWrap.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+
+    var addChildBtn = document.createElement('button');
+    addChildBtn.type = 'button';
+    addChildBtn.textContent = '+ Add another child';
+    addChildBtn.title = 'Print labels for a whole visiting family — one connect card';
+    Object.assign(addChildBtn.style, {
+      fontSize: '11px', padding: '4px 8px', background: '#f1f5f9', color: '#475569',
+      border: '1px solid #e2e8f0', borderRadius: '6px', cursor: 'pointer', fontWeight: '600'
+    });
+
+    var familyRows = document.createElement('div');
+    Object.assign(familyRows.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+
+    var familyStatus = document.createElement('div');
+    familyStatus.id = 'awana-family-status';
+    Object.assign(familyStatus.style, { fontSize: '10px', color: '#94a3b8' });
+
+    familyWrap.append(addChildBtn, familyRows, familyStatus);
+
+    var familyRowData = [];
+
+    function syncFamilyUi() {
+      var full = familyRowData.length >= MAX_GUEST_FAMILY - 1;
+      addChildBtn.disabled = isLeaderMode() || full;
+      addChildBtn.style.opacity = addChildBtn.disabled ? '0.5' : '1';
+      addChildBtn.textContent = full
+        ? ('Family full (' + MAX_GUEST_FAMILY + ' children)')
+        : '+ Add another child';
+      familyRowData.forEach(function(r) {
+        r.regRow.style.display = registerCb.checked ? 'flex' : 'none';
+      });
+    }
+
+    function removeFamilyRow(entry) {
+      var i = familyRowData.indexOf(entry);
+      if (i === -1) return;
+      familyRowData.splice(i, 1);
+      var ci = CLUB_SELECTS.indexOf(entry.clubSel);
+      if (ci > 0) CLUB_SELECTS.splice(ci, 1);   // index 0 is the main dropdown
+      if (entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
+      syncFamilyUi();
+      updateScrollFade();
+    }
+
+    function addFamilyRow() {
+      if (familyRowData.length >= MAX_GUEST_FAMILY - 1) return;   // row 1 + 3 extras
+      var el = document.createElement('div');
+      Object.assign(el.style, { display: 'flex', flexDirection: 'column', gap: '3px' });
+
+      var top = document.createElement('div');
+      Object.assign(top.style, { display: 'flex', gap: '4px', alignItems: 'center' });
+
+      var firstInput = document.createElement('input');
+      firstInput.type = 'text';
+      firstInput.placeholder = 'First name';
+      Object.assign(firstInput.style, {
+        flex: '1', padding: '5px 8px', borderRadius: '6px',
+        border: '1px solid #e2e8f0', fontSize: '12px',
+        background: '#f8fafc', color: '#1e293b', outline: 'none'
+      });
+      firstInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') triggerWalkIn(); });
+
+      var clubSel = makeClubSelect();
+
+      var removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u00D7';
+      removeBtn.title = 'Remove this child';
+      Object.assign(removeBtn.style, {
+        fontSize: '12px', lineHeight: '1', padding: '4px 7px', background: '#fff',
+        color: '#dc2626', border: '1px solid #fecaca', borderRadius: '6px',
+        cursor: 'pointer', fontWeight: '700'
+      });
+
+      top.append(firstInput, clubSel, removeBtn);
+
+      var regRow = document.createElement('div');
+      Object.assign(regRow.style, { display: 'none', gap: '4px' });
+      var birthInput = document.createElement('input');
+      birthInput.type = 'date';
+      Object.assign(birthInput.style, {
+        flex: '1', padding: '5px 8px', borderRadius: '6px', border: '1px solid #e2e8f0',
+        fontSize: '11px', background: '#fff', color: '#1e293b', outline: 'none'
+      });
+      var genderSel = makeGenderSelect();
+      var gradeSel = makeGradeSelect();
+      regRow.append(birthInput, genderSel, gradeSel);
+
+      el.append(top, regRow);
+      familyRows.appendChild(el);
+
+      var entry = {
+        el: el, regRow: regRow, firstInput: firstInput, clubSel: clubSel,
+        birthInput: birthInput, genderSel: genderSel, gradeSel: gradeSel
+      };
+      removeBtn.addEventListener('click', function() { removeFamilyRow(entry); });
+      familyRowData.push(entry);
+      syncFamilyUi();
+      updateScrollFade();
+      try { firstInput.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
+      return entry;
+    }
+
+    function readFamilyRows() {
+      return familyRowData.map(function(r) {
+        return { firstName: r.firstInput.value.trim(), club: r.clubSel.value };
+      });
+    }
+
+    function clearFamilyRows() {
+      familyRowData.slice().forEach(removeFamilyRow);
+      familyStatus.textContent = '';
+    }
+
+    addChildBtn.addEventListener('click', addFamilyRow);
 
     // Now that every control the leader mode touches exists, settle the row
     // into its initial (child) state.
@@ -1464,6 +1681,7 @@
 
     registerCb.addEventListener('change', function() {
       registerFields.style.display = registerCb.checked ? 'flex' : 'none';
+      syncFamilyUi();   // each family row's birthdate/gender/grade follows it (#323)
       // Scroll the revealed form into view. The panel scrolls now, but a form
       // that appears below the fold on an unchanged-looking panel is the same
       // "where did it go" problem wearing a different hat.
@@ -1481,14 +1699,23 @@
       registerStatus.style.color = color || '#94a3b8';
     }
 
-    // Fire-and-forget: the label already printed by the time this resolves,
-    // and it never blocks or retries the print on a registration failure.
-    function registerWalkInGuest(fullName, guardianName, phone, birthdate, gradeId, gender) {
-      var parts = fullName.trim().split(/\s+/);
-      var firstName = parts[0] || '';
-      var lastName = parts.slice(1).join(' ') || '';
-      if (!guardianName || !phone || !birthdate || !gradeId) {
-        setRegisterStatus('\u26A0 Fill in guardian, phone, birthdate & grade to register', '#f59e0b');
+    // Fire-and-forget: the labels have already printed by the time this
+    // resolves, and it never blocks or retries a print on a registration
+    // failure.
+    //
+    // `children` is [{firstName, lastName, birthdate, gradeId, gender}] — one
+    // entry for a lone walk-in, up to MAX_GUEST_FAMILY for a visiting family
+    // (#323), all under ONE household. `Clubber[i][...]` indexing is the
+    // documented shape (docs/TWOTIMTWO.md §4: "Creates a household + one or
+    // more clubbers") but this repo has never exercised i > 0, so index 0 is
+    // kept byte-identical to what shipped before and the whole submission is
+    // all-or-nothing: TwoTimTwo requires gender, grade AND birthdate per
+    // child, and half a registered family is worse than none.
+    function registerWalkInFamily(children, guardianName, phone) {
+      var kids = (children || []).filter(function(c) { return c && c.firstName; });
+      if (!kids.length) return;
+      if (!guardianName || !phone || kids.some(function(c) { return !c.birthdate || !c.gradeId; })) {
+        setRegisterStatus('\u26A0 Fill in guardian, phone, birthdate & grade (for every child) to register', '#f59e0b');
         return;
       }
       var csrfToken = findCsrfToken();
@@ -1499,13 +1726,15 @@
       setRegisterStatus('Registering in TwoTimTwo\u2026', '#94a3b8');
       var body = 'jscript=yep' +
         '&Household%5Bname1%5D=' + encodeURIComponent(guardianName) +
-        '&Household%5Bphn1%5D=' + encodeURIComponent(phone) +
-        '&Clubber%5B0%5D%5Bfirst_name%5D=' + encodeURIComponent(firstName) +
-        '&Clubber%5B0%5D%5Blast_name%5D=' + encodeURIComponent(lastName) +
-        '&Clubber%5B0%5D%5Bgender%5D=' + encodeURIComponent(gender) +
-        '&Clubber%5B0%5D%5Bgrade_id%5D=' + encodeURIComponent(gradeId) +
-        '&Clubber%5B0%5D%5Bbirthdate%5D=' + encodeURIComponent(birthdate) +
-        '&YII_CSRF_TOKEN=' + encodeURIComponent(csrfToken);
+        '&Household%5Bphn1%5D=' + encodeURIComponent(phone);
+      kids.forEach(function(c, i) {
+        body += '&Clubber%5B' + i + '%5D%5Bfirst_name%5D=' + encodeURIComponent(c.firstName) +
+          '&Clubber%5B' + i + '%5D%5Blast_name%5D=' + encodeURIComponent(c.lastName || '') +
+          '&Clubber%5B' + i + '%5D%5Bgender%5D=' + encodeURIComponent(c.gender) +
+          '&Clubber%5B' + i + '%5D%5Bgrade_id%5D=' + encodeURIComponent(c.gradeId) +
+          '&Clubber%5B' + i + '%5D%5Bbirthdate%5D=' + encodeURIComponent(c.birthdate);
+      });
+      body += '&YII_CSRF_TOKEN=' + encodeURIComponent(csrfToken);
       fetch('/clubber/register?default_visitor=Y', {
         method: 'POST',
         credentials: 'same-origin',
@@ -1514,7 +1743,7 @@
         signal: AbortSignal.timeout(10000)
       }).then(function(r) {
         if (r.ok) {
-          setRegisterStatus('\u2713 Registered in TwoTimTwo', '#16a34a');
+          setRegisterStatus('\u2713 Registered ' + kids.length + (kids.length === 1 ? ' child' : ' children') + ' in TwoTimTwo', '#16a34a');
         } else {
           setRegisterStatus('\u26A0 Registration failed (HTTP ' + r.status + ') \u2014 label printed, register manually', '#ef4444');
         }
@@ -1539,49 +1768,119 @@
         guestInput.value = '';
         return;
       }
-      var isVisitor = visitorCb.checked;
-      // Send with visitor flag if checked
-      var payload = {
-        name: name, clubName: club, clubImageData: null,
+      // One payload per child (#323): the typed row, plus any family rows,
+      // sharing the typed surname. A lone walk-in produces exactly the single
+      // payload it always did.
+      var payloads = buildGuestFamilyPayloads(name, readFamilyRows(), {
+        club: club,
         printerName: selectedPrinterName || '',
-        stepUpNight: isStepUpNight()
-      };
-      if (isVisitor) payload.visitor = true;
+        stepUpNight: isStepUpNight(),
+        visitor: visitorCb.checked
+      });
+      if (!payloads.length) return;
+
       if (isAwanaStoreNight()) {
-        var parts = name.split(/\s+/);
-        var bal = getShareBalance(parts[0] || '', parts.slice(1).join(' '));
-        if (bal !== null) payload.awanaShares = bal + 1;
+        payloads.forEach(function(p) {
+          var np = p.name.split(/\s+/);
+          var bal = getShareBalance(np[0] || '', np.slice(1).join(' '));
+          if (bal !== null) p.awanaShares = bal + 1;
+        });
       }
-      // Record the walk-in in the session dedup set. This was the ONE print
+      // Record every walk-in in the session dedup set. This was the ONE print
       // path that never did, so once the guest was registered and checked in
       // (the new one-step option makes that routine), reconcile / roster-diff /
       // the last-checkin observer all saw a name they had no record of printing
       // and produced a SECOND label.
-      markPrinted(name);
+      payloads.forEach(function(p) { markPrinted(p.name); });
+
+      // Capture what registration needs BEFORE the form is cleared. The
+      // register fields are looked up per first name and the list is built
+      // FROM the payloads, so the household submitted is exactly the set of
+      // children that got labels — no blank row, no duplicate, nothing past
+      // the cap. Row 1's birthdate/gender/grade are the shared controls; each
+      // extra row carries its own.
+      var regByFirst = {};
+      var typedFirst = (payloads[0].name.split(/\s+/)[0] || '').toLowerCase();
+      regByFirst[typedFirst] = {
+        birthdate: birthdateInput.value, gradeId: gradeSelect.value, gender: genderSelect.value
+      };
+      familyRowData.forEach(function(r) {
+        var first = r.firstInput.value.trim().toLowerCase();
+        if (!first || regByFirst[first]) return;
+        regByFirst[first] = {
+          birthdate: r.birthInput.value, gradeId: r.gradeSel.value, gender: r.genderSel.value
+        };
+      });
+      var children = payloads.map(function(p) {
+        var np = p.name.split(/\s+/);
+        var reg = regByFirst[(np[0] || '').toLowerCase()] || {};
+        return {
+          firstName: np[0] || '',
+          lastName: np.slice(1).join(' '),
+          birthdate: reg.birthdate,
+          gradeId: reg.gradeId,
+          gender: reg.gender
+        };
+      });
+      var guardianName = guardianInput.value.trim();
+      var guardianPhone = phoneInput.value.trim();
+      var wantRegister = registerCb.checked;
+
       setStatus('\u23F3');
+      familyStatus.textContent = payloads.length > 1 ? ('Printing 1 of ' + payloads.length + '\u2026') : '';
+
+      // Clear the form synchronously, exactly as before — the operator is
+      // already typing the next family by the time the labels come out.
+      guestInput.value = '';
+      clearFamilyRows();
+
+      printGuestFamily(payloads, 0, { ok: 0, queued: 0, failed: 0 });
+
+      // F-3: registration is independent of the prints above \u2014 it never waits
+      // on them and never blocks/undoes them if the TwoTimTwo POST fails.
+      if (wantRegister) registerWalkInFamily(children, guardianName, guardianPhone);
+    }
+
+    // One child per request, in order, NEVER a batch endpoint: each label goes
+    // through the same single-child /print path, dedup key and history row as a
+    // lone walk-in. It recurses in BOTH the then and the catch, so one child's
+    // failure queues only that child and the next label still prints.
+    function printGuestFamily(payloads, i, tally) {
+      if (i >= payloads.length) {
+        if (payloads.length > 1) {
+          familyStatus.style.color = (tally.ok === payloads.length) ? '#16a34a' : '#f59e0b';
+          familyStatus.textContent = 'Printed ' + tally.ok + ' of ' + payloads.length
+            + (tally.queued ? ' \u00B7 ' + tally.queued + ' queued offline' : '')
+            + (tally.failed ? ' \u00B7 ' + tally.failed + ' failed' : '');
+        }
+        return;
+      }
+      var next = function() {
+        if (payloads.length > 1 && i + 1 < payloads.length) {
+          familyStatus.style.color = '#94a3b8';
+          familyStatus.textContent = 'Printing ' + (i + 2) + ' of ' + payloads.length + '\u2026';
+        }
+        printGuestFamily(payloads, i + 1, tally);
+      };
       fetch(PRINT_SERVER + '/print', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payloads[i]),
         signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
       }).then(function(r) {
-        if (r.ok) { setStatus('\u2705'); playSuccess(); }
-        else { setStatus('\u274C'); playError(); }
+        if (r.ok) { tally.ok++; setStatus('\u2705'); playSuccess(); }
+        else { tally.failed++; setStatus('\u274C'); playError(); }
         clearStatus();
+        next();
       }).catch(function() {
-        queuePrint(payload);
+        // Offline: this child replays later carrying its own
+        // suppressConnectCard, so a flushed row 1 still prints the one card.
+        queuePrint(payloads[i]);
+        tally.queued++;
         setStatus('\uD83D\uDCE6');
         clearStatus();
+        next();
       });
-
-      // F-3: registration is independent of the print above \u2014 it never waits
-      // on it and never blocks/undoes it if the TwoTimTwo POST fails.
-      if (registerCb.checked) {
-        registerWalkInGuest(name, guardianInput.value.trim(), phoneInput.value.trim(),
-          birthdateInput.value, gradeSelect.value, genderSelect.value);
-      }
-
-      guestInput.value = '';
     }
     guestInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') triggerWalkIn(); });
     walkInPrintBtn.addEventListener('click', triggerWalkIn);
@@ -2218,7 +2517,7 @@
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
-      divider(), walkInLabel, walkInRow, walkInClubRow, registerCheck, registerFields, leaderChipsWrap,
+      divider(), walkInLabel, walkInRow, walkInClubRow, familyWrap, registerCheck, registerFields, leaderChipsWrap,
       divider(), tonightHeader, countCheck, tonightList,
       queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
