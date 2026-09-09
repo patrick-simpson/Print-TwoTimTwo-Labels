@@ -3451,6 +3451,74 @@ function isNonCheckinRow(e) {
   return !!(e && (e.isAward || e.isConnectCard || e.isLeader));
 }
 
+// ── Reprint a whole stretch of tonight (#257) ────────────────────────────────
+// A jam or a torn roll eats eight labels in a rush, and the operator had to
+// reprint one Print History row at a time while a line formed at the door.
+//
+// Cap of 20, not 40: printImage is execSync with a 15s timeout plus one retry
+// preceded by a SYNCHRONOUS 750ms wait, i.e. up to ~31s of blocked event loop
+// per label. Forty labels could stall POST /print for a child at the door for
+// minutes. The inter-label gap below is an awaited setTimeout for the same
+// reason — never Atomics.wait, which would defeat the point entirely.
+const REPRINT_RANGE_MAX = 20;
+const REPRINT_RANGE_GAP_MS = 400;
+
+// Pure: takes a history array and a window, returns the rows to reprint. No
+// fs, no config, no clock beyond what the caller passes, so every exclusion
+// rule below is exhaustively testable.
+//
+// Awards, connect cards and leader tags are excluded UNCONDITIONALLY — there
+// is no includeAwards flag, deliberately. POST /reprint branches only on
+// isLeader; an isAward row would fall into the kid path and record a history
+// row WITHOUT its isAward flag, so isNonCheckinRow() would stop excluding it
+// and tonight's tally would count an award slip as a child on every screen.
+function selectReprintRange(opts) {
+  const {
+    history = [], today = localDayISO(), fromISO, toISO,
+    club = '', max = REPRINT_RANGE_MAX,
+  } = opts || {};
+
+  const from = new Date(fromISO);
+  const to = new Date(toISO);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
+    return { error: 'bad-range' };
+  }
+
+  let want = '';
+  if (String(club || '').trim()) {
+    want = clubKey(club);
+    // An unrecognised club string must NOT silently match everything — that
+    // would print the whole night when the operator meant one club.
+    if (!want) return { error: 'bad-club' };
+  }
+
+  const skipped = { nonCheckin: 0, failed: 0, undone: 0, otherClub: 0, duplicate: 0 };
+  const seen = new Set();
+  const rows = [];
+  for (const r of history) {
+    if (!r || !isOnLocalDay(r.timestamp, today)) continue;
+    const t = new Date(r.timestamp);
+    if (t < from || t > to) continue;                 // inclusive at both ends
+    if (r.success === false) { skipped.failed++; continue; }
+    if (isNonCheckinRow(r)) { skipped.nonCheckin++; continue; }
+    // Reconciled away by the checkin report or a volunteer's Remove on the
+    // phone: that child is not here, so a fresh label must not come out.
+    if (r.undone) { skipped.undone++; continue; }
+    if (want && clubKey(r.clubName) !== want) { skipped.otherClub++; continue; }
+    if (!`${r.firstName || ''} ${r.lastName || ''}`.trim()) continue;
+    // History is newest-first, so the FIRST row seen per identity is the
+    // newest. Without this a stretch spanning an earlier reprint would print
+    // the same child twice.
+    const key = historyIdentityKey(r);
+    if (seen.has(key)) { skipped.duplicate++; continue; }
+    seen.add(key);
+    rows.push(r);
+  }
+
+  const capped = rows.length > max;
+  return { rows: rows.slice(0, max), count: Math.min(rows.length, max), capped, skipped };
+}
+
 function addHistoryEntry(entry) {
   const history = loadHistory();
   history.unshift({
@@ -3824,33 +3892,22 @@ app.get('/preview', async (req, res) => {
 });
 
 // ── Reprint ──────────────────────────────────────────────────────────────────
-app.post('/reprint', async (req, res) => {
-  const { name, index, clubberId = null } = req.body || {};
-  const history = loadHistory();
-
-  let entry;
-  if (typeof index === 'number' && index >= 0 && index < history.length) {
-    entry = history[index];
-  } else if (name || clubberId) {
-    // Award slips (isAward) are excluded from lookup so reprinting "by name"
-    // always targets the check-in label, never an award slip that happens to
-    // share the same child's name.
-    //
-    // historyRowMatches is id-first: when the caller knows the clubber id AND
-    // the stored row has one, a name collision can no longer reprint the wrong
-    // child's label. Rows predating the id fall back to name matching, so this
-    // is a strict improvement rather than a behaviour change.
-    const parts = String(name || '').trim().split(/\s+/);
-    const first = parts[0] || '';
-    const last = parts.slice(1).join(' ');
-    entry = history.find(e => !isNonCheckinRow(e) && historyRowMatches(e, first, last, clubberId));
-  }
-
-  if (!entry) {
-    return res.status(404).json({ error: 'No matching print history entry found' });
-  }
-
-  const effectivePrinter = (req.body.printerName && req.body.printerName.trim()) || entry.printer || PRINTER_NAME;
+// One history row, reprinted. Factored out of POST /reprint unchanged so the
+// range reprint (#257) reuses the SAME path rather than growing a second one —
+// which is what keeps the ledger, the tally and the sealed checkin event out
+// of it: a reprint is never a check-in, and this function calls neither
+// recordAttendance nor events.publish nor publishTally.
+//
+// Returns { ok: true, name, leader? } or { ok: false, name, error }. It never
+// throws and never touches `res`.
+//
+// opts.silent skips the musical-printer tune (range mode only): at
+// config.musicalPrinter === true a burst of 20 would play 20 tunes, and each
+// failure costs a synchronous 400ms wait inside playTuneIfEnabled.
+async function reprintRow(entry, printerName, opts = {}) {
+  const fullName = `${entry.firstName} ${entry.lastName}`;
+  const effectivePrinter = (printerName && printerName.trim()) || entry.printer || PRINTER_NAME;
+  const silent = opts.silent === true;
 
   // A leader tag reprinted by index must come back out as a leader tag: the
   // kid path below would render allergy/birthday enrichment for a same-named
@@ -3861,22 +3918,22 @@ app.post('/reprint', async (req, res) => {
     try {
       const result = await renderLeaderLabel({ firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName });
       leaderPng = result.pngPath;
-      playTuneIfEnabled(effectivePrinter);
+      if (!silent) playTuneIfEnabled(effectivePrinter);
       printImage(leaderPng, effectivePrinter);
       addHistoryEntry({
         firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
         printer: effectivePrinter, success: true, isLeader: true,
       });
-      console.log(`[reprint] leader tag ${entry.firstName} ${entry.lastName}`);
-      return res.json({ success: true, name: `${entry.firstName} ${entry.lastName}`, leader: true });
+      console.log(`[reprint] leader tag ${fullName}`);
+      return { ok: true, name: fullName, leader: true };
     } catch (err) {
       console.error('[reprint] Error:', err.message);
       addHistoryEntry({
         firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
         printer: effectivePrinter, success: false, isLeader: true,
       });
-      recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
-      return res.status(500).json({ error: err.message });
+      recordPrintFailure(fullName.trim(), entry.clubName, err.message);
+      return { ok: false, name: fullName, error: err.message };
     } finally {
       if (leaderPng) fs.unlink(leaderPng, () => {});
     }
@@ -3916,7 +3973,7 @@ app.post('/reprint', async (req, res) => {
     });
     pngPath = result.pngPath;
 
-    playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
+    if (!silent) playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
     printImage(pngPath, effectivePrinter);
 
     addHistoryEntry({
@@ -3925,8 +3982,8 @@ app.post('/reprint', async (req, res) => {
       printer: effectivePrinter, success: true, clubberId: entry.clubberId
     });
 
-    console.log(`[reprint] ${entry.firstName} ${entry.lastName}`);
-    res.json({ success: true, name: `${entry.firstName} ${entry.lastName}` });
+    console.log(`[reprint] ${fullName}`);
+    return { ok: true, name: fullName };
   } catch (err) {
     console.error('[reprint] Error:', err.message);
     addHistoryEntry({
@@ -3934,11 +3991,107 @@ app.post('/reprint', async (req, res) => {
       clubName: entry.clubName, clubImageData: entry.clubImageData,
       printer: effectivePrinter, success: false, clubberId: entry.clubberId
     });
-    recordPrintFailure(`${entry.firstName} ${entry.lastName}`.trim(), entry.clubName, err.message);
-    res.status(500).json({ error: err.message });
+    recordPrintFailure(fullName.trim(), entry.clubName, err.message);
+    return { ok: false, name: fullName, error: err.message };
   } finally {
     if (pngPath) fs.unlink(pngPath, () => {});
   }
+}
+
+app.post('/reprint', async (req, res) => {
+  const { name, index, clubberId = null } = req.body || {};
+  const history = loadHistory();
+
+  let entry;
+  if (typeof index === 'number' && index >= 0 && index < history.length) {
+    entry = history[index];
+  } else if (name || clubberId) {
+    // Award slips (isAward) are excluded from lookup so reprinting "by name"
+    // always targets the check-in label, never an award slip that happens to
+    // share the same child's name.
+    //
+    // historyRowMatches is id-first: when the caller knows the clubber id AND
+    // the stored row has one, a name collision can no longer reprint the wrong
+    // child's label. Rows predating the id fall back to name matching, so this
+    // is a strict improvement rather than a behaviour change.
+    const parts = String(name || '').trim().split(/\s+/);
+    const first = parts[0] || '';
+    const last = parts.slice(1).join(' ');
+    entry = history.find(e => !isNonCheckinRow(e) && historyRowMatches(e, first, last, clubberId));
+  }
+
+  if (!entry) {
+    return res.status(404).json({ error: 'No matching print history entry found' });
+  }
+
+  const r = await reprintRow(entry, req.body.printerName);
+  if (!r.ok) return res.status(500).json({ error: r.error });
+  return res.json(Object.assign({ success: true, name: r.name }, r.leader ? { leader: true } : {}));
+});
+
+// Reprint a whole stretch of tonight (#257). A jam or a torn roll eats eight
+// labels in a rush; this reprints the run at once instead of one row at a time
+// while a line forms at the door.
+//
+// Two-step by design: without confirm:true it is a DRY RUN that names the
+// count and prints nothing — the count comes from the server, not the client.
+app.post('/reprint-range', async (req, res) => {
+  const { fromTs, toTs, club = '', confirm = false, printerName = '' } = req.body || {};
+
+  // /reprint predates rehearsal mode and is not rehearsal-aware, but a range
+  // reprint is inherently a real-night action — refuse rather than spray 20
+  // TEST labels at a jammed printer.
+  if (isRehearsalActive()) {
+    return res.status(409).json({ error: 'Rehearsal mode is armed — disarm it before reprinting a stretch.' });
+  }
+  if (printerName && !isSafePrinterName(printerName)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
+
+  const sel = selectReprintRange({ history: loadHistory(), fromISO: fromTs, toISO: toTs, club });
+  if (sel.error) {
+    return res.status(400).json({
+      error: sel.error === 'bad-club'
+        ? 'Unknown club'
+        : 'Give a start time before an end time (both on today).',
+    });
+  }
+  if (!sel.count) {
+    return res.json({ confirmed: false, count: 0, rows: [], skipped: sel.skipped });
+  }
+  if (confirm !== true) {
+    return res.json({
+      confirmed: false,
+      count: sel.count,
+      capped: sel.capped,
+      skipped: sel.skipped,
+      rows: sel.rows.map(r => ({
+        name: `${r.firstName} ${r.lastName}`.trim(),
+        clubName: r.clubName || '',
+        at: r.timestamp,
+      })),
+    });
+  }
+
+  const printed = [];
+  let stopped = null;
+  for (let i = 0; i < sel.rows.length; i++) {
+    const r = await reprintRow(sel.rows[i], printerName, { silent: true });
+    // Stop on the FIRST failure: a jam would otherwise fire 19 more ops
+    // print-failure events and write 19 more failed history rows.
+    if (!r.ok) { stopped = { name: r.name, error: r.error }; break; }
+    printed.push(r.name);
+    // Awaited, never Atomics.wait — the point is that a queued POST /print for
+    // a child at the door gets served between reprints.
+    if (i < sel.rows.length - 1) await new Promise(done => setTimeout(done, REPRINT_RANGE_GAP_MS));
+  }
+
+  console.log(`[reprint-range] ${printed.length}/${sel.rows.length} label(s)${stopped ? ` — stopped at ${stopped.name}` : ''}`);
+  // Always 200 so the client can render a partial run rather than a bare
+  // "failed" after most of the stretch actually came out.
+  return res.json({
+    success: !stopped, printed, count: sel.rows.length, capped: sel.capped, stoppedAt: stopped,
+  });
 });
 
 // ── Award slip labels ─────────────────────────────────────────────────────────
@@ -6482,6 +6635,11 @@ module.exports = {
   // signals (firstEver / priorNightExists) can be unit-tested against a temp
   // AWANA_DATA_DIR without driving the whole /print route.
   recordAttendance, isNonCheckinRow,
+  // Range reprint (#257) — the selector is pure, so every exclusion rule
+  // (awards, leader tags, failed rows, undone rows, the club filter, the
+  // newest-row-per-child dedupe and the cap) is testable without printing.
+  selectReprintRange, REPRINT_RANGE_MAX, REPRINT_RANGE_GAP_MS,
+  localDayISO, historyIdentityKey, clubKey,
   // Remembered leaders + the one club list every dropdown reads. Pure but for
   // their file, so the upsert/cap/season rules and the club-table agreement
   // are unit-tested against a temp AWANA_DATA_DIR.

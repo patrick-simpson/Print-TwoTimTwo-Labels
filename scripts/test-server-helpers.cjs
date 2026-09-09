@@ -1429,6 +1429,148 @@ console.log('spooler backlog (#256) — a jam must not look healthy');
     /hasError[\s\S]{0,220}spoolerBacklog/.test(dash));
 }
 
+console.log('range reprint (#257) — which of tonight’s rows come back out');
+{
+  const { selectReprintRange, REPRINT_RANGE_MAX, localDayISO } =
+    require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // Today's local day, so isOnLocalDay agrees whatever timezone CI runs in.
+  const base = new Date();
+  base.setHours(18, 0, 0, 0);
+  const TODAY = localDayISO(base);
+  const at = (mins) => new Date(base.getTime() + mins * 60000).toISOString();
+  // History is newest-first, so a test array is built oldest-first and reversed.
+  const row = (over) => Object.assign(
+    { firstName: 'Kid', lastName: 'One', clubName: 'Sparks', timestamp: at(0), success: true }, over);
+  const sel = (rows, over) => selectReprintRange(Object.assign(
+    { history: rows, today: TODAY, fromISO: at(0), toISO: at(60) }, over));
+  const names = (r) => (r.rows || []).map((x) => `${x.firstName} ${x.lastName}`);
+
+  // Inclusive at both ends — an operator typing "6:00 to 6:30" means both.
+  {
+    const r = sel([
+      row({ firstName: 'Late', timestamp: at(61) }),
+      row({ firstName: 'End', timestamp: at(60) }),
+      row({ firstName: 'Mid', timestamp: at(30) }),
+      row({ firstName: 'Start', timestamp: at(0) }),
+      row({ firstName: 'Early', timestamp: at(-1) }),
+    ]);
+    check('the window is inclusive at both ends and excludes either side',
+      r.count === 3 && names(r).join(',') === 'End One,Mid One,Start One', JSON.stringify(names(r)));
+  }
+
+  // Another local day never rides along, even inside the clock window.
+  {
+    const yday = new Date(base.getTime() - 24 * 3600000).toISOString();
+    const r = sel([row({ firstName: 'Yesterday', timestamp: yday }), row({ firstName: 'Today' })],
+      { fromISO: new Date(base.getTime() - 48 * 3600000).toISOString() });
+    check('a row from another local day is excluded', r.count === 1 && names(r)[0] === 'Today One',
+      JSON.stringify(names(r)));
+  }
+
+  // The four unconditional exclusions.
+  {
+    const r = sel([
+      row({ firstName: 'Failed', success: false }),
+      row({ firstName: 'Award', isAward: true }),
+      row({ firstName: 'Card', isConnectCard: true }),
+      row({ firstName: 'Leader', isLeader: true }),
+      row({ firstName: 'Undone', undone: true }),
+      row({ firstName: 'Real' }),
+    ]);
+    check('only the real check-in row is selected', r.count === 1 && names(r)[0] === 'Real One',
+      JSON.stringify(names(r)));
+    check('the skip breakdown counts each reason',
+      r.skipped.failed === 1 && r.skipped.nonCheckin === 3 && r.skipped.undone === 1,
+      JSON.stringify(r.skipped));
+  }
+  // There is deliberately NO flag that can re-admit an award: routing one
+  // through the kid path would record a row without isAward, and tonight's
+  // tally would then count a recognition slip as a child.
+  {
+    const r = sel([row({ firstName: 'Award', isAward: true })], { includeAwards: true });
+    check('no option can re-admit an award slip', r.count === 0, JSON.stringify(r));
+  }
+
+  // Dedupe: newest row per identity wins, and two same-named children with
+  // distinct ids stay two children.
+  {
+    const r = sel([
+      row({ firstName: 'Kid', clubberId: '1', timestamp: at(40) }),   // newest
+      row({ firstName: 'Kid', clubberId: '1', timestamp: at(10) }),
+    ]);
+    check('a child already reprinted in the window prints once', r.count === 1, JSON.stringify(r));
+    check('...and it is the NEWEST row that is kept',
+      r.rows[0].timestamp === at(40), r.rows[0].timestamp);
+    check('the duplicate is reported, not silently dropped', r.skipped.duplicate === 1);
+  }
+  {
+    const r = sel([
+      row({ firstName: 'Mia', lastName: 'Castor', clubberId: '9001' }),
+      row({ firstName: 'Mia', lastName: 'Delphinus', clubberId: '9002' }),
+    ]);
+    check('twins with distinct ids stay two labels', r.count === 2, JSON.stringify(names(r)));
+  }
+
+  // The club filter folds spellings through clubKey, like the labels do.
+  {
+    const rows = [
+      row({ firstName: 'A', clubName: 'T&T' }),
+      row({ firstName: 'B', clubName: 'TnT' }),
+      row({ firstName: 'C', clubName: 't & t ' }),
+      row({ firstName: 'D', clubName: 'Sparks' }),
+    ];
+    const r = sel(rows, { club: 'T&T' });
+    check('the club filter folds T&T / TnT / "t & t" together',
+      r.count === 3 && !names(r).some((n) => n.startsWith('D')), JSON.stringify(names(r)));
+    check('the other club is reported as skipped', r.skipped.otherClub === 1, JSON.stringify(r.skipped));
+    check('an empty club means every club', sel(rows, { club: '' }).count === 4);
+    check('an unrecognised club is an ERROR, not a silent match-everything',
+      sel(rows, { club: 'Nonsense' }).error === 'bad-club');
+  }
+
+  // Bad windows.
+  check('from after to is refused', sel([row({})], { fromISO: at(60), toISO: at(0) }).error === 'bad-range');
+  check('a malformed start is refused', sel([row({})], { fromISO: 'not a time' }).error === 'bad-range');
+  check('a missing end is refused', sel([row({})], { toISO: undefined }).error === 'bad-range');
+
+  // The cap exists because printImage blocks the event loop per label.
+  {
+    const many = [];
+    for (let i = 0; i < 25; i++) many.push(row({ firstName: 'K' + i, clubberId: String(i), timestamp: at(i) }));
+    const r = sel(many.reverse());
+    check(`${REPRINT_RANGE_MAX} eligible rows is the cap`, r.rows.length === REPRINT_RANGE_MAX
+      && r.count === REPRINT_RANGE_MAX, JSON.stringify({ rows: r.rows.length, count: r.count }));
+    check('...and the operator is told it was capped', r.capped === true);
+  }
+  check('the cap is 20, not 40 (printImage blocks the loop up to ~31s per label)',
+    REPRINT_RANGE_MAX === 20);
+
+  // A nameless row can't be printed and must not occupy a slot.
+  check('a row with no name is skipped',
+    sel([row({ firstName: '', lastName: '' }), row({ firstName: 'Real' })]).count === 1);
+
+  // An empty result still reports the breakdown, so the UI can explain itself.
+  {
+    const r = sel([row({ firstName: 'Leader', isLeader: true })]);
+    check('an empty selection still carries a skip breakdown',
+      r.count === 0 && r.rows.length === 0 && r.skipped.nonCheckin === 1, JSON.stringify(r));
+  }
+
+  // Wiring: the range must reuse the single-row path, not grow a second one.
+  const rangeSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('both /reprint and /reprint-range go through reprintRow()',
+    (rangeSrc.match(/await reprintRow\(/g) || []).length === 2, 'a second render path would drift');
+  check('the range never records attendance', !/reprint-range[\s\S]{0,2600}recordAttendance\(/.test(rangeSrc));
+  check('the range never publishes a tally or a checkin',
+    !/reprint-range[\s\S]{0,2600}(publishTally\(|events\.publish\()/.test(rangeSrc));
+  check('the inter-label gap is an awaited setTimeout, never Atomics.wait',
+    /reprint-range[\s\S]{0,2600}await new Promise\(done => setTimeout\(done, REPRINT_RANGE_GAP_MS\)\)/.test(rangeSrc));
+  check('the range suppresses the musical printer (20 tunes in a burst)',
+    /reprintRow\(sel\.rows\[i\], printerName, \{ silent: true \}\)/.test(rangeSrc));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 __suiteFinished = true;

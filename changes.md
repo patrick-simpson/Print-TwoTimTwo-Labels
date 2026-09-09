@@ -1,4 +1,19 @@
-﻿## [6.6.0] - 2026-09-09
+﻿## [6.7.0] - 2026-09-09
+Reprint a whole stretch of tonight after a jam, instead of one row at a time while a line forms at the door.
+
+**A jam or a torn roll eats eight labels in a rush.** Print History could only reprint one row per click, each behind its own confirm — so the recovery took longer than the outage. The History tab now has **From / To times, an optional club, and a "Reprint this stretch" button**.
+
+**Two steps, and the number comes from the server.** The first press is a **dry run**: nothing prints, and the strip names exactly who would come back out ("6 labels will reprint: Vega Comet (Sparks), …"). Only then does a *Print 6 labels* button appear. That is the confirm sheet — a count the page invented would be worth nothing.
+
+**A reprint is never a check-in, and this had to stay true for a burst of twenty.** The range reuses the existing single-row path (`POST /reprint`'s body, factored out unchanged into `reprintRow()`) rather than growing a second one, so the season attendance ledger, the tally on every lobby screen and the sealed `checkin` stream are untouched by construction. The replay-night suite proves it end to end: after a six-label range reprint, the checkin event count, the tally frame count, tonight's checked-in number and `attendance.json` are all byte-for-byte where they were.
+
+**What it deliberately refuses to print.** Award slips, connect cards and leader name tags are excluded **unconditionally** — there is no "include awards" option, because `/reprint` branches only on `isLeader` and an award routed through the kid path would record a row *without* its `isAward` flag, at which point tonight's tally counts a recognition slip as a child. A kid reconciled away by TwoTimTwo's own report or removed on the phone is skipped too: that child is not here. Failed rows are skipped. A child who already appears twice in the window (an original plus an earlier reprint) gets **one** label, keyed the same id-first way everything else is, so twins sharing a first name still get two. An unrecognised club name is an error rather than a silent "print the whole night".
+
+**Capped at 20, paced at 400ms, and it stops at the first jam.** `printImage` is a blocking `execSync` — up to ~31 seconds of stalled event loop per label with its retry — so forty labels could starve a real check-in at the door for minutes; the gap between labels is an *awaited* timer, never a synchronous wait, precisely so a queued `POST /print` gets served in between. The musical printer is silenced for a burst (twenty tunes, each failure costing another synchronous wait). A failure stops the run and names where it stopped, instead of firing nineteen more print-failure events at a printer everyone already knows is jammed — and the response is still a 200, so a partial run reads as "printed 4, then failed on Vega" rather than a bare "failed". Rehearsal mode refuses the whole thing: a range reprint is inherently a real-night action.
+
+`npm run test:server` gains 26 checks on the pure selector — inclusive window ends, another local day, all four exclusions with their skip breakdown, newest-row-per-child dedupe, twins staying two, `T&T`/`TnT`/`t & t` folding through `clubKey()`, reversed and malformed windows, the cap — plus wiring scans proving both routes share `reprintRow()` and that the range touches neither `recordAttendance` nor `publishTally` nor `events.publish`. `npm run test:replay` gains 19, replaying a real range reprint over the whole synthetic night. 18 suites, 0 failures.
+
+## [6.6.0] - 2026-09-09
 A jam used to look perfectly healthy from the dashboard. Now it reads red, and there is a button to clear it.
 
 **The printer check only ever asked whether the printer still exists.** `Get-Printer` says the configured name is there; it says nothing about whether anything is coming out of it. So a paper-out, a jam or a torn roll left the dashboard green while jobs piled up in the Windows spooler behind it — and everyone at the desk believed the labels had printed. That is the worst shape a failure can take on a Wednesday night.

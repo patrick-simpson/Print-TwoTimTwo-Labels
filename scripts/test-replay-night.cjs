@@ -231,6 +231,85 @@ async function main() {
       'privacy leak in a published payload');
   }
 
+  // ── Reprint a whole stretch of tonight (#257) ───────────────────────────────
+  // Runs AFTER the aggregates block on purpose: a range reprint ADDS history
+  // rows, and that block asserts an exact history length.
+  //
+  // The point of replaying it here rather than unit-testing the selector alone
+  // is the invariant "a reprint is never a check-in": the tally, the season
+  // ledger and the sealed checkin stream must all come out of a 6-label burst
+  // completely unmoved.
+  console.log('replay-night: reprinting a stretch changes nothing that counts');
+  {
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date();   dayEnd.setHours(23, 59, 59, 999);
+    const fromTs = dayStart.toISOString();
+    const toTs = dayEnd.toISOString();
+
+    // The fixture has no award step, so the test has to create one before it
+    // can assert award rows are skipped.
+    const award = await post('/print-award', { name: 'Vega Comet', clubName: 'Sparks', award: 'Book 1 complete' });
+    check('an award slip prints (so there IS one to skip)', award.status === 200, JSON.stringify(award.body));
+
+    const histBefore = ((await j('/history')).body || []).length;
+    const checkinsBefore = checkinFrames().length;
+    const talliesBefore = wire.filter((w) => w.event === 'tally').length;
+    const statsBefore = ((await j('/stats/tonight')).body || {}).checkedIn;
+    const ledgerBefore = fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8');
+
+    // Dry run: names the count, prints nothing.
+    const dry = await post('/reprint-range', { fromTs, toTs });
+    check('a range reprint with no confirm is a dry run', dry.status === 200
+      && dry.body && dry.body.confirmed === false, JSON.stringify(dry.body));
+    check('the dry run counts the six real check-in rows', dry.body && dry.body.count === 6,
+      JSON.stringify(dry.body && { count: dry.body.count, rows: dry.body.rows }));
+    check('the dry run printed nothing', ((await j('/history')).body || []).length === histBefore);
+    check('the dry run published no checkin', checkinFrames().length === checkinsBefore);
+
+    // A reversed window is refused outright.
+    const bad = await post('/reprint-range', { fromTs: toTs, toTs: fromTs });
+    check('a reversed range is a 400', bad.status === 400, `status ${bad.status}`);
+    const badClub = await post('/reprint-range', { fromTs, toTs, club: 'Nonsense' });
+    check('an unknown club is a 400, never "print the whole night"',
+      badClub.status === 400, `status ${badClub.status}`);
+
+    // The real run.
+    const run = await post('/reprint-range', { fromTs, toTs, confirm: true });
+    check('the range reprint succeeds', run.status === 200 && run.body && run.body.success === true,
+      JSON.stringify(run.body));
+    const printed = (run.body && run.body.printed) || [];
+    check('six labels came out', printed.length === 6, JSON.stringify(printed));
+
+    // The invariants: a reprint is never a check-in.
+    check('a range reprint publishes NO checkin event',
+      checkinFrames().length === checkinsBefore, `${checkinFrames().length} vs ${checkinsBefore}`);
+    check('a range reprint publishes no tally either',
+      wire.filter((w) => w.event === 'tally').length === talliesBefore);
+    check("tonight's count is unmoved",
+      ((await j('/stats/tonight')).body || {}).checkedIn === statsBefore);
+    check('the season attendance ledger is byte-identical',
+      fs.readFileSync(path.join(dataDir, 'attendance.json'), 'utf8') === ledgerBefore);
+
+    // The exclusions.
+    check('the leader tag was skipped', !printed.some((n) => /Sol/.test(n)), JSON.stringify(printed));
+    check('the reconciled-away kid was skipped', !printed.some((n) => /Nova/.test(n)), JSON.stringify(printed));
+    check('the award slip did not produce a second label for that child',
+      printed.filter((n) => /Vega/.test(n)).length === 1, JSON.stringify(printed));
+
+    const after = (await j('/history')).body || [];
+    check('history grew by exactly the six reprints', after.length === histBefore + 6,
+      `${after.length} vs ${histBefore}`);
+    check('every row the run added is a plain check-in row',
+      after.slice(0, 6).every((r) => !r.isAward && !r.isConnectCard && !r.isLeader && r.success !== false),
+      JSON.stringify(after.slice(0, 6).map((r) => [r.firstName, r.isAward, r.isLeader])));
+
+    // A second run over the same window prints each child once again, never
+    // twice — the newest-row-per-identity dedupe survives its own output.
+    const again = await post('/reprint-range', { fromTs, toTs, confirm: true });
+    check('running the same stretch again still prints six, not twelve',
+      again.body && (again.body.printed || []).length === 6, JSON.stringify(again.body && again.body.printed));
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });

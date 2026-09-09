@@ -294,6 +294,13 @@
           <span>Recent Prints</span>
           <button class="btn btn-secondary btn-sm" onclick="loadHistory()">Refresh</button>
         </div>
+        <div id="reprint-range" style="padding:10px 14px;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <label style="font-size:12px;color:#64748b">From<br><input type="time" id="rr-from"></label>
+          <label style="font-size:12px;color:#64748b">To<br><input type="time" id="rr-to"></label>
+          <label style="font-size:12px;color:#64748b">Club<br><select id="rr-club"><option value="">All clubs</option></select></label>
+          <button class="btn btn-secondary btn-sm" onclick="reprintRangePreview()">Reprint this stretch</button>
+          <div id="rr-note" style="font-size:12px;color:#64748b;flex:1 0 100%"></div>
+        </div>
         <div class="card-body" style="padding:0">
           <table>
             <thead><tr><th>Name</th><th>Club</th><th>Printer</th><th>Time</th><th></th></tr></thead>
@@ -943,17 +950,97 @@ function reprintLeader(index) {
 function loadClubs() {
   fetch(BASE + '/clubs').then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
     if (!d || !Array.isArray(d.clubs)) return;
-    var sel = document.getElementById('leader-club');
-    if (!sel) return;
-    var keep = sel.value;
-    sel.innerHTML = '<option value="">No club</option>';
-    d.clubs.forEach(function(c) {
-      var o = document.createElement('option');
-      o.value = c; o.textContent = c;
-      sel.appendChild(o);
+    // Two dropdowns read the same one list: the leader card's club, and the
+    // range-reprint filter on the History tab.
+    [['leader-club', 'No club'], ['rr-club', 'All clubs']].forEach(function(pair) {
+      var sel = document.getElementById(pair[0]);
+      if (!sel) return;
+      var keep = sel.value;
+      sel.innerHTML = '<option value=""></option>';
+      sel.firstChild.textContent = pair[1];
+      d.clubs.forEach(function(c) {
+        var o = document.createElement('option');
+        o.value = c; o.textContent = c;
+        sel.appendChild(o);
+      });
+      if (keep) sel.value = keep;
     });
-    if (keep) sel.value = keep;
-  }).catch(function() { /* leave the No-club-only list */ });
+  }).catch(function() { /* leave the default-only lists */ });
+}
+
+// ── Reprint a whole stretch of tonight (#257) ────────────────────────────────
+// Two steps on purpose. The first press is a DRY RUN: the server returns the
+// count and the names and prints nothing, and that IS the confirm sheet — the
+// number the operator agrees to comes from the server, not from this page.
+var rrPending = null;
+
+// The time inputs are LOCAL wall clock; history timestamps are ISO/UTC. Build
+// the boundary from today's local date so a stretch means what the clock on
+// the wall said. From takes :00 seconds, To takes :59, so both ends are
+// inclusive of the whole minute the operator typed.
+function rrIso(id, endOfMinute) {
+  var v = (document.getElementById(id) || {}).value || '';
+  var m = /^(\d{1,2}):(\d{2})$/.exec(v);
+  if (!m) return null;
+  var now = new Date();
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+    Number(m[1]), Number(m[2]), endOfMinute ? 59 : 0, endOfMinute ? 999 : 0);
+  return d.toISOString();
+}
+
+function rrNote(html) { document.getElementById('rr-note').innerHTML = html; }
+
+function reprintRangePreview() {
+  var from = rrIso('rr-from', false);
+  var to = rrIso('rr-to', true);
+  rrPending = null;
+  if (!from || !to) { rrNote('Enter both a start and an end time.'); return; }
+  var club = (document.getElementById('rr-club') || {}).value || '';
+  var body = { fromTs: from, toTs: to, club: club };
+  rrNote('Checking\u2026');
+  fetch(BASE + '/reprint-range', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { rrNote(esc((res.d && res.d.error) || 'Could not read the print history.')); return; }
+      var d = res.d;
+      if (!d.count) { rrNote('Nothing to reprint in that stretch.'); return; }
+      rrPending = body;
+      var names = (d.rows || []).map(function(r) {
+        return esc(r.name) + (r.clubName ? ' (' + esc(r.clubName) + ')' : '');
+      }).join(', ');
+      rrNote('<strong>' + d.count + ' label' + (d.count === 1 ? '' : 's') + '</strong> will reprint: ' + names
+        + (d.capped ? ' \u2014 capped at 20; run a narrower stretch for the rest' : '')
+        + '. Awards, leader tags and removed kids are skipped. '
+        + '<button class="btn btn-primary btn-sm" onclick="reprintRangeGo()">Print ' + d.count + ' label'
+        + (d.count === 1 ? '' : 's') + '</button>');
+    })
+    .catch(function() { rrNote('Could not reach the server.'); });
+}
+
+function reprintRangeGo() {
+  if (!rrPending) { rrNote('Press "Reprint this stretch" again \u2014 the list is stale.'); return; }
+  var body = { fromTs: rrPending.fromTs, toTs: rrPending.toTs, club: rrPending.club, confirm: true };
+  rrPending = null;
+  rrNote('Printing\u2026');
+  fetch(BASE + '/reprint-range', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { rrNote(esc((res.d && res.d.error) || 'Could not reprint that stretch.')); return; }
+      var d = res.d;
+      var n = (d.printed || []).length;
+      if (d.stoppedAt) {
+        rrNote('Printed ' + n + ' label' + (n === 1 ? '' : 's') + ', then failed on <strong>'
+          + esc(d.stoppedAt.name) + '</strong> \u2014 clear the jam and run the rest.');
+      } else {
+        rrNote('Reprinted ' + n + ' label' + (n === 1 ? '' : 's') + '.');
+      }
+      loadHistory();
+    })
+    .catch(function() { rrNote('Could not reach the server.'); });
 }
 
 // ── Remembered leaders ───────────────────────────────────────────────────────
