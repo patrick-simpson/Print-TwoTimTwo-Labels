@@ -1276,6 +1276,159 @@ console.log('musical printer (#11/#12) — the TSPL compiler');
     buildTuneTspl('freebird') === buildTuneTspl('arpeggio'));
 }
 
+console.log('spooler backlog (#256) — a jam must not look healthy');
+{
+  const {
+    summarizeSpoolerJobs, spoolerBacklogMessage, parseClearQueueResult,
+    SPOOLER_BACKLOG_JOBS, SPOOLER_STUCK_MS,
+  } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
+
+  // Fixed clock: nothing below is wall-clock dependent.
+  const NOW = Date.parse('2026-09-09T19:05:00.000Z');
+  const job = (agoMs, status = 'Printing', id = '1') => ({
+    id: String(id),
+    status,
+    submitted: agoMs === null ? '' : new Date(NOW - agoMs).toISOString(),
+  });
+
+  // THE case this whole item exists to prevent: a readable, empty queue is a
+  // real count of ZERO, and must be distinguishable from "I could not read it".
+  {
+    const s = summarizeSpoolerJobs([], NOW);
+    check('an empty queue is a real zero, not unknown',
+      s.unknown === false && s.count === 0 && s.oldestAgeMs === null && s.stuck === false,
+      JSON.stringify(s));
+  }
+
+  {
+    const s = summarizeSpoolerJobs([job(5000)], NOW);
+    check('one fresh job is not a backlog',
+      s.count === 1 && s.oldestAgeMs === 5000 && s.stuck === false, JSON.stringify(s));
+  }
+
+  {
+    const s = summarizeSpoolerJobs([job(1000, 'Printing', 1), job(2000, 'Printing', 2), job(3000, 'Printing', 3)], NOW);
+    check('three fresh jobs are stuck by the COUNT rule alone',
+      s.count === 3 && s.stuck === true && s.oldestAgeMs === 3000, JSON.stringify(s));
+  }
+  check('the count threshold is the documented three', SPOOLER_BACKLOG_JOBS === 3);
+
+  {
+    const s = summarizeSpoolerJobs([job(120000, 'Printing', 1), job(1000, 'Printing', 2)], NOW);
+    check('two jobs with an old one are stuck by the AGE rule',
+      s.count === 2 && s.oldestAgeMs === 120000 && s.stuck === true, JSON.stringify(s));
+  }
+  // The boundary, both sides.
+  check(`exactly ${SPOOLER_STUCK_MS}ms old is stuck`,
+    summarizeSpoolerJobs([job(SPOOLER_STUCK_MS)], NOW).stuck === true);
+  check('one millisecond younger is not',
+    summarizeSpoolerJobs([job(SPOOLER_STUCK_MS - 1)], NOW).stuck === false);
+
+  // Status tokens: a paper-out can sit on a single fresh job, which is exactly
+  // the "looks perfectly healthy" case.
+  {
+    const s = summarizeSpoolerJobs([job(2000, 'PaperOut', 1), job(1000, 'Printing, Retained', 2)], NOW);
+    check('a PaperOut job is stuck even when fresh and alone in its status',
+      s.stuck === true && s.errorStatuses.length === 1 && s.errorStatuses[0] === 'PaperOut',
+      JSON.stringify(s));
+  }
+  check('a plain Printing job reports no error status',
+    summarizeSpoolerJobs([job(1000, 'Printing')], NOW).errorStatuses.length === 0);
+  check('a comma-separated flags string is split, and spacing/case tolerated',
+    summarizeSpoolerJobs([job(1000, 'Printing, User Intervention')], NOW).errorStatuses.length === 1);
+
+  // UNKNOWN must never collapse into zero — in either field.
+  for (const bad of [null, undefined, {}, 'not json', 42]) {
+    const s = summarizeSpoolerJobs(bad, NOW);
+    check(`${JSON.stringify(bad) === undefined ? 'undefined' : JSON.stringify(bad)} reports unknown, never a zero count`,
+      s.unknown === true && s.count === null && s.oldestAgeMs === null && s.stuck === false,
+      JSON.stringify(s));
+  }
+
+  // Unparseable times must not disarm the count rule.
+  {
+    const s = summarizeSpoolerJobs(
+      [{ id: '1', status: 'Printing', submitted: '' },
+       { id: '2', status: 'Printing', submitted: 'garbage' },
+       { id: '3', status: 'Printing' }], NOW);
+    check('three jobs with unreadable timestamps are still a backlog',
+      s.count === 3 && s.oldestAgeMs === null && s.stuck === true, JSON.stringify(s));
+  }
+
+  // Clock skew: a future-dated job must never fake a stuck queue.
+  {
+    const s = summarizeSpoolerJobs([job(-30000)], NOW);
+    check('a job submitted 30s in the future clamps to age 0, never negative',
+      s.oldestAgeMs === 0 && s.stuck === false, JSON.stringify(s));
+  }
+
+  // The message has to carry what the static WARNING_DESCRIPTIONS table can't.
+  {
+    const s = summarizeSpoolerJobs([job(192000, 'PaperOut', 1), job(5000, 'Printing', 2),
+      job(6000, 'Printing', 3), job(7000, 'Printing', 4)], NOW);
+    const msg = spoolerBacklogMessage('Brother QL-820NWB', s);
+    check('the backlog message names the count', /\b4 print jobs\b/.test(msg), msg);
+    check('...the printer', msg.includes('Brother QL-820NWB'), msg);
+    check('...the oldest job’s age', /oldest 3m 12s/.test(msg), msg);
+    check('...the spooler status', /status: PaperOut/.test(msg), msg);
+    check('...and points at the button', /clear the queue/i.test(msg), msg);
+  }
+  {
+    const s = summarizeSpoolerJobs([job(1000, 'Printing', 1), job(2000, 'Printing', 2), job(3000, 'Printing', 3)], NOW);
+    const msg = spoolerBacklogMessage('Test', s);
+    check('with no error status the message omits the status clause',
+      !/status:/.test(msg), msg);
+  }
+  {
+    const s = summarizeSpoolerJobs([{ id: '1', status: 'Printing', submitted: '' },
+      { id: '2', status: 'Printing', submitted: '' }, { id: '3', status: 'Printing', submitted: '' }], NOW);
+    check('with no readable time the message omits the age clause',
+      !/oldest/.test(spoolerBacklogMessage('Test', s)), spoolerBacklogMessage('Test', s));
+  }
+
+  // The clear-queue parser: a garbled result must not read as "removed 0".
+  check('a well-formed clear result parses', (() => {
+    const r = parseClearQueueResult('{"ok":true,"removed":4,"failed":0}');
+    return r && r.removed === 4 && r.failed === 0;
+  })());
+  for (const bad of ['', 'null', 'not json', '{"ok":false}', '{"ok":true,"removed":-1,"failed":0}',
+    '{"ok":true,"removed":"4","failed":0}', '{"ok":true,"removed":4}']) {
+    check(`clear result ${JSON.stringify(bad)} is rejected, not read as zero`,
+      parseClearQueueResult(bad) === null);
+  }
+
+  // Wiring: the probe must never be reachable from the print path, and the
+  // dashboard must not swallow the dynamic backlog message.
+  const spoolSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('checkPrinterWarnings still has exactly one caller (GET /health)',
+    (spoolSrc.match(/await checkPrinterWarnings\(\)/g) || []).length === 1,
+    'a second caller would put a PowerShell probe on the print path');
+  check('nothing on the print path reads the queue',
+    (spoolSrc.match(/readSpoolerQueue\(/g) || []).length === 2,
+    'the definition plus its single call inside checkPrinterWarnings');
+  check('clearPrintQueue is only ever reachable from its own route',
+    (spoolSrc.match(/clearPrintQueue\(/g) || []).length === 2,
+    'the definition plus the POST /printer/clear-queue handler');
+  check('neither queue script interpolates anything',
+    !/PS_(READ|CLEAR)_QUEUE = `[^`]*\$\{/.test(spoolSrc));
+  check('both queue scripts read the printer from the environment',
+    (spoolSrc.match(/\$env:AWANA_QUEUE_PRINTER/g) || []).length === 2);
+  check('the queue projection carries only id, status and submitted time',
+    /\$jobs \+= @\{ id = \[string\]\$j\.Id; status = \[string\]\$j\.JobStatus; submitted = \$sub \}/.test(spoolSrc),
+    'a spool job title or a Windows username must never reach CORS-readable /health');
+  check('neither queue script names DocumentName or UserName',
+    !/\$j\.(DocumentName|UserName)/.test(spoolSrc));
+  const dash = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'public', 'index.html'), 'utf8');
+  check('the dashboard registers spoolerCheckFailed as a static description',
+    /spoolerCheckFailed:/.test(dash));
+  check('...but NOT spoolerBacklog, whose numbers must reach the screen',
+    !/spoolerBacklog:/.test(dash));
+  check('a backlog turns the traffic light red, not a mild yellow',
+    /hasError[\s\S]{0,220}spoolerBacklog/.test(dash));
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 __suiteFinished = true;

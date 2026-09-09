@@ -5083,8 +5083,187 @@ app.get('/config/church', (req, res) => {
 });
 
 // ── Enhanced health check ────────────────────────────────────────────────────
-let cachedPrinterCheck = { warnings: [], checkedAt: 0 };
+let cachedPrinterCheck = { warnings: [], checkedAt: 0, spooler: null };
 const PRINTER_CHECK_INTERVAL = 60000; // 60 seconds
+
+// ── Windows spooler backlog (#256) ───────────────────────────────────────────
+// checkPrinterWarnings only ever asked Get-Printer whether the configured name
+// still EXISTS, so a paper-out or a jam looked perfectly healthy from the
+// dashboard while jobs piled up behind it and everyone believed the labels had
+// printed. These thresholds and the probe below close that gap.
+//
+// Deliberately module constants, not config.json keys: nothing about a jam is
+// operator-tunable, and staying out of config keeps this away from
+// SECRET_CONFIG_KEYS, applySavedConfig and the /config export entirely.
+const SPOOLER_BACKLOG_JOBS = 3;             // three or more jobs waiting
+const SPOOLER_STUCK_MS = 90000;             // or one job older than 90s
+// Half the Get-Printer probe's 8000ms on purpose. checkPrinterWarnings is
+// awaited by GET /health on a single-threaded server where printImage's
+// execSync can already block ~31s, so /health's worst case must not double.
+const SPOOLER_PROBE_TIMEOUT_MS = 4000;
+const SPOOLER_CLEAR_TIMEOUT_MS = 15000;
+// JobStatus is a comma-separated flags string. A paper-out can sit on a SINGLE
+// job for well under 90 seconds, which is exactly the "looks healthy" case
+// this item exists for, so an error status is a third stuck trigger.
+const SPOOLER_ERROR_TOKENS = ['error', 'offline', 'paperout', 'paused', 'blocked', 'userintervention'];
+
+// Reads the queue. Its own script, its own temp file, its own execSync — the
+// raw queue commands never touch printImage/sendRawToPrinter or POST /print.
+//
+// SECURITY: the printer name is validated by isSafePrinterName AND handed to
+// the child as an environment variable read back with $env:, exactly as
+// printPdf does. Nothing is interpolated into the script text or the command
+// line — validation alone is the weaker half of the 5.2.0 fix.
+const PS_READ_QUEUE = `
+$ErrorActionPreference = 'Stop'
+$p = $env:AWANA_QUEUE_PRINTER
+$jobs = @()
+foreach ($j in @(Get-PrintJob -PrinterName $p)) {
+  $sub = ''
+  if ($j.SubmittedTime) { $sub = $j.SubmittedTime.ToUniversalTime().ToString('o') }
+  $jobs += @{ id = [string]$j.Id; status = [string]$j.JobStatus; submitted = $sub }
+}
+ConvertTo-Json -Compress -Depth 4 -InputObject @{ ok = $true; jobs = $jobs }
+`.trim();
+
+// Same discipline, the write half. Remove-PrintJob has NO whole-printer or
+// wildcard form — -ID is mandatory in the printerName parameter set — so the
+// queue is enumerated and each job removed through -InputObject. The per-job
+// try/catch is deliberate: it turns the common race (a job finishing between
+// enumerate and remove) and the rare foreign-user job that needs "Manage
+// Documents" into an honest `failed` count instead of an exception.
+const PS_CLEAR_QUEUE = `
+$ErrorActionPreference = 'Stop'
+$p = $env:AWANA_QUEUE_PRINTER
+$removed = 0
+$failed = 0
+foreach ($j in @(Get-PrintJob -PrinterName $p)) {
+  try { Remove-PrintJob -InputObject $j -ErrorAction Stop; $removed++ } catch { $failed++ }
+}
+ConvertTo-Json -Compress -InputObject @{ ok = $true; removed = $removed; failed = $failed }
+`.trim();
+
+// Returns an array of { id, status, submitted } jobs, or null meaning UNKNOWN.
+// NEVER [] on failure: an empty queue and an unreadable queue are opposite
+// facts, and collapsing "I could not read it" into a zero is the whole bug.
+function readSpoolerQueue(printerName) {
+  if (process.platform !== 'win32') return null;
+  // isSafePrinterName returns true for '' ("use the default"), so the
+  // truthiness check comes first — -PrinterName is mandatory and cannot take ''.
+  if (!printerName || !isSafePrinterName(printerName)) return null;
+  // 'awana-print' keeps the file inside sweepOrphanedTempFiles' regex, so a
+  // crash mid-probe leaves nothing behind.
+  const psPath = tmpFilePath('awana-print', 'ps1');
+  try {
+    fs.writeFileSync(psPath, PS_READ_QUEUE, 'utf8');
+    const raw = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: SPOOLER_PROBE_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { AWANA_QUEUE_PRINTER: printerName }),
+    });
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok !== true || !Array.isArray(parsed.jobs)) return null;
+    return parsed.jobs;
+  } catch {
+    return null;
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
+}
+
+// Pure verdict, so the one piece of judgement here is exhaustively testable on
+// a machine with no spooler at all — which is every CI runner this repo has.
+function summarizeSpoolerJobs(jobs, now = Date.now()) {
+  if (!Array.isArray(jobs)) {
+    return { unknown: true, count: null, oldestAgeMs: null, stuck: false, errorStatuses: [] };
+  }
+  let oldestAgeMs = null;
+  const errorStatuses = [];
+  for (const j of jobs) {
+    const t = (j && j.submitted) ? Date.parse(j.submitted) : NaN;
+    if (Number.isFinite(t)) {
+      // Clamped: clock skew or a future-dated job must never fake a stuck
+      // queue or report a negative age.
+      const age = Math.max(0, now - t);
+      if (oldestAgeMs === null || age > oldestAgeMs) oldestAgeMs = age;
+    }
+    for (const part of String((j && j.status) || '').split(',')) {
+      const spelling = part.trim();
+      if (!spelling) continue;
+      const norm = spelling.toLowerCase().replace(/[\s_]/g, '');
+      if (SPOOLER_ERROR_TOKENS.includes(norm) && !errorStatuses.includes(spelling)) {
+        errorStatuses.push(spelling);
+      }
+    }
+  }
+  const count = jobs.length;
+  const stuck = count >= SPOOLER_BACKLOG_JOBS
+    || (oldestAgeMs !== null && oldestAgeMs >= SPOOLER_STUCK_MS)
+    || errorStatuses.length > 0;
+  return { unknown: false, count, oldestAgeMs, stuck, errorStatuses };
+}
+
+// One sentence built from the real numbers. Deliberately NOT registered in the
+// dashboard's WARNING_DESCRIPTIONS table — that table is static literals, and
+// a static literal would swallow the count, the age and the status.
+function spoolerBacklogMessage(printerName, s) {
+  const n = s.count;
+  const parts = [`${n} print job${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} waiting on "${printerName}"`];
+  const detail = [];
+  if (s.oldestAgeMs !== null) {
+    const secs = Math.round(s.oldestAgeMs / 1000);
+    detail.push(`oldest ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`}`);
+  }
+  if (s.errorStatuses.length) detail.push(`status: ${s.errorStatuses.join(', ')}`);
+  if (detail.length) parts.push(` (${detail.join(', ')})`);
+  return parts.join('')
+    + '. Labels are NOT coming out — check paper and power, then clear the queue on the Diagnostics tab.';
+}
+
+// Parses PS_CLEAR_QUEUE's output. null unless both counters came back as real
+// non-negative integers — a garbled result must not be reported as "removed 0".
+function parseClearQueueResult(raw) {
+  try {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) return null;
+    const parsed = JSON.parse(text);
+    if (!parsed || parsed.ok !== true) return null;
+    const removed = parsed.removed, failed = parsed.failed;
+    if (!Number.isInteger(removed) || removed < 0) return null;
+    if (!Number.isInteger(failed) || failed < 0) return null;
+    return { removed, failed };
+  } catch {
+    return null;
+  }
+}
+
+// Manual only: never called by anything automatic, so nothing ever clears the
+// queue on its own. Returns { removed, failed } or null.
+function clearPrintQueue(printerName) {
+  if (process.platform !== 'win32') return null;
+  if (!printerName || !isSafePrinterName(printerName)) return null;
+  const psPath = tmpFilePath('awana-print', 'ps1');
+  try {
+    fs.writeFileSync(psPath, PS_CLEAR_QUEUE, 'utf8');
+    const raw = execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psPath}"`, {
+      timeout: SPOOLER_CLEAR_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: 'utf8',
+      env: Object.assign({}, process.env, { AWANA_QUEUE_PRINTER: printerName }),
+    });
+    return parseClearQueueResult(raw);
+  } catch {
+    return null;
+  } finally {
+    fs.unlink(psPath, () => {});
+  }
+}
+
+const SPOOLER_UNKNOWN = Object.freeze(
+  { unknown: true, count: null, oldestAgeMs: null, stuck: false, errorStatuses: [] });
 
 async function checkPrinterWarnings() {
   const now = Date.now();
@@ -5112,7 +5291,9 @@ async function checkPrinterWarnings() {
   } catch (e) { /* ignore */ }
 
   // Check printer (Windows only)
+  let spooler = SPOOLER_UNKNOWN;
   if (PRINTER_NAME && process.platform === 'win32') {
+    let printerFound = false;
     try {
       const raw = execSync(
         'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Printer | Select-Object Name | ConvertTo-Json -Compress"',
@@ -5121,15 +5302,33 @@ async function checkPrinterWarnings() {
       let parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) parsed = [parsed];
       const names = parsed.map(p => p.Name);
-      if (!names.includes(PRINTER_NAME)) {
+      printerFound = names.includes(PRINTER_NAME);
+      if (!printerFound) {
         warnings.push({ type: 'printerNotFound', message: `Printer "${PRINTER_NAME}" not found` });
       }
     } catch (e) {
       warnings.push({ type: 'printerCheckFailed', message: 'Could not query printers' });
     }
+
+    // The spooler probe (#256) sits OUTSIDE that try/catch so a queue failure
+    // can never be mislabelled printerCheckFailed, and is skipped entirely
+    // when the printer itself is missing — the operator wants one clear
+    // warning, not two confusing ones, and /health's worst-case synchronous
+    // block must not double.
+    if (printerFound) {
+      spooler = summarizeSpoolerJobs(readSpoolerQueue(PRINTER_NAME), now);
+      if (spooler.unknown) {
+        warnings.push({
+          type: 'spoolerCheckFailed',
+          message: `Could not read the print queue for "${PRINTER_NAME}" — the backlog is unknown, not zero.`,
+        });
+      } else if (spooler.stuck) {
+        warnings.push({ type: 'spoolerBacklog', message: spoolerBacklogMessage(PRINTER_NAME, spooler) });
+      }
+    }
   }
 
-  cachedPrinterCheck = { warnings, checkedAt: now };
+  cachedPrinterCheck = { warnings, checkedAt: now, spooler };
   return warnings;
 }
 
@@ -5311,6 +5510,14 @@ app.get('/health', async (req, res) => {
     // the exact Win32 error when the RAW path fails — "it just prints
     // normal" must be diagnosable from the dashboard.
     musicalTune: { enabled: config.musicalPrinter === true, last: lastTune },
+    // Windows spooler backlog (#256), as NUMBERS rather than prose, so the
+    // Night Status card and any future UI don't have to parse a sentence.
+    // Counts, ages and spooler status tokens only — deliberately never a
+    // DocumentName or a UserName: /health is CORS-readable from the check-in
+    // site, which is exactly why the extension folder path is loopback-gated
+    // just above. `unknown: true` means the queue could not be read; it is
+    // never a zero.
+    spooler: cachedPrinterCheck.spooler || SPOOLER_UNKNOWN,
     extensionRunning: lastExtensionReport,
     lastCanary,
     printFailures: printFailures.length,
@@ -5747,6 +5954,44 @@ app.post('/play-tune', (req, res) => {
   const tune = String((req.body || {}).tune || '') || undefined;
   const ok = playTuneIfEnabled(wanted || PRINTER_NAME, tune);
   res.json({ ok, tune: lastTune ? lastTune.tune : null, error: !ok && lastTune ? lastTune.error : undefined });
+});
+
+// Clear a jammed printer's backlog (#256). Gated the way /play-tune and
+// /rehearsal are — trusted origin only, NOT merely the phone PIN: a volunteer's
+// phone on the venue Wi-Fi must not be able to bin labels that are about to
+// print. Confirm-gated too, and never invoked automatically by anything.
+//
+// The body is validated BEFORE the platform short-circuit, exactly as
+// POST /print-pdf does, so the 400s stay observable from Linux CI.
+app.post('/printer/clear-queue', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The print queue can only be cleared from the dashboard on this computer' });
+  }
+  const wanted = String((req.body || {}).printerName || '').trim();
+  if (wanted && !isSafePrinterName(wanted)) {
+    return res.status(400).json({ error: 'printerName contains unsupported characters' });
+  }
+  if ((req.body || {}).confirm !== true) {
+    return res.status(400).json({ error: 'confirm:true is required' });
+  }
+  const target = wanted || PRINTER_NAME;
+  if (!target || !isSafePrinterName(target)) {
+    return res.status(400).json({ error: 'No usable printer is configured' });
+  }
+  if (process.platform !== 'win32') {
+    return res.status(501).json({ error: 'Clearing the print queue requires Windows' });
+  }
+  try {
+    const result = clearPrintQueue(target);
+    if (!result) return res.status(500).json({ error: 'Could not clear the print queue' });
+    // So the next /health tells the truth instead of a 60s-stale backlog.
+    cachedPrinterCheck.checkedAt = 0;
+    console.log(`[queue] Cleared ${result.removed} job(s) on ${target}${result.failed ? `, ${result.failed} refused` : ''}`);
+    return res.json({ ok: true, printer: target, removed: result.removed, failed: result.failed });
+  } catch (e) {
+    console.error('[queue] clear failed:', e.message);
+    return res.status(500).json({ error: 'Could not clear the print queue' });
+  }
 });
 
 // ── Per-club label templates (#1) — endpoints ─────────────────────────────────
@@ -6254,6 +6499,11 @@ module.exports = {
   collectibleIndexForDate, COLLECTIBLE_SERIES,
   // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
   buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION,
+  // Spooler backlog (#256). The verdict and both parsers are PURE so the one
+  // piece of judgement here is exhaustively testable on a machine with no
+  // Windows spooler at all — which is every CI runner this repo has.
+  summarizeSpoolerJobs, spoolerBacklogMessage, parseClearQueueResult,
+  SPOOLER_BACKLOG_JOBS, SPOOLER_STUCK_MS,
   // Exported for the golden-image suite (scripts/test-label-golden.cjs), which
   // has to render field combinations GET /preview cannot express — a visitor
   // with allergies, a step-up night, an all-fields-on torture case. Going

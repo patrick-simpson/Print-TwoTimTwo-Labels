@@ -539,6 +539,7 @@
         <div class="card-header">
           <span>System Diagnostics</span>
           <span>
+            <button class="btn btn-secondary btn-sm" onclick="clearPrintQueue()">Clear print queue</button>
             <button class="btn btn-secondary btn-sm" onclick="playTune()">Play test tune</button>
             <button class="btn btn-primary btn-sm" onclick="runDiagnostics()">Run Diagnostics</button>
           </span>
@@ -663,7 +664,11 @@ var WARNING_DESCRIPTIONS = {
   csvEmpty: 'The roster file has no data. Labels will print without allergy or birthday info.',
   csvStale: 'The roster data hasn\'t been updated recently. It may be missing new kids or allergy changes.',
   printerNotFound: 'The configured printer was not found. Check that it\'s connected and turned on.',
-  printerCheckFailed: 'Could not check printer status. This may resolve on its own.'
+  printerCheckFailed: 'Could not check printer status. This may resolve on its own.',
+  // spoolerBacklog is deliberately NOT in this table: its message carries the
+  // live job count, the oldest job's age and the spooler status, and a static
+  // literal here would swallow all three.
+  spoolerCheckFailed: 'Could not read the Windows print queue, so a backlog would be invisible. The queue length is unknown, not zero.'
 };
 
 // Load health status
@@ -731,7 +736,11 @@ function loadHealth() {
     var tt = document.getElementById('traffic-text');
     var tdet = document.getElementById('traffic-detail');
 
-    var hasError = warnings.some(function(w) { return w.type === 'printerNotFound'; });
+    // A jam is at least as bad as a missing printer: in both cases nothing is
+    // coming out of the printer, so it reads RED rather than a mild yellow.
+    var hasError = warnings.some(function(w) {
+      return w.type === 'printerNotFound' || w.type === 'spoolerBacklog';
+    });
     var hasWarning = warnings.length > 0;
 
     if (hasError) {
@@ -1199,6 +1208,25 @@ function playTune() {
     .then(function(res) {
       if (res.ok) return;
       alert(res.d && res.d.error ? res.d.error : 'Could not play the tune.');
+    })
+    .catch(function() { alert('Could not reach the server.'); });
+}
+
+// Clear a jammed printer's backlog (#256). Stays enabled unconditionally — a
+// queue the probe could not read is precisely when the operator needs it.
+function clearPrintQueue() {
+  if (!confirm('Clear every waiting print job on this printer?\n\nAny label still in the queue will NOT print. Use this after a jam or a paper-out, once the printer is fixed.')) return;
+  fetch(BASE + '/printer/clear-queue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true })
+  })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) { alert(res.d && res.d.error ? res.d.error : 'Could not clear the print queue.'); return; }
+      var f = res.d.failed ? ' (' + res.d.failed + ' could not be removed)' : '';
+      alert('Removed ' + res.d.removed + ' waiting job' + (res.d.removed === 1 ? '' : 's') + f + '.');
+      loadHealth();
     })
     .catch(function() { alert('Could not reach the server.'); });
 }
