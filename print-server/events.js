@@ -717,6 +717,29 @@ const LOGIN_PASSPHRASE_MAX = 128;
 // What the lobby-slides publish token must look like (server.js validates the
 // operator's value with it; the bundle refuses to carry anything else).
 const SLIDES_TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+// The optional FLEET-CONFIG URL the same login can hand a new screen (#394):
+// where that screen fetches its display settings JSON from — the address the
+// display already accepts as `?config=<url>`. NOT a secret; it rides inside
+// the sealed bundle only because it is already there, which turns "type the
+// Pusher key, log in, then hand-configure weather/calendar/widgets" into one
+// step. https ONLY (a display served over https cannot fetch http without
+// mixed-content blocking, and an http URL is trivially tamperable in a church
+// lobby) and length-capped, with credentials-in-URL refused. Anything else is
+// DROPPED — a screen that gets no config URL is exactly today's behaviour,
+// while a bad one would be a fleet-wide fetch failure nobody would think to
+// look for.
+const PROVISION_CONFIG_URL_MAX = 200;
+function isValidFleetConfigUrl(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s || s.length > PROVISION_CONFIG_URL_MAX) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(s)) return false;
+  let url;
+  try { url = new URL(s); } catch { return false; }
+  if (url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+  return true;
+}
 
 function provisionChannelFor(channel) {
   return `cache-${channel}-provision`;
@@ -799,17 +822,29 @@ function getDisplayLoginState() {
  * configured, or no usable display key. Publishing a bundle with an EMPTY
  * display key would make every logged-in screen drop its key and fall back to
  * plaintext — an authenticated downgrade — so the whole frame fails closed.
+ *
+ * FAIL CLOSED IS THE WHOLE RULE HERE: if the seal cannot be produced, nothing
+ * is published — never a plaintext bundle, never a partial one. The optional
+ * configUrl rides inside the same sealed bundle and can never change that: an
+ * unusable URL becomes '', it never turns a good frame into no frame.
  */
-function buildProvisionFrame({ displayKey, slidesPublishToken, issuedAt } = {}) {
+function buildProvisionFrame({ displayKey, slidesPublishToken, issuedAt, configUrl } = {}) {
   if (!loginState) return null;
   const key = String(displayKey == null ? '' : displayKey).trim();
   if (!isValidDisplayKey(key)) return null;
   const token = String(slidesPublishToken == null ? '' : slidesPublishToken).trim();
+  const url = String(configUrl == null ? '' : configUrl).trim();
   const bundle = {
     v: 1,
     displayKey: key,
     slidesPublishToken: SLIDES_TOKEN_RE.test(token) ? token : '',
     issuedAt: issuedAt || nowIso(),
+    // ALWAYS present, '' when unset or refused — the empty string is how a
+    // cleared URL propagates to screens that already applied one. (A bundle
+    // from a publisher that predates the field simply omits it, and a display
+    // treats that as "no news" rather than a clear.) A junk value is coerced
+    // to '' rather than shipped, exactly like the publish token above.
+    configUrl: isValidFleetConfigUrl(url) ? url : '',
   };
   const envelope = sealWith(loginState.keyBytes, loginState.kid, PROVISION_EVENT, bundle);
   if (!envelope) return null;
@@ -968,6 +1003,8 @@ module.exports = {
   LOGIN_PASSPHRASE_MIN,
   LOGIN_PASSPHRASE_MAX,
   SLIDES_TOKEN_RE,
+  PROVISION_CONFIG_URL_MAX,
+  isValidFleetConfigUrl,
   provisionChannelFor,
   normalizePassphrase,
   isValidLoginPassphrase,

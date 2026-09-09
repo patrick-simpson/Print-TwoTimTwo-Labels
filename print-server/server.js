@@ -5373,6 +5373,11 @@ async function publishProvision() {
     displayKey: config.displayKey,
     slidesPublishToken: config.slidesPublishToken || '',
     issuedAt: new Date().toISOString(),
+    // NON-SECRET (#394): where a screen fetches its display settings JSON.
+    // It rides inside the same sealed bundle purely because the bundle is
+    // already going there — one passphrase now sets a replacement screen up
+    // completely instead of leaving weather/calendar/widgets to be typed.
+    configUrl: config.fleetConfigUrl || '',
   });
   if (!frame) return false;
   const ok = await events.publish(pusher, PROVISION_CHANNEL, events.PROVISION_EVENT, frame);
@@ -6171,7 +6176,7 @@ app.post('/config', (req, res) => {
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
     musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
-    trophyBand,
+    trophyBand, fleetConfigUrl,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
@@ -6262,6 +6267,25 @@ app.post('/config', (req, res) => {
           next.displayLoginSalt = events.generateLoginSalt();
         }
         next.displayLoginPassphrase = wanted;
+      }
+    }
+    // The fleet-config URL handed to screens by the display login (#394).
+    // NOT a secret — it is the same address an operator can already put in a
+    // screen's `?config=` — but it is https-only and length-capped here, at
+    // the point it is PERSISTED, so a bad value can never be poisoned once
+    // and shipped to every screen on the next provision heartbeat. Clearing
+    // it deletes the key and the next frame carries '' , which is how a
+    // cleared URL reaches screens that already applied one.
+    if (fleetConfigUrl !== undefined) {
+      const wanted = String(fleetConfigUrl).trim();
+      if (wanted === '') {
+        delete next.fleetConfigUrl;
+      } else if (!events.isValidFleetConfigUrl(wanted)) {
+        return res.status(400).json({
+          error: `Settings URL must be an https:// link of at most ${events.PROVISION_CONFIG_URL_MAX} characters`,
+        });
+      } else {
+        next.fleetConfigUrl = wanted;
       }
     }
     // Binding beyond loopback is an explicit choice, not a default. Takes

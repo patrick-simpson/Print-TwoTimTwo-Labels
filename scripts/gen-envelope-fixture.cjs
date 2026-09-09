@@ -83,6 +83,10 @@ const provisionBundle = {
   displayKey: TEST_KEY,
   slidesPublishToken: 'tok_AbCdEfGhIjKlMnOpQrStUvWx',
   issuedAt: '2026-09-16T22:00:00.000Z',
+  // NON-SECRET (#394): the fleet-config URL the same login hands a screen.
+  // Key order matters — both repos compare the opened bundle to this object
+  // verbatim — so it goes LAST, exactly where buildProvisionFrame puts it.
+  configUrl: 'https://example.org/awana-display.json',
 };
 const provisionFrame = events.buildProvisionFrame(provisionBundle);
 if (!provisionFrame) {
@@ -100,7 +104,8 @@ const provision = {
     passphraseNormalization: 'trim, then Unicode NFKC, then UTF-8',
     keyBytes: 32,
   },
-  bundleShape: '{ v:1, displayKey (base64 32 B), slidesPublishToken (\'\' or 24-64 [A-Za-z0-9_-]), issuedAt (ISO 8601) }',
+  bundleShape: '{ v:1, displayKey (base64 32 B), slidesPublishToken (\'\' or 24-64 [A-Za-z0-9_-]), issuedAt (ISO 8601), configUrl (\'\' or an https URL of at most 200 chars) }',
+  configUrlRule: 'NON-SECRET. https only, <=200 characters, no credentials in the URL; anything else is coerced to the empty string by the publisher and refused by the consumer. It is applied through the display\'s existing remote-config path (the one ?config= uses) and lands in its OWN storage entry, never in the settings object.',
   replayRule: 'a display ignores a bundle whose issuedAt is older than the last one it applied',
   testPassphrase: TEST_PASSPHRASE,
   testSalt: TEST_SALT,

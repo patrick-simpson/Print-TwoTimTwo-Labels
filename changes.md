@@ -1,4 +1,17 @@
-﻿## [6.12.0] - 2026-09-09
+﻿## [6.13.0] - 2026-09-09
+The display login can hand a new screen its settings address too, not just the secrets.
+
+**Setting up a replacement screen was three jobs.** Type the Pusher key, log in with the passphrase, then hand-configure weather location, calendar URL and corner widgets. Settings → Display login now has an optional **screen settings URL**: an https link to the display-settings JSON a screen already accepts as `?config=`. It travels inside the same sealed `provision` bundle the display key and publish token already ride, so one passphrase sets a screen up completely.
+
+**It is NOT a secret, and the code says so out loud.** It is an address, not a credential — a public JSON file of display preferences, never children's data. It rides inside the sealed bundle only because that bundle is already going to that screen; nothing about the envelope, the pad ladder or `ENCRYPTED_EVENTS` moved. On the display it lands in **its own storage entry** and is applied through the exact remote-config path `?config=` already uses, so it never touches the settings object and therefore can never leave in a Settings export.
+
+**https only, 200 characters, no credentials in the URL** — validated both where it is persisted (`POST /config` answers a clear 400, and the dashboard now shows the server's reason instead of a generic "saving failed") and again where it is sealed. A value that fails is coerced to the empty string; it can never turn a good frame into no frame. Plain `http` is refused because a screen served over https cannot fetch it at all, and because an unauthenticated address is the one part of this a lobby network could rewrite.
+
+**The fail-closed rule is untouched, and is now pinned against this field.** No login, no frame. No display key, no frame — publishing a bundle with an empty key would tell every logged-in screen to drop its key, an authenticated downgrade. `npm run test:envelope` proves both again with a config URL present, that a bad URL never becomes a fatal frame, and that the URL is not readable on the wire. The frame still seals onto the same 2048-byte pad rung and stays far under Pusher's ceiling with a 200-character URL and a full publish token.
+
+`envelope-vectors.json` was regenerated with `npm run gen:envelope-fixture` (which also mirrors it byte-identically into Awana-Check-in-Display) — the `provision` section now pins the bundle's key set including `configUrl` and states the rule in the fixture itself. The same regeneration picked up v6.12.0's dated-slide vector, so a sealed slides chunk carrying a show window is now interop-tested too. `npm run test:envelope` gains 18 checks and `npm run test:realtime` 11 (refusal and 400 for http / credentials / over-length, an accepted URL re-provisioning every screen sealed, clearing it shipping the empty string, and `/health` never carrying it to a CORS-readable caller). 19 suites, 0 failures.
+
+## [6.12.0] - 2026-09-09
 A typed slide can carry a show-until date, so last month's announcement retires itself.
 
 **"AWANA STORE NEXT WEEK" is still on the lobby TV in November.** An operator types a dated announcement, the night happens, and nobody goes back to delete the slide. A text slide now takes an optional **show window** — `showFrom` and `showUntil`, either or both — and the deck cleans itself up on every screen at once.

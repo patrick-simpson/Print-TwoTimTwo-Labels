@@ -139,7 +139,7 @@ the display key and the slide-publish token into each one. The server derives a
 32-byte wrapping key from the passphrase with **PBKDF2-SHA256** (600,000
 iterations, a random 16-byte salt minted whenever the passphrase changes,
 passphrase normalised trim → NFKC → UTF-8), seals `{ displayKey,
-slidesPublishToken, issuedAt }` under it with the same AES-256-GCM envelope as
+slidesPublishToken, issuedAt, configUrl }` under it with the same AES-256-GCM envelope as
 every other sealed event, and publishes that frame as `provision` on a Pusher
 **cache channel** (`cache-<channel>-provision`) at startup, on every config
 save and every five minutes. A screen that subscribes gets the last frame at
@@ -163,6 +163,19 @@ What that means for the threat model:
   key are both configured — a frame carrying an empty key would tell every
   logged-in screen to drop its key (an authenticated downgrade). A junk
   publish token is coerced to empty, never shipped.
+- **`configUrl` is not a secret and is not treated as one.** It is the
+  fleet-config address a screen already accepts as `?config=` — a public JSON
+  file of display preferences, never child data — and it rides inside the
+  sealed bundle only because that bundle is already going to that screen. It
+  is **https only**, at most 200 characters, no credentials in the URL,
+  validated where it is persisted *and* where it is sealed; anything else
+  becomes the empty string rather than being shipped, and a bad value can
+  never turn a good frame into no frame. It is not in the server's secret set
+  (it is an address, and hiding it would only make it harder to check), but
+  `/health` does not carry it either — `/health` is CORS-readable from the
+  check-in site and this is nobody's business but the operator's. On the
+  display it lands in its own storage entry, never in the settings object, so
+  it cannot ride a Settings export.
 - **Replay.** Every frame stamps `issuedAt`; a screen ignores a bundle older
   than the one it last applied, so a captured frame cannot roll screens back
   to a rotated key.

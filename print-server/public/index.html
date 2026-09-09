@@ -445,6 +445,22 @@
                 <button type="button" class="btn btn-secondary btn-sm" onclick="clearDisplayLogin()">Clear</button>
               </div>
               <p id="display-login-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
+              <div style="margin-top:10px">
+                <label style="font-size:11px">Screen settings URL (optional)</label>
+                <p style="font-size:11px; color:#64748b; margin-bottom:6px">
+                  Hand every screen its settings file too, so weather, calendar and corner widgets set
+                  themselves up instead of being typed in one at a time. This is the same address a screen
+                  accepts as <code>?config=</code> &mdash; a plain JSON file of display settings, <strong>not</strong>
+                  a secret and never children&rsquo;s data. It rides inside the same sealed login frame simply
+                  because that frame is already going there. <strong>https only</strong>, up to 200 characters;
+                  leave it blank and screens are set up by hand exactly as before. Clearing it here clears it on
+                  every logged-in screen at the next heartbeat.
+                </p>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                  <input type="text" id="settings-fleet-config-url" placeholder="https://example.org/awana-display.json" autocomplete="off" style="flex:1 1 240px">
+                </div>
+                <p style="font-size:10px;color:#94a3b8;margin-top:6px">Saved with <strong>Save Settings</strong> below.</p>
+              </div>
             </div>
             <div style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label style="color:#4caf50">Check-in Features</label>
@@ -1511,6 +1527,7 @@ function loadSettings() {
     // someone to "copy" it into a screen.
     setDisplayKeyState(config.displayKey || '');
     setDisplayLoginState(config.displayLoginPassphrase || '');
+    document.getElementById('settings-fleet-config-url').value = config.fleetConfigUrl || '';
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
     (config.schedule || []).forEach(addScheduleRow);
@@ -1844,10 +1861,18 @@ function saveSettings() {
       enableDrivenCheckin: document.getElementById('settings-driven-checkin').checked,
       lanAccess: document.getElementById('settings-lan-access').checked,
       displayKey: document.getElementById('settings-display-key').value.trim(),
-      displayLoginPassphrase: document.getElementById('settings-display-login').value.trim()
+      displayLoginPassphrase: document.getElementById('settings-display-login').value.trim(),
+      fleetConfigUrl: document.getElementById('settings-fleet-config-url').value.trim()
     })
   }).then(function(r) {
-    if (!r.ok) throw new Error('config save failed');
+    if (!r.ok) {
+      // Surface WHY (e.g. a non-https settings URL) — a generic "saving
+      // failed" leaves the operator retyping a value the server will refuse
+      // again for a reason it already knows.
+      return r.json().catch(function() { return {}; }).then(function(b) {
+        throw new Error(b && b.error ? b.error : 'config save failed');
+      });
+    }
     return fetch(BASE + '/config/schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1859,7 +1884,11 @@ function saveSettings() {
       el.style.display = 'block';
       setTimeout(function() { el.style.display = 'none'; }, 3000);
     }
-  }).catch(function() { alert('Saving settings failed — is the server running?'); });
+  }).catch(function(e) {
+    alert((e && e.message && e.message !== 'config save failed')
+      ? ('Saving settings failed: ' + e.message)
+      : 'Saving settings failed — is the server running?');
+  });
 }
 
 // Night Status — event-bus + selector health from the extended /health payload

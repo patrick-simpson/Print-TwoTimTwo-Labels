@@ -289,6 +289,46 @@ async function main() {
     // ...and put the first one back so later phases can keep using it.
     await post('/config', { displayLoginPassphrase: PASSPHRASE });
     await post('/config', { slidesPublishToken: '' });
+
+    // ── The fleet-config URL (#394) ────────────────────────────────────────
+    // Non-secret, but it is persisted and shipped to every screen, so it is
+    // validated where it is STORED — a poisoned value must never be able to
+    // reach the fleet on the next heartbeat.
+    check('a non-https settings URL is refused with 400 and NOT persisted',
+      (await post('/config', { fleetConfigUrl: 'http://example.org/a.json' })).status === 400
+      && !onDisk().fleetConfigUrl);
+    check('a credentials-in-URL settings URL is refused too',
+      (await post('/config', { fleetConfigUrl: 'https://u:p@example.org/a.json' })).status === 400);
+    check('an over-long settings URL is refused',
+      (await post('/config', { fleetConfigUrl: `https://example.org/${'a'.repeat(200)}` })).status === 400);
+
+    const before3 = provisionFrames().length;
+    check('a valid https settings URL is accepted',
+      (await post('/config', { fleetConfigUrl: 'https://example.org/awana-display.json' })).status === 200);
+    check('and persisted', onDisk().fleetConfigUrl === 'https://example.org/awana-display.json');
+    await new Promise((r) => setTimeout(r, 50));
+    const f3 = provisionFrames();
+    let opened3 = null;
+    try { opened3 = events.openProvisionForTest(PASSPHRASE, f3[f3.length - 1].payload); } catch (e) { opened3 = { error: e.message }; }
+    check('saving it republishes a bundle carrying it, still sealed',
+      f3.length === before3 + 1 && opened3 && opened3.configUrl === 'https://example.org/awana-display.json',
+      JSON.stringify(opened3));
+    check('the display key still rides the same bundle — the URL changed nothing else',
+      opened3 && opened3.displayKey === KEY);
+    check('the settings URL is not readable on the wire',
+      !JSON.stringify(f3[f3.length - 1].payload).includes('example.org'));
+
+    const before4 = provisionFrames().length;
+    await post('/config', { fleetConfigUrl: '' });
+    await new Promise((r) => setTimeout(r, 50));
+    const f4 = provisionFrames();
+    let opened4 = null;
+    try { opened4 = events.openProvisionForTest(PASSPHRASE, f4[f4.length - 1].payload); } catch (e) { opened4 = { error: e.message }; }
+    check('clearing it deletes the key and ships an EMPTY string, which is how screens clear theirs',
+      !onDisk().fleetConfigUrl && f4.length === before4 + 1 && opened4 && opened4.configUrl === '',
+      JSON.stringify(opened4));
+    check('/health never carries the settings URL to a CORS-readable caller',
+      !JSON.stringify((await j('/health')).body).includes('awana-display.json'));
   }
 
   // ── 3. Names leave this process as ciphertext ──────────────────────────────

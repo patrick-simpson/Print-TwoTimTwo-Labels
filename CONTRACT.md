@@ -246,11 +246,22 @@ provisioned by typing a passphrase instead of pasting keys:
   above, sealed under `PBKDF2-SHA256(NFKC(trim(passphrase)), salt,
   iterations, 32 bytes)` with AAD `utf8("1:provision")`, padded on the
   standard ladder; `kid` is the wrapping key's fingerprint.
-- **Bundle (inside `ct`):** `{ v: 1, displayKey, slidesPublishToken, issuedAt }`
-  — `displayKey` base64 of 32 bytes, `slidesPublishToken` either `""` or
-  24–64 URL-safe characters, `issuedAt` ISO 8601. A display rejects any bundle
-  that fails those shapes and applies nothing; it ignores a bundle whose
+- **Bundle (inside `ct`):** `{ v: 1, displayKey, slidesPublishToken, issuedAt,
+  configUrl }` — `displayKey` base64 of 32 bytes, `slidesPublishToken` either
+  `""` or 24–64 URL-safe characters, `issuedAt` ISO 8601. A display rejects any
+  bundle that fails those shapes and applies nothing; it ignores a bundle whose
   `issuedAt` is older than the last one it applied (replay).
+- **`configUrl` is NOT a secret** — it is the fleet-config address a screen
+  already accepts as `?config=<url>`, a plain JSON file of display settings,
+  and it rides inside the sealed bundle only because the bundle is already
+  going to that screen. `""` or an **https** URL of at most 200 characters with
+  no credentials in it; the publisher coerces anything else to `""` rather than
+  shipping it, and a bad value must never turn a good frame into no frame.
+  `""` means "cleared" and a display clears its stored one; an ABSENT
+  `configUrl` (a publisher that predates the field) means "no news" and a
+  display keeps what it has. The display writes it into its OWN storage entry
+  and applies it through the existing remote-config path — it never enters the
+  settings object, so it can never ride the Settings export or `?config=`.
 - **It is not one of the display-contract events.** It is never routed through
   the event sanitizers, never rendered, and not in the encrypted-events set
   (it is sealed under the wrapping key, not the display key). Opening it only
