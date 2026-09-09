@@ -2,10 +2,11 @@
 //
 // A second, fully independent content script (registered in manifest.json
 // alongside content.js). It periodically pulls a handful of TwoTimTwo's own
-// reports (check-in report, meeting report CSV, color-group points,
-// calendar iCal feed, admin messages, household CSV, handbook PDFs) and
-// POSTs compact, PII-free JSON to the local print server, which is the only
-// publisher on the shared Pusher channel feeding lobby signage / projector.
+// reports (check-in report, meeting report CSV, completed-books report,
+// color-group points, calendar iCal feed, admin messages, household CSV,
+// handbook PDFs) and POSTs compact JSON to the local print server, which is
+// the only publisher on the shared Pusher channel feeding lobby signage /
+// projector.
 //
 // Hard rules:
 //   - Own IIFE, own window.__awanaFeeds* flag — never reads/writes any
@@ -13,10 +14,16 @@
 //   - ES5 style (var/function) to match content.js.
 //   - Must never throw into the page. Every fetch/parse step is guarded;
 //     network/parse failures are logged and swallowed, never surfaced.
-//   - Privacy invariant: only aggregate numbers, team/club names, dates, and
-//     church-authored announcement text ever leave this script. Never child
-//     last names, allergy/contact info, birth years, or calendar
-//     attendee/organizer/location data.
+//   - Privacy invariant: only aggregate numbers, team/club names, dates,
+//     church-authored announcement text and (for the sealed checkout board)
+//     children's FIRST names ever reach the Pusher channel. Never last names,
+//     allergy/contact info, birth years, or calendar attendee/organizer/
+//     location data.
+//   - Two posts DO carry a child's full name, and both go to LOCALHOST ONLY
+//     for a purpose that never reaches the channel: /print-award (the slip a
+//     child is handed) and /feed/completed-books (the trophy band on that
+//     child's next label). The print server keeps both in memory / in its own
+//     print log and publishes neither.
 (function() {
   if (window.__awanaFeedsLoaded) return;
   window.__awanaFeedsLoaded = true;
@@ -694,14 +701,85 @@
     });
   }
 
+  // ── Completed handbooks → the trophy band (#293) ───────────────────────────
+  // Finishing a whole handbook is the biggest thing that happens to an Awana
+  // kid all year, and today it only shows up if the meeting report caught it
+  // and an award slip printed. This posts the recent completions to the print
+  // server, which bands that child's NEXT check-in label so the whole room
+  // sees it when they arrive.
+  //
+  // NAMES: this payload carries a full "First Last" — to localhost only, where
+  // the server keeps it in memory and never publishes it (see the header rule).
+  // Deliberately NO localStorage dedupe: this is idempotent state, not an
+  // action queue. The server merges every pass and decides once per child per
+  // night whether a band prints; a local "already sent" set would suppress the
+  // FEED and collide with the award-slip dedupe.
+  var COMPLETED_BOOKS_LOOKBACK_DAYS = 21;
+  var COMPLETED_BOOKS_MAX = 300;
+
+  // Pure. Returns [{name, book, date}] (possibly empty — an empty report is an
+  // honest fact and simply produces no bands) or null when the shape cannot be
+  // confidently understood, in which case nothing is posted at all.
+  function parseCompletedBooksCsv(text) {
+    if (!text || isLoginPage(text) || !looksLikeCsv(text)) return null;
+    var rows = parseCsvText(text);
+    if (rows.length < 2 || !rows[0]) return null;
+    var header = rows[0];
+    var nameIdx = -1, bookIdx = -1, dateIdx = -1;
+    for (var i = 0; i < header.length; i++) {
+      var h = (header[i] || '').trim().toLowerCase();
+      if (h === 'name') nameIdx = i;
+      else if (h === 'book') bookIdx = i;
+      else if (h === 'date') dateIdx = i;
+    }
+    // Header drift → post nothing rather than guess which column is which.
+    if (nameIdx < 0 || bookIdx < 0) return null;
+    var out = [];
+    for (var r = 1; r < rows.length; r++) {
+      var row = rows[r];
+      if (isFooterOrBlankRow(row)) continue;
+      var name = (row[nameIdx] || '').trim();
+      var book = (row[bookIdx] || '').trim();
+      if (!name || !book) continue;
+      var date = dateIdx >= 0 ? (row[dateIdx] || '').trim() : '';
+      out.push({ name: name.slice(0, 80), book: book.slice(0, 60), date: date.slice(0, 40) });
+    }
+    return out;
+  }
+
+  // NOTE (same caveat as runWorksheets): there is still no purpose-built
+  // "which clubs run at this church" config key, so this reuses
+  // CHURCH_CFG.sharesClubIds as the club-id set.
+  function runCompletedBooks() {
+    // A list of children's names has no business on the wire at 2pm Tuesday —
+    // same reasoning as the checkout feed's window.
+    if (!isInClubWindow()) return;
+    var today = formatDateYMD(new Date());
+    var from = formatDateYMD(new Date(Date.now() - COMPLETED_BOOKS_LOOKBACK_DAYS * 86400000));
+    CHURCH_CFG.sharesClubIds.forEach(function(clubId) {
+      var url = '/report/completed_books?output=csv&club_id=' + encodeURIComponent(clubId) +
+        '&from_date=' + encodeURIComponent(from) + '&to_date=' + encodeURIComponent(today);
+      fetchText(url).then(function(csv) {
+        var rows = parseCompletedBooksCsv(csv);
+        if (!rows || !rows.length) return;
+        // One POST per club; the server MERGES. The from_date/to_date formats
+        // this report accepts are undocumented, so the server's own 14-day
+        // window is the authoritative filter either way.
+        postFeed('/feed/completed-books', { entries: rows.slice(0, COMPLETED_BOOKS_MAX) });
+      });
+    });
+  }
+
   // ── Who is still here (contract v4) ─────────────────────────────────────────
   // /clubber/checkout is not a checkout FORM, it is the live list of children
   // currently checked in — each row has a button to check that child out, and
   // the row disappears once they are. So "who is still here" is simply the set
   // of rows, and needs no departure event to miss.
   //
-  // THIS IS THE ONE FEED THAT CARRIES NAMES. Everything else in this file is
-  // aggregate counters and church copy. First name + club only, and the print
+  // THIS IS THE ONE FEED THAT CARRIES NAMES ONTO THE WIRE. Everything else
+  // published from this file is aggregate counters and church copy; the two
+  // full-name posts (/print-award, /feed/completed-books) stay on localhost
+  // and are never published. First name + club only here, and the print
   // server's buildCheckout() enforces that structurally — a guardian name or a
   // security code cannot get through even if this parser started reading them.
   // The payload is then sealed with AES-256-GCM before it reaches the channel.
@@ -804,7 +882,8 @@
     schedule: 0,
     notice: 0,
     checkout: 0,
-    worksheets: 0
+    worksheets: 0,
+    completedBooks: 0
   };
 
   var TASK_FNS = {
@@ -813,7 +892,8 @@
     schedule: runSchedule,
     notice: runNotice,
     checkout: runCheckout,
-    worksheets: runWorksheets
+    worksheets: runWorksheets,
+    completedBooks: runCompletedBooks
   };
 
   function intervalFor(task) {
@@ -832,6 +912,10 @@
         return isInClubWindow() ? 5 * 60 * 1000 : 30 * 60 * 1000;
       case 'worksheets':
         return 5 * 60 * 1000; // internal guards decide whether it actually fires
+      case 'completedBooks':
+        // Club-night only, same reason as checkout: full names, and the band
+        // is only useful for labels printing tonight.
+        return isInClubWindow() ? 10 * 60 * 1000 : Infinity;
       default:
         return 15 * 60 * 1000;
     }

@@ -30,6 +30,7 @@ const {
   parseAllergies, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
   tonightCheckins, markManualUndo, clearManualUndo, computeTonightStats, isNonCheckinRow, splitFullName,
+  trophyBandFor, TROPHY_BAND_MAX,
 } = require(path.join(__dirname, '..', 'print-server', 'server.js'));
 
 const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
@@ -1569,6 +1570,127 @@ console.log('range reprint (#257) — which of tonight’s rows come back out');
     /reprint-range[\s\S]{0,2600}await new Promise\(done => setTimeout\(done, REPRINT_RANGE_GAP_MS\)\)/.test(rangeSrc));
   check('the range suppresses the musical printer (20 tunes in a burst)',
     /reprintRow\(sel\.rows\[i\], printerName, \{ silent: true \}\)/.test(rangeSrc));
+}
+
+// ── Trophy band (#293): the band text and the completed-books feed ──────────
+// The band is a decoration derived from a scraped CSV, so everything here is
+// about refusing to print a wrong or stale celebration — never about making
+// one print harder.
+console.log('\ntrophy band (#293): band text + completed-books window');
+{
+  feeds._resetForTests();
+
+  check('the band names the book', trophyBandFor('Wingrunner') === 'Finished Wingrunner',
+    trophyBandFor('Wingrunner'));
+  const long = trophyBandFor('W'.repeat(200));
+  check('an over-long book title is clipped to the renderer\'s 48-char extras cap',
+    long.length === TROPHY_BAND_MAX && long.indexOf('Finished ') === 0, `${long.length}: ${long}`);
+  check('the cap really is 48 (the same slice generateLabel applies)', TROPHY_BAND_MAX === 48);
+  for (const bad of ['', '   ', null, undefined, 42, {}, []]) {
+    check(`a malformed title (${JSON.stringify(bad)}) prints no band at all`, trophyBandFor(bad) === '');
+  }
+  check('control characters never reach the label',
+    !/[\u0000-\u001f]/.test(trophyBandFor('Wing\nrun\tner')), JSON.stringify(trophyBandFor('Wing\nrun\tner')));
+
+  // Validation: truncate rather than reject, and drop the rows that cannot be
+  // trusted instead of failing the whole batch.
+  const NOW = Date.parse('2026-09-09T18:30:00Z');
+  check('a non-object body is refused', feeds.validateCompletedBooksBody(null, NOW).ok === false);
+  const noArr = feeds.validateCompletedBooksBody({}, NOW);
+  check('a missing entries array is refused, and says so',
+    noArr.ok === false && /array/.test(noArr.reason), JSON.stringify(noArr));
+  {
+    const many = [];
+    for (let i = 0; i < 600; i++) many.push({ name: `Kid${i} Sample`, book: 'Wingrunner', date: '2026-09-02' });
+    const r = feeds.validateCompletedBooksBody({ entries: many }, NOW);
+    check('an over-cap batch is truncated, never rejected',
+      r.ok === true && r.payload.entries.length === feeds.COMPLETED_BOOKS_MAX,
+      JSON.stringify({ ok: r.ok, n: r.payload && r.payload.entries.length }));
+  }
+  {
+    const r = feeds.validateCompletedBooksBody({ entries: [
+      { name: '', book: 'Wingrunner', date: '2026-09-02' },
+      { name: 'Nameless Book', book: '', date: '2026-09-02' },
+      { name: 'Bad Date', book: 'Wingrunner', date: 'sometime last spring' },
+      { name: 'Future Kid', book: 'Wingrunner', date: '2027-01-01' },
+      { name: 'Good Kid', book: 'Wingrunner', date: '2026-09-02' },
+    ] }, NOW);
+    check('rows with no name, no book, an unreadable date or a future date are dropped — the batch still lands',
+      r.ok === true && r.payload.entries.length === 1 && r.payload.entries[0].key === 'good kid',
+      JSON.stringify(r.payload.entries));
+  }
+
+  // The report's Name-column ordering is undocumented, so both must key alike.
+  check('"Last, First" and "First Last" key the same child',
+    feeds.normalizeChildName('Sample, Testkid') === 'testkid sample'
+    && feeds.normalizeChildName('  Testkid   Sample ') === 'testkid sample',
+    `${feeds.normalizeChildName('Sample, Testkid')} vs ${feeds.normalizeChildName('  Testkid   Sample ')}`);
+
+  check('a readable ISO and US date both parse', feeds.parseBookDate('2026-09-02', NOW) === '2026-09-02'
+    && feeds.parseBookDate('9/2/2026', NOW) === '2026-09-02' && feeds.parseBookDate('9/2/26', NOW) === '2026-09-02');
+  check('an unreadable date is null, never today', feeds.parseBookDate('last Wednesday', NOW) === null
+    && feeds.parseBookDate('', NOW) === null && feeds.parseBookDate('13/40/2026', NOW) === null);
+
+  // The lookup the print path uses.
+  feeds._resetForTests();
+  check('no feed at all means no band (the stock label, instantly)',
+    feeds.getCompletedBook('Testkid Sample', NOW) === null);
+  const sub = feeds.submitCompletedBooks({ entries: [
+    { name: 'Sample, Testkid', book: 'Sparks Wingrunner', date: '2026-09-07' },
+    { name: 'Olddie Sample', book: 'Sparks Hangglider', date: '2026-08-01' },
+  ] }, NOW);
+  check('a well-formed post is accepted', sub.valid === true && sub.throttled === false, JSON.stringify(sub));
+  check('a two-day-old completion matches by either name ordering',
+    (feeds.getCompletedBook('Testkid Sample', NOW) || {}).book === 'Sparks Wingrunner'
+    && (feeds.getCompletedBook('Sample, Testkid', NOW) || {}).book === 'Sparks Wingrunner');
+  check('a completion older than the 14-day window is not carried', feeds.getCompletedBook('Olddie Sample', NOW) === null);
+  check('the second post inside the throttle window is reported, not applied',
+    feeds.submitCompletedBooks({ entries: [{ name: 'Throttled Kid', book: 'Wingrunner', date: '2026-09-07' }] }, NOW).throttled === true
+    && feeds.getCompletedBook('Throttled Kid', NOW) === null);
+  // One POST per club: a second club's payload must MERGE, not replace.
+  const later = NOW + 10000;
+  feeds.submitCompletedBooks({ entries: [{ name: 'Second Club', book: 'Grand Prix', date: '2026-09-07' }] }, later);
+  check('a second club\'s post merges rather than replacing the first',
+    (feeds.getCompletedBook('Testkid Sample', later) || {}).book === 'Sparks Wingrunner'
+    && (feeds.getCompletedBook('Second Club', later) || {}).book === 'Grand Prix');
+  feeds.submitCompletedBooks({ entries: [{ name: 'Testkid Sample', book: 'Sparks Skystormer', date: '2026-09-09' }] }, later + 10000);
+  check('a newer completion for the same child wins',
+    (feeds.getCompletedBook('Testkid Sample', later + 10000) || {}).book === 'Sparks Skystormer');
+  // Read-time window check: a server left running for a month must not still
+  // be banding September.
+  check('the window is re-checked on READ, not only on write',
+    feeds.getCompletedBook('Testkid Sample', NOW + 30 * 24 * 60 * 60 * 1000) === null);
+  feeds._resetForTests();
+  check('_resetForTests clears the feed', feeds.getCompletedBook('Testkid Sample', NOW) === null);
+
+  // Wiring: this feed must never reach the public channel, and the band must
+  // never sit in front of a print.
+  const trophySrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'server.js'), 'utf8');
+  check('/feed/completed-books is not registered as a publishing feed',
+    /app\.post\('\/feed\/completed-books', \(req, res\) => \{/.test(trophySrc)
+    && !/app\.post\('\/feed\/completed-books',\s*makeFeedRoute/.test(trophySrc)
+    && !/FEED_NAMES = \[[^\]]*completed/.test(
+      require('fs').readFileSync(path.join(__dirname, '..', 'print-server', 'feeds.js'), 'utf8')));
+  check('the band lookup is synchronous — no await between a child and a label',
+    !/await feeds\.getCompletedBook/.test(trophySrc));
+  check('the band lookup is wrapped so a feed error cannot stop the print',
+    /feeds\.getCompletedBook[\s\S]{0,900}catch \{ \/\* a decoration must never stop a label/.test(trophySrc));
+  const feedsSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'print-server', 'feeds.js'), 'utf8');
+  check('the completed-books state is never published from feeds.js',
+    !/completedBooksState[\s\S]{0,400}events\.publish/.test(feedsSrc));
+  const extSrc = require('fs').readFileSync(
+    path.join(__dirname, '..', 'chrome-extension', 'feeds.js'), 'utf8');
+  check('the extension posts completed books to the print server only',
+    /postFeed\('\/feed\/completed-books'/.test(extSrc));
+  check('the extension header no longer claims no full name ever leaves it',
+    /\/feed\/completed-books/.test(extSrc.slice(0, 2000)),
+    'a stated invariant that quietly stops being true is worse than one never written');
+  check('the completed-books scrape is club-night only',
+    /case 'completedBooks':[\s\S]{0,300}isInClubWindow\(\) \? 10 \* 60 \* 1000 : Infinity/.test(extSrc));
+  check('the scheduler knows the task in all three tables',
+    /completedBooks: 0/.test(extSrc) && /completedBooks: runCompletedBooks/.test(extSrc));
 }
 
 console.log('');

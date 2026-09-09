@@ -485,6 +485,9 @@
                   <input type="checkbox" id="settings-ft-inverted"> Visitor labels use the inverted (black) palette
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
+                  <input type="checkbox" id="settings-trophy-band"> Band the next label of a child who finished a handbook
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-connect-card"> Print a second "connect card" label for visitors
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400;margin-left:22px">
@@ -1363,6 +1366,7 @@ function loadSettings() {
     document.getElementById('settings-musical').checked = config.musicalPrinter === true;
     document.getElementById('settings-update-beacon').checked = config.updateBeacon === true;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
+    document.getElementById('settings-trophy-band').checked = config.trophyBand !== false;
     document.getElementById('settings-connect-card').checked = !!config.connectCard;
     document.getElementById('settings-connect-card-auto').checked = !!config.connectCardAutoFirstTimer;
     document.getElementById('settings-connect-greeting').value = config.connectCardGreeting || '';
@@ -1699,6 +1703,7 @@ function saveSettings() {
       musicalPrinter: document.getElementById('settings-musical').checked,
       updateBeacon: document.getElementById('settings-update-beacon').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
+      trophyBand: document.getElementById('settings-trophy-band').checked,
       connectCard: document.getElementById('settings-connect-card').checked,
       connectCardAutoFirstTimer: document.getElementById('settings-connect-card-auto').checked,
       connectCardGreeting: document.getElementById('settings-connect-greeting').value.trim(),

@@ -239,6 +239,12 @@ const CASES = [
   // the logo must flip to WHITE ink or it vanishes into its own background —
   // found by review, black-on-#1f2937, invisible on paper.
   { name: 'logo-inverted-visitor', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', clubImageBuffer: lightCyanLogo(), isVisitor: true, extras: { inverted: true } } },
+  // Trophy band (#293): the inverse chip that names a finished handbook. The
+  // second case is the one that earns its keep — it proves the footer yields
+  // its slot so the bottom-left stack stays at three lines, and that the band
+  // does not collide with the goTo/milestone lines above the icon row.
+  { name: 'trophy-band',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { trophyBand: 'Finished Sparks Wingrunner' } } },
+  { name: 'trophy-band-stack', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { trophyBand: 'Finished Sparks Wingrunner', goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 10th club night tonight!' } } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping

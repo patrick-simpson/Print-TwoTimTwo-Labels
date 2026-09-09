@@ -1731,7 +1731,10 @@ async function generateLabel(input) {
   const hasGroup = stepUp ? !!stepUpGroupText
     : (greeting.length > 0 || (handbookGroup.length > 0 && tplOn('showGroupLine')));
   const hasAllergy = allergyTokens.length > 0;
-  const hasFooter = footerText.length > 0 && tplOn('showFooter');
+  // The trophy band (#293) takes the footer's slot rather than adding a fourth
+  // bottom-left line: the stack tops out at three before it crowds the name
+  // block, and the operator footer is branding while the band is the news.
+  const hasFooter = footerText.length > 0 && tplOn('showFooter') && !(extras && extras.trophyBand);
 
   // Reserve room for the bottom band: right side is the coin/cake/allergy icon
   // row, left side is the goTo/milestone/footer stack. 20pt covers the icon row
@@ -1740,7 +1743,8 @@ async function generateLabel(input) {
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
   const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid || collectibleIndex != null;
-  const bottomLineCount = ((extras && extras.goToLine) ? 1 : 0)
+  const bottomLineCount = ((extras && extras.trophyBand) ? 1 : 0)
+    + ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
     + (hasFooter ? 1 : 0);
   const ALLERGY_STRIP_H = Math.max(
@@ -2059,6 +2063,10 @@ async function generateLabel(input) {
   // Room 4"). milestoneLine: attendance milestones ("10th club night!").
   // Anchored bottom-left so they never collide with the bottom-right icons.
   const extraLines = [];
+  // trophyBand (#293): "Finished Sparks Wingrunner", drawn as an inverse chip
+  // so the room notices it from across the lobby. Pushed FIRST so the reversed
+  // draw below puts it highest in the stack, closest to the name.
+  if (extras && extras.trophyBand) extraLines.push({ text: String(extras.trophyBand).slice(0, 48), bold: true, band: true });
   if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
   if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
   // Operator-configured footer (#8: church name, a verse, service times) —
@@ -2078,8 +2086,19 @@ async function generateLabel(input) {
     let ly = BY + BH - 6;
     for (const line of extraLines.reverse()) {
       ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
-      ctx.fillStyle = COLOR.group;
-      ctx.fillText(truncateTextCanvas(ctx, line.text, ctx.font, maxW), lineX, ly);
+      // The band reuses the visitor pill's inverse pair, so it stays readable
+      // on an inverted (first-timer / award) label as well as a white one.
+      const drawn = truncateTextCanvas(ctx, line.text, ctx.font, line.band ? maxW - 8 : maxW);
+      if (line.band) {
+        const bandW = ctx.measureText(drawn).width;
+        ctx.fillStyle = COLOR.visitorBg;
+        roundedRect(ctx, lineX - 3, ly - 9, bandW + 6, 12, 3);
+        ctx.fill();
+        ctx.fillStyle = COLOR.visitorText;
+      } else {
+        ctx.fillStyle = COLOR.group;
+      }
+      ctx.fillText(drawn, lineX, ly);
       ly -= 13;
     }
     ctx.textAlign = 'center';
@@ -2449,6 +2468,22 @@ function recordAttendance(firstName, lastName, clubberId = null) {
 
 function milestoneLineFor(count) {
   return MILESTONES.includes(count) ? `⭐ ${count}th club night tonight!` : '';
+}
+
+// #293: the trophy band's text. Pure and exported so the clip is pinned by a
+// unit test — the renderer's own 48-character cap is inside generateLabel and
+// returns nothing testable. A book title arrives from a scraped CSV, so it is
+// stripped of control characters and bounded before it ever reaches a label.
+const TROPHY_BAND_MAX = 48;
+function trophyBandFor(book) {
+  // A book title comes off a scraped CSV column, so it is always a string when
+  // it is real. Anything else is garbage from a drifted parser and prints
+  // nothing at all — "Finished 42" or "Finished [object Object]" on a child's
+  // label is worse than no band.
+  if (typeof book !== 'string') return '';
+  const clean = security.sanitizeStoredText(book, 60);
+  if (!clean) return '';
+  return `Finished ${clean}`.slice(0, TROPHY_BAND_MAX);
 }
 
 // ── Group schedule (#28) ──────────────────────────────────────────────────────
@@ -3046,6 +3081,29 @@ async function performCheckinPrint(input) {
       } catch { /* ledger trouble must not stop the print */ }
     }
     if (milestoneLine) extras.milestoneLine = milestoneLine;
+    // Trophy band (#293): pure decoration off a cached LOCAL feed, in its own
+    // try/catch. A missing, stale or malformed feed prints the stock label and
+    // never delays it — printing is never gated on the pipe. Demo prints are
+    // excluded on purpose: they skip history, so a demo band could not be
+    // deduped (same reason a demo skips the ledger-derived milestone).
+    let trophyBook = '';
+    if (!isDemo && config.trophyBand !== false) {
+      try {
+        const hit = feeds.getCompletedBook(`${firstName} ${lastName}`);
+        if (hit && hit.book) {
+          // Once per child per club night, the same way the auto connect card
+          // dedupes: a lost label or a second station must not band twice.
+          const todayIso = localDayISO();
+          const alreadyBanded = loadHistory().some(e => e && e.trophyBook && e.success !== false
+            && isOnLocalDay(e.timestamp, todayIso)
+            && historyRowMatches(e, firstName, lastName, clubberId));
+          if (!alreadyBanded) {
+            const band = trophyBandFor(hit.book);
+            if (band) { extras.trophyBand = band; trophyBook = hit.book; }
+          }
+        }
+      } catch { /* a decoration must never stop a label */ }
+    }
     // The operator's explicit visitor flag and the ledger heuristic converge
     // here for the connect card and the display's welcome treatment. The
     // label's inverted palette deliberately stays on the EXPLICIT flag only:
@@ -3145,10 +3203,13 @@ async function performCheckinPrint(input) {
       events.publish(pusher, EVENT_CHANNEL, 'checkin', checkinEvent);
       pushEventToBuffer(checkinEvent);
 
-      // Log to print history
+      // Log to print history. trophyBook is the once-per-night marker for
+      // #293's band — written on SUCCESS only, so a jammed label (which nobody
+      // ever saw) still gets its band on the reprint.
       addHistoryEntry({
         firstName, lastName, clubName: effectiveClubName, clubImageData,
-        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId
+        printer: effectivePrinter, success: true, visitor: !!visitor, clubberId,
+        trophyBook,
       });
 
       publishTally();
@@ -3540,6 +3601,12 @@ function addHistoryEntry(entry) {
     // dashboard's own record-keeping.
     isAward: !!entry.isAward,
     award: security.sanitizeStoredText(entry.award || ''),
+    // #293: which handbook this label's trophy band celebrated. A marker, not
+    // display data — it is what stops a second band for the same child tonight.
+    // (MAX_HISTORY caps the log at 200 rows, so on a huge night this marker can
+    // be evicted and a much-later reprint could band once more. Acceptable for
+    // a decoration; not worth an unbounded store.)
+    trophyBook: security.sanitizeStoredText(entry.trophyBook || '', 60),
     // Connect cards (#10) are flagged for the same reason award slips are:
     // they show in /history so the operator can see the card went out, but
     // isNonCheckinRow() keeps them out of every place that counts check-ins.
@@ -4775,6 +4842,19 @@ app.post('/feed/unverified-checkins', (req, res) => {
   res.json({ ok: true, count: result.payload.entries.length });
 });
 
+// #293: who finished a handbook recently, so the NEXT label that child prints
+// carries a trophy band. Carries full names and is therefore in the same
+// loopback/PIN-gated, NEVER-published class as the two feeds above —
+// deliberately NOT registered in FEED_NAMES/makeFeedRoute, which publishes to
+// the public Pusher channel. Merge semantics: the extension posts one payload
+// per club, so a second club's post must not wipe the first's.
+app.post('/feed/completed-books', (req, res) => {
+  const result = feeds.submitCompletedBooks(req.body, Date.now());
+  if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
+  if (result.throttled) return res.json({ ok: true, throttled: true });
+  res.json({ ok: true, count: result.payload.entries.length });
+});
+
 // Reset tonight (operator request): one button on the widget zeroes the
 // night — every active check-in row today is marked undone (history is a
 // log, rows are never deleted), tonight's date comes OUT of the attendance
@@ -5866,6 +5946,7 @@ app.post('/config', (req, res) => {
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
     musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
+    trophyBand,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
@@ -5966,6 +6047,10 @@ app.post('/config', (req, res) => {
       next.historyRetentionDays = security.normalizeRetentionDays(historyRetentionDays);
     }
     if (firstTimerInverted !== undefined) next.firstTimerInverted = !!firstTimerInverted;
+    // Trophy band (#293): the finished-handbook banner on a child's next
+    // label. Default ON (read as `config.trophyBand !== false` at the call
+    // site), so an operator who never opens Settings still gets it.
+    if (trophyBand !== undefined) next.trophyBand = !!trophyBand;
     if (connectCard !== undefined) next.connectCard = !!connectCard;
     // Label footer (#8): one short operator line (church name, a verse, service
     // times) rendered along the bottom of every label. Clearing it deletes the
@@ -6637,6 +6722,9 @@ module.exports = {
   // (short, over, explained by walk-ins, stale, no source) is unit-tested
   // without a browser or a live report.
   compareCounts, countsForCompare, SOURCE_COUNT_STALE_MS,
+  // Trophy band (#293) — pure, so the 48-character clip and the malformed-title
+  // cases are pinned without rendering a label.
+  trophyBandFor, TROPHY_BAND_MAX,
   // Phone Tonight tab: the shared "who is checked in" set and the manual
   // undo/restore that must survive reconcile — pure, so they are unit-tested.
   tonightCheckins, markManualUndo, clearManualUndo, splitFullName,

@@ -303,6 +303,9 @@ async function main() {
       // check-in machine. An unauthenticated caller must not be able to plant
       // a second opinion that makes a real shortfall look like agreement.
       ['/feed/source-count', { date: '2026-09-02', checkedIn: 999 }],
+      // The completed-books feed carries children's FULL names (it decides
+      // whose next label gets a trophy band), so it is gated like the roster.
+      ['/feed/completed-books', { entries: [{ name: 'Stranger Leakcanary', book: 'Wingrunner', date: '2026-09-02' }] }],
     ];
     for (const [p, body] of PII_POST_PATHS) {
       const res = await request({ host: lan, method: 'POST', pathname: p, body });

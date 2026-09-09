@@ -314,6 +314,58 @@ async function main() {
       !('connectCardGreeting' in cleared), JSON.stringify(cleared.connectCardGreeting));
   }
 
+  // ── 6. Trophy band (#293) end to end ───────────────────────────────────────
+  // The band reuses this suite's own once-per-child-per-night history gate, so
+  // it belongs beside the connect card's: the two are the only decorations
+  // that must not fire twice for one child on one night.
+  console.log('\ntrophy band: the feed reaches a label, exactly once per night');
+  {
+    const feeds = require(path.join(__dirname, '..', 'print-server', 'feeds.js'));
+    feeds._resetForTests();
+    const today = todayISO();
+
+    // No feed at all: the stock label, and no marker.
+    const plain = await post('/print', { firstName: 'Nofeed', lastName: 'Kid', clubName: 'Cubbies' });
+    check('with no completed-books feed the label still prints', plain.status === 200, plain.body.slice(0, 120));
+    check('...and carries no trophy marker',
+      !((readJson(dataDir, 'print-history.json') || []).some(e => e.firstName === 'Nofeed' && e.trophyBook)));
+
+    const fed = await post('/feed/completed-books', { entries: [
+      { name: 'Trophy Kid', book: 'Sparks Wingrunner', date: today },
+    ] });
+    check('the completed-books feed is accepted', fed.status === 200 && (fed.json || {}).count === 1, fed.body.slice(0, 160));
+
+    const banded = await post('/print', { firstName: 'Trophy', lastName: 'Kid', clubName: 'Sparks' });
+    check('the banded label prints', banded.status === 200, banded.body.slice(0, 120));
+    const trophyRows = () => (readJson(dataDir, 'print-history.json') || [])
+      .filter(e => e.firstName === 'Trophy' && e.trophyBook);
+    check('history records which book the band celebrated',
+      trophyRows().length === 1 && trophyRows()[0].trophyBook === 'Sparks Wingrunner', JSON.stringify(trophyRows()));
+
+    // A second print for the same child tonight (a different dup key, so it is
+    // a real request) must NOT band again.
+    await post('/print', { firstName: 'Trophy', lastName: 'Kid', clubName: 'Sparks', clubberId: '515151' });
+    check('a second print the same night does not band twice', trophyRows().length === 1,
+      JSON.stringify(trophyRows()));
+
+    // A band is never an award slip: this is the check-in label only.
+    const hist = readJson(dataDir, 'print-history.json') || [];
+    check('no award slip was printed for the band',
+      !hist.some(e => e.isAward && e.firstName === 'Trophy'), JSON.stringify(hist.filter(e => e.isAward)));
+    check('a banded label is still an ordinary check-in row',
+      hist.filter(e => e.firstName === 'Trophy' && !isNonCheckinRow(e)).length === 2);
+
+    // The kill switch.
+    await post('/config', { trophyBand: false });
+    feeds._resetForTests();
+    await post('/feed/completed-books', { entries: [{ name: 'Switched Off', book: 'Grand Prix', date: today }] });
+    const off = await post('/print', { firstName: 'Switched', lastName: 'Off', clubName: 'Sparks' });
+    check('trophyBand:false prints the stock label', off.status === 200
+      && !((readJson(dataDir, 'print-history.json') || []).some(e => e.firstName === 'Switched' && e.trophyBook)),
+      off.body.slice(0, 120));
+    await post('/config', { trophyBand: true });
+  }
+
   listener.close();
 
   console.log(`\n${passed} passed, ${failed} failed`);
