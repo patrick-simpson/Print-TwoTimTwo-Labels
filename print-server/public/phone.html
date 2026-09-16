@@ -7,7 +7,9 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; padding-bottom: 40px; }
-  .header { background: #4caf50; color: #fff; padding: 14px 16px; position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  /* flex-wrap so a second header button (Custom label) drops to its own row on
+     a narrow phone instead of squeezing the title to nothing. */
+  .header { background: #4caf50; color: #fff; padding: 14px 16px; position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .header h1 { font-size: 17px; }
   .header .sub { font-size: 11px; opacity: 0.85; }
   .header .hbtn { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.45); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; display: none; }
@@ -81,6 +83,7 @@
     <div class="sub">Checks the kid in on the door laptop — the label prints there.</div>
   </div>
   <button class="hbtn" id="leader-toggle" type="button">Leader tag</button>
+  <button class="hbtn" id="custom-toggle" type="button">Custom label</button>
 </div>
 
 <div class="wrap" id="pin-screen">
@@ -111,6 +114,17 @@
     </div>
     <div class="err" id="leader-status"></div>
     <div class="note" style="margin:0">Prints on the door printer. Does not count as a check-in. Whoever you print is remembered for one-tap reprints.</div>
+  </div>
+
+  <!-- Custom label: one line of free text, nothing else on the label. Same
+       panel shape as the leader section above, and the same rule — it prints
+       at the door and counts as nothing. -->
+  <div class="panel" id="custom-panel" style="display:none">
+    <h2>Custom label</h2>
+    <input type="text" id="custom-text" maxlength="60" placeholder="VOLUNTEER, KITCHEN, Room 4 Helper…" autocomplete="off">
+    <button class="btn" id="custom-print" type="button">Print custom label</button>
+    <div class="err" id="custom-status"></div>
+    <div class="note" style="margin:0">One line of text, auto-sized, on an otherwise blank label. Not counted, not recorded — nothing reaches the lobby screens.</div>
   </div>
 
   <div class="tabs" role="tablist">
@@ -322,12 +336,14 @@ function showMainScreen() {
   document.getElementById('pin-screen').style.display = 'none';
   document.getElementById('main-screen').style.display = 'block';
   document.getElementById('leader-toggle').style.display = 'inline-block';
+  document.getElementById('custom-toggle').style.display = 'inline-block';
 }
 
 function showPinScreen(message) {
   document.getElementById('main-screen').style.display = 'none';
   document.getElementById('pin-screen').style.display = 'block';
   document.getElementById('leader-toggle').style.display = 'none';
+  document.getElementById('custom-toggle').style.display = 'none';
   document.getElementById('pin').value = '';
   document.getElementById('pin-err').textContent = message || '';
 }
@@ -958,14 +974,56 @@ document.getElementById('visitor-name').addEventListener('keydown', function(e) 
 // ── Leader name tag ───────────────────────────────────────────────────────
 // Not a check-in: the server files it under isLeader, so nothing about
 // tonight's count moves. Direct print is fine — there is nothing to drive
-// on TwoTimTwo, and the server's own 25 s window absorbs a double-tap.
+// on TwoTimTwo, and the server's own duplicate window absorbs a double-tap.
+// One panel at a time: two stacked panels would push the tabs off a phone
+// screen, and both of these are "print something that is not a check-in", so
+// only one of them is ever the thing you came here to do.
+function togglePhonePanel(which) {
+  var panels = { leader: 'leader-panel', custom: 'custom-panel' };
+  var open = document.getElementById(panels[which]).style.display === 'none';
+  Object.keys(panels).forEach(function(k) {
+    var on = open && k === which;
+    document.getElementById(panels[k]).style.display = on ? 'flex' : 'none';
+    document.getElementById(k + '-toggle').className = 'hbtn' + (on ? ' on' : '');
+  });
+  return open;
+}
 document.getElementById('leader-toggle').addEventListener('click', function() {
-  var p = document.getElementById('leader-panel');
-  var show = p.style.display === 'none';
-  p.style.display = show ? 'flex' : 'none';
-  document.getElementById('leader-toggle').className = 'hbtn' + (show ? ' on' : '');
-  if (show) document.getElementById('leader-name').focus();
+  if (togglePhonePanel('leader')) document.getElementById('leader-name').focus();
 });
+document.getElementById('custom-toggle').addEventListener('click', function() {
+  if (togglePhonePanel('custom')) document.getElementById('custom-text').focus();
+});
+
+// ── Custom label ──────────────────────────────────────────────────────────
+// One line of free text at the door. Records nothing at all — not a history
+// row, not a ledger entry, nothing on the wire — so there is no list to
+// refresh afterwards, unlike the leader tag's chips.
+var customInFlight = false;
+function printCustomLabel() {
+  if (customInFlight) return;
+  var el = document.getElementById('custom-text');
+  var status = document.getElementById('custom-status');
+  var text = el.value.trim();
+  if (!text) { status.textContent = 'Type the label text.'; return; }
+  customInFlight = true;
+  status.textContent = '';
+  var btn = document.getElementById('custom-print');
+  btn.disabled = true;
+  postJson('/print-custom', { pin: PIN, text: text }).then(function(data) {
+    customInFlight = false; btn.disabled = false;
+    if (data && data.duplicate) { toast('Already printed a moment ago.'); return; }
+    toast('Custom label printing at the door.', 4000);
+    el.value = '';
+  }).catch(function(e) {
+    customInFlight = false; btn.disabled = false;
+    if (e.code === 'network' && e.status >= 500) { status.textContent = 'Printer problem — see the door laptop.'; return; }
+    if (e.code === 'http') { status.textContent = e.message; return; }
+    handleActionError(e, 'Could not print: ');
+  });
+}
+document.getElementById('custom-print').addEventListener('click', printCustomLabel);
+document.getElementById('custom-text').addEventListener('keydown', function(e) { if (e.key === 'Enter') printCustomLabel(); });
 var leaderInFlight = false;
 function printLeaderTag() {
   if (leaderInFlight) return;

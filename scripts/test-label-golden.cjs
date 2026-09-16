@@ -245,6 +245,11 @@ const CASES = [
   // does not collide with the goTo/milestone lines above the icon row.
   { name: 'trophy-band',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { trophyBand: 'Finished Sparks Wingrunner' } } },
   { name: 'trophy-band-stack', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm', extras: { trophyBand: 'Finished Sparks Wingrunner', goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 10th club night tonight!' } } },
+  // Free-text label (POST /print-custom): one auto-sized line and NOTHING
+  // else. This baseline is the guard on "nothing else" — every other case in
+  // this file would show up as ink here the moment the early return above the
+  // stock layout stopped returning early.
+  { name: 'custom-label',     model: { customText: 'VOLUNTEER' } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
