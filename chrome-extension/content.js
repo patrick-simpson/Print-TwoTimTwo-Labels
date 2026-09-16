@@ -1269,6 +1269,73 @@
       customStatus.style.display = text ? 'block' : 'none';
     }
 
+    // ── "Did you mean…?" for the walk-in row ───────────────────────────────
+    // An inline question with two explicit answers, shown when the typed name
+    // is one this extension already knows (a roster child, or a remembered
+    // leader). Built as real buttons rather than a confirm(): a confirm()
+    // blocks the page a check-in station is driving, and its two answers are
+    // OK and Cancel, neither of which is what either question is asking.
+    var walkInChoice = document.createElement('div');
+    walkInChoice.id = 'awana-walkin-choice';
+    Object.assign(walkInChoice.style, {
+      display: 'none', flexDirection: 'column', gap: '6px',
+      fontSize: '11px', color: '#7c2d12', lineHeight: '1.4',
+      padding: '8px', background: '#fffbeb',
+      border: '1px solid #fde68a', borderRadius: '8px'
+    });
+    function hideWalkInChoice() {
+      walkInChoice.style.display = 'none';
+      walkInChoice.textContent = '';
+    }
+    function showWalkInChoice(message, buttons) {
+      walkInChoice.textContent = '';
+      var line = document.createElement('div');
+      // textContent, never innerHTML: this string carries a child's name off
+      // the roster, which is operator/site data and never markup.
+      line.textContent = message;
+      walkInChoice.appendChild(line);
+      var row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', gap: '6px', flexWrap: 'wrap' });
+      buttons.forEach(function(b) {
+        var btn = document.createElement('button');
+        btn.textContent = b.label;
+        Object.assign(btn.style, {
+          fontSize: '11px', padding: '5px 10px', border: 'none', borderRadius: '6px',
+          cursor: 'pointer', fontWeight: '600', color: '#ffffff',
+          background: b.background || '#475569'
+        });
+        btn.addEventListener('click', function() { hideWalkInChoice(); b.run(); });
+        row.appendChild(btn);
+      });
+      walkInChoice.appendChild(row);
+      walkInChoice.style.display = 'flex';
+    }
+
+    // Pure, so both questions are unit-tested without a page: given the typed
+    // name, whatever the roster index resolved it to, and the remembered
+    // leaders the panel already loaded, say which question (if any) to ask.
+    //
+    // The roster takes precedence when a name is somehow both. An uncounted or
+    // double-counted CHILD is the failure this exists to stop, and a volunteer
+    // who shares a clubber's full name is far rarer than a clubber typed into
+    // the guest box by mistake.
+    function walkInNameConflict(name, rosterEntry, leaders) {
+      var key = nameKeyOf(name);
+      if (!key) return null;
+      if (rosterEntry && rosterEntry.displayName && nameKeyOf(rosterEntry.displayName) === key) {
+        return { kind: 'roster', roster: rosterEntry };
+      }
+      var list = leaders || [];
+      for (var i = 0; i < list.length; i++) {
+        var l = list[i];
+        if (!l) continue;
+        if (nameKeyOf(((l.firstName || '') + ' ' + (l.lastName || ''))) === key) {
+          return { kind: 'leader', leader: l };
+        }
+      }
+      return null;
+    }
+
     function isLeaderMode() { return leaderCb.checked; }
     function isCustomMode() { return customCb.checked; }
 
@@ -1316,6 +1383,7 @@
       // child label out of a mode that has nothing to do with children.
       familyWrap.style.display = notAChild ? 'none' : 'flex';
       if (notAChild) clearFamilyRows();
+      hideWalkInChoice();   // the question was about a child; this row is not one now
       syncFamilyUi();
     }
     leaderCb.addEventListener('change', function() {
@@ -1845,6 +1913,8 @@
       var name = guestInput.value.trim();
       if (!name) return;
       var club = clubSelect.value;
+      // A question about the PREVIOUS name must never sit over a new one.
+      hideWalkInChoice();
 
       // Custom mode: one line of free text on a blank label. Even further from
       // a check-in than the leader branch below — no markPrinted (nothing was
@@ -1867,6 +1937,67 @@
         guestInput.value = '';
         return;
       }
+
+      // ── The typed name is one we already know ────────────────────────────
+      // Two ways a walk-in goes quietly wrong. The child is actually ON THE
+      // ROSTER, so printing them as a guest files a name-keyed row now and the
+      // driven check-in files an id-keyed one minutes later, and the night
+      // counts one child twice. Or the name belongs to a remembered LEADER, so
+      // an adult volunteer lands in tonight's count as a child.
+      //
+      // Both are genuinely ambiguous from here — a visiting cousin really can
+      // share a clubber's name — so the panel ASKS, inline, and never picks.
+      // Nothing has been printed or marked at this point, so either answer is
+      // still a clean first action.
+      var conflict = walkInNameConflict(name, rosterLookupByName(name), leaderCache);
+      if (conflict && conflict.kind === 'roster') {
+        showWalkInChoice('Looks like ' + conflict.roster.displayName + ' is on the roster.', [
+          { label: 'Use roster', background: '#4caf50',
+            run: function() { printRosterChild(conflict.roster); } },
+          { label: 'Print as visitor', background: '#64748b',
+            run: function() { printWalkInAsChild(name, club); } }
+        ]);
+        return;
+      }
+      if (conflict && conflict.kind === 'leader') {
+        var known = ((conflict.leader.firstName || '') + ' ' + (conflict.leader.lastName || '')).trim();
+        showWalkInChoice(known + ' is a remembered leader.', [
+          { label: 'Print Leader Tag', background: '#f59e0b', run: function() {
+            // Flip the row into leader mode as well as printing, so what is on
+            // screen matches what came out of the printer.
+            leaderCb.checked = true;
+            customCb.checked = false;
+            applyRowMode();
+            printLeaders([{
+              firstName: conflict.leader.firstName,
+              lastName: conflict.leader.lastName,
+              clubName: conflict.leader.clubName || club
+            }]);
+            guestInput.value = '';
+          } },
+          { label: 'Print as child anyway', background: '#64748b',
+            run: function() { printWalkInAsChild(name, club); } }
+        ]);
+        return;
+      }
+
+      printWalkInAsChild(name, club);
+    }
+
+    // "Use roster": print with TwoTimTwo's own clubber id and the roster's club,
+    // which is the identity the driven check-in would have used — so the server
+    // files ONE row for this child instead of a name row now and an id row
+    // later. Nothing is registered on TwoTimTwo: the site already knows them.
+    function printRosterChild(meta) {
+      markPrinted(meta.displayName, meta.recid);
+      doPrint(meta.displayName, meta.clubName || '', meta.clubImageData || null, 'walkin-roster', meta.recid);
+      guestInput.value = '';
+      clearFamilyRows();
+    }
+
+    // The walk-in path proper, unchanged but for being reachable from the
+    // inline choice above as well as straight from Print.
+    function printWalkInAsChild(name, club) {
       // One payload per child (#323): the typed row, plus any family rows,
       // sharing the typed surname. A lone walk-in produces exactly the single
       // payload it always did.
@@ -2616,7 +2747,7 @@
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
-      divider(), walkInLabel, walkInRow, walkInClubRow, customStatus, familyWrap, registerCheck, registerFields, leaderChipsWrap,
+      divider(), walkInLabel, walkInRow, walkInClubRow, customStatus, walkInChoice, familyWrap, registerCheck, registerFields, leaderChipsWrap,
       divider(), tonightHeader, countCheck, tonightList,
       queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn
@@ -3835,8 +3966,18 @@
   // cross-checking it catches anything the diff engine missed (a station that
   // was asleep, a scan that happened to land on a guard, etc).
   var RECONCILE_MAX_PRINTS          = 5;
+  // The FIRST pass still runs a minute after load, deliberately: it is what
+  // seeds the session baseline, and a station opened mid-event should not
+  // spend five minutes not knowing who is already checked in.
   var RECONCILE_FIRST_DELAY_MS      = 60 * 1000;
-  var RECONCILE_INTERVAL_CLUB_MS    = 60 * 1000;
+  // Every 5 minutes during club, not every 60 seconds. The print server now
+  // builds tonight's count out of this report, so the poll is load-bearing
+  // rather than a safety net - but it is a full page fetch and parse against
+  // the church's own site, and a minute apart is far more traffic than the
+  // count needs. The server treats a report as fresh for 12 minutes, which is
+  // two of these plus slack, so one missed poll changes nothing. "Sync now" in
+  // the widget is still there for the operator who cannot wait.
+  var RECONCILE_INTERVAL_CLUB_MS    = 5 * 60 * 1000;
   var RECONCILE_INTERVAL_OFF_MS     = 10 * 60 * 1000;
 
   function fetchCheckinReport() {

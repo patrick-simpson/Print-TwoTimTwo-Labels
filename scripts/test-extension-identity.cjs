@@ -72,7 +72,11 @@ function extractFunction(name) {
 const HELPERS = ['nameKeyOf', 'identityKey', 'migrateLegacyKey', 'resolveIdentityKey', 'isPrinted',
   // #323: the walk-in guest FAMILY payload builder. Pure, so it evaluates in
   // the same sandbox with nothing but MAX_GUEST_FAMILY supplied.
-  'buildGuestFamilyPayloads'];
+  'buildGuestFamilyPayloads',
+  // 6.14.0: "did you mean the roster child / the remembered leader?" — the
+  // decision behind the inline question in the walk-in row. Pure, and the one
+  // part of that feature that can be tested without a page.
+  'walkInNameConflict'];
 
 // Pinned rather than assumed: the helper enforces the same cap the UI does, so
 // a change to one must be visible to this test.
@@ -338,6 +342,81 @@ console.log('walk-in guest family (#323) — one form, one card, four independen
     && !/householdIndex|HOUSEHOLD_INDEX|siblingsOf/.test(SRC));
   check('registration submits one household with Clubber[i] indexing',
     /Clubber%5B' \+ i \+ '%5D%5Bfirst_name%5D/.test(SRC));
+}
+
+console.log('walkInNameConflict — the walk-in row asks, and never picks');
+{
+  const h = sandbox();
+  const roster = { displayName: 'Nova Quasar', clubName: 'Sparks', recid: '9001' };
+  const leaders = [
+    { firstName: 'Cara', lastName: 'Leader', clubName: 'Journey' },
+    { firstName: 'Sol', lastName: 'Nebula', clubName: '' },
+  ];
+
+  check('a name nobody knows is just a walk-in',
+    h.walkInNameConflict('Zed Andromeda', null, leaders) === null);
+  check('an empty name asks nothing', h.walkInNameConflict('', roster, leaders) === null
+    && h.walkInNameConflict('   ', roster, leaders) === null);
+
+  const onRoster = h.walkInNameConflict('Nova Quasar', roster, leaders);
+  check('a roster child is recognised', onRoster && onRoster.kind === 'roster');
+  check('and the roster row comes back, so the caller can send the clubber id',
+    onRoster && onRoster.roster.recid === '9001' && onRoster.roster.clubName === 'Sparks');
+  check('case and padding do not hide the match',
+    (h.walkInNameConflict('  nova   QUASAR ', roster, leaders) || {}).kind === 'roster');
+
+  // rosterLookupByName() returns null for an AMBIGUOUS name (two clubbers share
+  // it), and that null has to stay a non-question rather than become a wrong
+  // one — there is no single roster row to offer.
+  check('an ambiguous roster name asks nothing (there is no one row to use)',
+    h.walkInNameConflict('Mia Twin', null, leaders) === null);
+  // Defensive: a cache row whose displayName is not the typed name is not a
+  // match, whatever the index said.
+  check('a mismatched cache row is not treated as a match',
+    h.walkInNameConflict('Zed Andromeda', roster, leaders) === null);
+
+  const leaderHit = h.walkInNameConflict('cara leader', null, leaders);
+  check('a remembered leader typed into the kid field is recognised',
+    leaderHit && leaderHit.kind === 'leader');
+  check('and the leader row comes back with their club',
+    leaderHit && leaderHit.leader.clubName === 'Journey');
+  check('a leader with no club still matches',
+    (h.walkInNameConflict('Sol Nebula', null, leaders) || {}).kind === 'leader');
+  check('no leaders loaded yet is not an error',
+    h.walkInNameConflict('Cara Leader', null, null) === null
+    && h.walkInNameConflict('Cara Leader', null, []) === null);
+  check('a null row in the leader list is skipped, not crashed on',
+    (h.walkInNameConflict('Cara Leader', null, [null, leaders[0]]) || {}).kind === 'leader');
+
+  // Both at once: the roster wins. A double-counted CHILD is the failure this
+  // exists to stop; a volunteer sharing a clubber's full name is far rarer.
+  const both = h.walkInNameConflict('Nova Quasar', roster,
+    [{ firstName: 'Nova', lastName: 'Quasar', clubName: 'Sparks' }]);
+  check('when a name is both, the roster question is the one asked', both.kind === 'roster');
+
+  // Wiring: the panel must ASK. Neither answer may be taken automatically.
+  check('the walk-in handler routes through the question, not around it',
+    /var conflict = walkInNameConflict\(name, rosterLookupByName\(name\), leaderCache\);/.test(SRC));
+  check('both answers are real buttons the operator presses',
+    /label: 'Use roster'/.test(SRC) && /label: 'Print as visitor'/.test(SRC)
+    && /label: 'Print Leader Tag'/.test(SRC) && /label: 'Print as child anyway'/.test(SRC));
+  check('the question never uses a blocking confirm() on a page we are driving',
+    !/confirm\('Looks like/.test(SRC));
+  check('"Use roster" sends the clubber id and the roster club',
+    /doPrint\(meta\.displayName, meta\.clubName \|\| '', meta\.clubImageData \|\| null, 'walkin-roster', meta\.recid\)/.test(SRC));
+  check('and never registers anyone on TwoTimTwo',
+    !/registerWalkInFamily/.test(SRC.slice(SRC.indexOf('function printRosterChild('),
+      SRC.indexOf('function printRosterChild(') + 500)));
+}
+
+console.log('reconcile cadence — the report poll is load-bearing now');
+{
+  check('the club-night reconcile interval is 5 minutes',
+    /RECONCILE_INTERVAL_CLUB_MS\s*=\s*5 \* 60 \* 1000/.test(SRC));
+  check('...and the FIRST pass still runs a minute after load, so a station '
+    + 'opened mid-event is not blind for five',
+    /RECONCILE_FIRST_DELAY_MS\s*=\s*60 \* 1000/.test(SRC));
+  check('the manual Sync now button still exists', /Sync now/.test(SRC));
 }
 
 console.log('');
