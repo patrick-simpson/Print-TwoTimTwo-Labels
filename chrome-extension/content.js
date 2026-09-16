@@ -1238,39 +1238,94 @@
     leaderCheck.append(leaderCb);
     leaderCheck.append(document.createTextNode('Leader'));
 
-    walkInClubRow.append(clubSelect, visitorCheck, leaderCheck);
+    // ── Custom label from the same row ─────────────────────────────────────
+    // "VOLUNTEER", "KITCHEN", "Room 4 Helper": one line of free text on a
+    // blank label. It names nobody, so it is even further from a check-in
+    // than a leader tag is — nothing is counted, nothing is recorded, nothing
+    // is registered. Mutually exclusive with Leader: one row cannot print two
+    // different kinds of label at once.
+    var customCheck = document.createElement('label');
+    Object.assign(customCheck.style, {
+      display: 'flex', alignItems: 'center', gap: '3px',
+      fontSize: '11px', color: '#64748b', cursor: 'pointer', whiteSpace: 'nowrap'
+    });
+    var customCb = document.createElement('input');
+    customCb.type = 'checkbox';
+    customCheck.append(customCb);
+    customCheck.append(document.createTextNode('Custom'));
+
+    walkInClubRow.append(clubSelect, visitorCheck, leaderCheck, customCheck);
+
+    // Custom mode's own feedback line. The leader branch borrows the chips'
+    // status line and the family branch borrows familyStatus, but familyWrap
+    // is HIDDEN in custom mode, so a custom label needs a line of its own or
+    // its only feedback is the transient status glyph.
+    var customStatus = document.createElement('div');
+    customStatus.id = 'awana-custom-status';
+    Object.assign(customStatus.style, { display: 'none', fontSize: '10px', color: '#94a3b8' });
+    function setCustomStatus(text, color) {
+      customStatus.textContent = text;
+      customStatus.style.color = color || '#94a3b8';
+      customStatus.style.display = text ? 'block' : 'none';
+    }
 
     function isLeaderMode() { return leaderCb.checked; }
+    function isCustomMode() { return customCb.checked; }
 
-    function applyLeaderMode() {
-      var on = isLeaderMode();
-      walkInPrintBtn.textContent = on ? 'Print Leader Tag' : 'Print';
-      walkInPrintBtn.style.background = on ? '#f59e0b' : '#4caf50';
-      walkInPrintBtn.dataset.awanaBase = on ? '#f59e0b' : '#4caf50';
-      walkInPrintBtn.dataset.awanaHover = on ? '#d97706' : '#43a047';
-      guestInput.placeholder = on ? "Leader's name" : 'First Last';
-      walkInLabel.textContent = on ? 'Leader Name Tag' : 'Walk-in Guest';
-      // Both are meaningless for an adult leader: a leader is not a visiting
-      // child and is not registered as a clubber.
-      visitorCb.disabled = on;
-      registerCb.disabled = on;
-      visitorCheck.style.opacity = on ? '0.4' : '1';
-      registerCheck.style.opacity = on ? '0.4' : '1';
-      if (on) {
+    // One checkbox changes what Print DOES, so ticking either visibly
+    // retargets the whole row (new button colour and caption, new section
+    // title, the controls that no longer apply disabled) rather than leaving
+    // an identical-looking form that produces a different label.
+    function applyRowMode() {
+      var custom = isCustomMode();
+      var leader = isLeaderMode();
+      // Everything a child's walk-in needs is meaningless in BOTH of the other
+      // two modes; the club is meaningless only for a custom label (a leader
+      // tag prints "<Club> Leader").
+      var notAChild = custom || leader;
+
+      walkInPrintBtn.textContent = custom ? 'Print Custom Label' : (leader ? 'Print Leader Tag' : 'Print');
+      var base = custom ? '#0ea5e9' : (leader ? '#f59e0b' : '#4caf50');
+      var hover = custom ? '#0284c7' : (leader ? '#d97706' : '#43a047');
+      walkInPrintBtn.style.background = base;
+      walkInPrintBtn.dataset.awanaBase = base;
+      walkInPrintBtn.dataset.awanaHover = hover;
+      guestInput.placeholder = custom ? 'Label text' : (leader ? "Leader's name" : 'First Last');
+      guestInput.maxLength = custom ? 60 : 160;
+      walkInLabel.textContent = custom ? 'Custom Label' : (leader ? 'Leader Name Tag' : 'Walk-in Guest');
+
+      // Neither an adult leader nor a strip of text is a visiting child, and
+      // neither is registered as a clubber.
+      visitorCb.disabled = notAChild;
+      registerCb.disabled = notAChild;
+      clubSelect.disabled = custom;
+      visitorCheck.style.opacity = notAChild ? '0.4' : '1';
+      registerCheck.style.opacity = notAChild ? '0.4' : '1';
+      clubSelect.style.opacity = custom ? '0.4' : '1';
+      if (notAChild) {
         visitorCb.checked = false;
         registerCb.checked = false;
         registerFields.style.display = 'none';
       }
-      leaderCheck.style.color = on ? '#b45309' : '#64748b';
-      leaderCheck.style.fontWeight = on ? '700' : 'normal';
-      // A leader tag is one adult, so the family rows (#323) are meaningless
-      // here — hidden AND cleared, so a leftover row cannot print a child
-      // label out of leader mode.
-      familyWrap.style.display = on ? 'none' : 'flex';
-      if (on) clearFamilyRows();
+      leaderCheck.style.color = leader ? '#b45309' : '#64748b';
+      leaderCheck.style.fontWeight = leader ? '700' : 'normal';
+      customCheck.style.color = custom ? '#0369a1' : '#64748b';
+      customCheck.style.fontWeight = custom ? '700' : 'normal';
+      // One adult, or one strip of text — either way the family rows (#323)
+      // are meaningless: hidden AND cleared, so a leftover row cannot print a
+      // child label out of a mode that has nothing to do with children.
+      familyWrap.style.display = notAChild ? 'none' : 'flex';
+      if (notAChild) clearFamilyRows();
       syncFamilyUi();
     }
-    leaderCb.addEventListener('change', applyLeaderMode);
+    leaderCb.addEventListener('change', function() {
+      if (leaderCb.checked) customCb.checked = false;
+      applyRowMode();
+    });
+    customCb.addEventListener('change', function() {
+      if (customCb.checked) leaderCb.checked = false;
+      applyRowMode();
+    });
 
     // \u2500\u2500 F-3: optional "also register in TwoTimTwo" \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     // The label print above always happens regardless of this checkbox \u2014 a
@@ -1417,7 +1472,7 @@
 
     function syncFamilyUi() {
       var full = familyRowData.length >= MAX_GUEST_FAMILY - 1;
-      addChildBtn.disabled = isLeaderMode() || full;
+      addChildBtn.disabled = isLeaderMode() || isCustomMode() || full;
       addChildBtn.style.opacity = addChildBtn.disabled ? '0.5' : '1';
       addChildBtn.textContent = full
         ? ('Family full (' + MAX_GUEST_FAMILY + ' children)')
@@ -1510,9 +1565,9 @@
 
     addChildBtn.addEventListener('click', addFamilyRow);
 
-    // Now that every control the leader mode touches exists, settle the row
-    // into its initial (child) state.
-    applyLeaderMode();
+    // Now that every control the Leader/Custom modes touch exists, settle the
+    // row into its initial (child) state.
+    applyRowMode();
 
     // ── Remembered leaders ─────────────────────────────────────────────────
     // The same adults volunteer every week, so the server remembers whoever
@@ -1673,6 +1728,40 @@
         });
     }
 
+    // One line of free text at the door. Same fetch shape as printLeaders()
+    // above, and the same rule as the leader path: it never calls markPrinted,
+    // never registers anyone in TwoTimTwo, and never touches printedNames.
+    function printCustomLabel(text) {
+      var clean = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!clean) { setCustomStatus('Type the label text first', '#ef4444'); return; }
+      setCustomStatus('Printing\u2026');
+      setStatus('\u23F3');
+      fetch(PRINT_SERVER + '/print-custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: clean, printerName: selectedPrinterName || '' }),
+        signal: AbortSignal.timeout(PRINT_TIMEOUT_MS)
+      }).then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d || {} }; }); })
+        .then(function(res) {
+          if (!res.ok || res.d.success !== true) {
+            setStatus('\u274C'); playError();
+            setCustomStatus(res.d.error || 'Print failed', '#ef4444');
+          } else if (res.d.duplicate) {
+            setStatus('\u2705'); playSuccess();
+            setCustomStatus('Already printed a moment ago', '#94a3b8');
+          } else {
+            setStatus('\u2705'); playSuccess();
+            setCustomStatus('Printed \u00B7 not counted, not recorded', '#16a34a');
+            guestInput.value = '';
+          }
+          clearStatus();
+        })
+        .catch(function() {
+          setStatus('\u274C'); playError(); clearStatus();
+          setCustomStatus('Could not reach the print server', '#ef4444');
+        });
+    }
+
     leaderPrintSelBtn.addEventListener('click', function() {
       printLeaders(leaderCache.filter(function(l) { return leaderSelection[l.key]; }));
     });
@@ -1756,6 +1845,16 @@
       var name = guestInput.value.trim();
       if (!name) return;
       var club = clubSelect.value;
+
+      // Custom mode: one line of free text on a blank label. Even further from
+      // a check-in than the leader branch below — no markPrinted (nothing was
+      // printed FOR anybody, so the session dedup set must never learn this
+      // string), no TwoTimTwo registration, no club, no visitor flag. The
+      // server records nothing either: no history row, no tally, no event.
+      if (isCustomMode()) {
+        printCustomLabel(name);
+        return;
+      }
 
       // Leader mode: an adult's tag. Deliberately none of what follows —
       // no markPrinted (a leader is not a check-in, so reconcile and the
@@ -2517,7 +2616,7 @@
       searchContainer, quickModeRow,
       divider(), sectionLabel('Night Modes'), stepUpRow, storeRow,
       divider(), sectionLabel('Printing'), controls, printerRow,
-      divider(), walkInLabel, walkInRow, walkInClubRow, familyWrap, registerCheck, registerFields, leaderChipsWrap,
+      divider(), walkInLabel, walkInRow, walkInClubRow, customStatus, familyWrap, registerCheck, registerFields, leaderChipsWrap,
       divider(), tonightHeader, countCheck, tonightList,
       queueBadge, reconcileRow, verifyRow, contractRow, csvStatus, csvWarningBanner, privacyStatus, updateRow,
       divider(), soundRow, helpBtn

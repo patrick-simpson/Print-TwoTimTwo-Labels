@@ -180,6 +180,23 @@
     </div>
   </div>
 
+  <!-- Custom label: one line of free text and nothing else. Sits right after
+       the leader card because it reuses that path end to end, and because the
+       two are the printer's only "this is not a child" labels. -->
+  <div class="card" id="custom-card">
+    <div class="card-header">
+      <span>Custom Label</span>
+      <span style="font-weight:400;font-size:12px;color:#64748b">not counted, not recorded</span>
+    </div>
+    <div class="card-body" style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="custom-text" maxlength="60" placeholder="VOLUNTEER, KITCHEN, Room 4 Helper…" autocomplete="off" style="flex:2;min-width:200px">
+        <button type="button" class="btn btn-primary btn-sm" onclick="printCustomLabel()">Print</button>
+      </div>
+      <div id="custom-note" style="font-size:12px;color:#64748b">One line of text, auto-sized, on an otherwise blank label. It is not a check-in: nothing is counted, no history row is written and nothing reaches the lobby screens.</div>
+    </div>
+  </div>
+
   <!-- Realtime privacy — top level on purpose. This used to live only inside
        the Settings tab, below Pusher, where you had to already know it existed
        to find it. Whether children's names go out encrypted is a front-page
@@ -1312,6 +1329,35 @@ function printLeaderTag() {
     })
     .catch(function() { note.textContent = 'Print failed — is the server running?'; });
 }
+
+// ── Custom label ─────────────────────────────────────────────────────────────
+// One line of free text on a blank label. Deliberately does NOT call
+// loadHistory() afterwards the way the leader card does: there is no history
+// row to reload, and refreshing the list would suggest there might be. No
+// printer dropdown either — the leader card has none, so this follows it and
+// uses the server's configured printer.
+var CUSTOM_NOTE_DEFAULT = 'One line of text, auto-sized, on an otherwise blank label. It is not a check-in: nothing is counted, no history row is written and nothing reaches the lobby screens.';
+function printCustomLabel() {
+  var el = document.getElementById('custom-text');
+  var note = document.getElementById('custom-note');
+  var text = el.value.trim();
+  if (!text) { note.textContent = 'Type the label text first.'; return; }
+  note.textContent = 'Printing…';
+  fetch(BASE + '/print-custom', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b || {} }; }); })
+    .then(function(res) {
+      if (!res.ok) { note.textContent = 'Print failed: ' + (res.body.error || 'see the server log'); return; }
+      note.textContent = res.body.duplicate ? 'Already printed a moment ago.' : 'Printed. ' + CUSTOM_NOTE_DEFAULT;
+      if (!res.body.duplicate) el.value = '';
+    })
+    .catch(function() { note.textContent = 'Print failed — is the server running?'; });
+}
+document.getElementById('custom-text').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') printCustomLabel();
+});
 
 // Preview
 function loadPreview() {

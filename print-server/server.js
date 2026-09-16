@@ -1321,6 +1321,61 @@ function truncateTextCanvas(ctx, text, font, maxWidth) {
   return t + '…';
 }
 
+// ── Free-text label sizing (POST /print-custom) ──────────────────────────────
+// A custom label is ONE line of operator text on an otherwise empty 4x2 label.
+// It has no roster row behind it and no fixed vocabulary, so it cannot use the
+// name block's ceilings: "VOLUNTEER" wants to be huge and "Wednesday Kitchen
+// Team, Room 4" wants to be small, and both have to look deliberate.
+const CUSTOM_TEXT_MAX_CHARS = 60;
+const CUSTOM_TEXT_FONT      = 'Helvetica, Arial, sans-serif';
+const CUSTOM_TEXT_MAX_PT    = 56;
+const CUSTOM_TEXT_MIN_PT    = 14;
+const CUSTOM_TEXT_LINE_H    = 1.15;
+const CUSTOM_TEXT_MARGIN_X  = 18;   // comfortable, not flush to the die-cut edge
+const CUSTOM_TEXT_MARGIN_Y  = 16;
+
+// Two lines out of one, broken at the space nearest the middle so the halves
+// are balanced. A single unbroken token (a long room code) splits by
+// character rather than overflowing the label.
+function splitCustomTextInTwo(text) {
+  const mid = Math.floor(text.length / 2);
+  let at = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== ' ') continue;
+    if (at < 0 || Math.abs(i - mid) < Math.abs(at - mid)) at = i;
+  }
+  if (at < 0) return [text.slice(0, mid), text.slice(mid)];
+  return [text.slice(0, at), text.slice(at + 1)];
+}
+
+// Start large and shrink. Only once the floor is reached does it wrap to two
+// lines, because one big line reads across a room and two small ones do not.
+// Returns { lines, size } in points.
+function fitCustomLabelText(ctx, text) {
+  const maxW = PAGE_W - CUSTOM_TEXT_MARGIN_X * 2;
+  const maxH = PAGE_H - CUSTOM_TEXT_MARGIN_Y * 2;
+  const fits = (lines, size) => {
+    if (lines.length * size * CUSTOM_TEXT_LINE_H > maxH) return false;
+    ctx.font = `bold ${size}px ${CUSTOM_TEXT_FONT}`;
+    return lines.every((l) => ctx.measureText(l).width <= maxW);
+  };
+  for (let size = CUSTOM_TEXT_MAX_PT; size >= CUSTOM_TEXT_MIN_PT; size--) {
+    if (fits([text], size)) return { lines: [text], size };
+  }
+  const two = splitCustomTextInTwo(text);
+  for (let size = CUSTOM_TEXT_MAX_PT; size >= CUSTOM_TEXT_MIN_PT; size--) {
+    if (fits(two, size)) return { lines: two, size };
+  }
+  // Pathological input (60 characters with no space in them). Clip rather than
+  // bleed off the die-cut edge: a label that runs off the paper is unreadable,
+  // an ellipsis is merely shortened.
+  const font = `bold ${CUSTOM_TEXT_MIN_PT}px ${CUSTOM_TEXT_FONT}`;
+  return {
+    lines: two.map((l) => truncateTextCanvas(ctx, l, font, maxW)),
+    size: CUSTOM_TEXT_MIN_PT,
+  };
+}
+
 // ── Draw a rounded rectangle on canvas ───────────────────────────────────────
 function roundedRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -1500,6 +1555,7 @@ async function generateLabel(input) {
     testBanner = false, footerText = '', greeting = '', template = null,
     streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
     collectibleIndex = null, extras = {}, isLeader = false,
+    customText = '',
   } = input;
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
@@ -1516,6 +1572,9 @@ async function generateLabel(input) {
   // the cap exists because a group name past 30 chars is roster noise, whereas
   // a greeting is deliberate operator copy that just needs to fit the width.
   greeting      = String(greeting == null ? '' : greeting).trim();
+  // Free-text label: coerced here like every other text input, so an explicit
+  // null or a number can never reach the layout maths below.
+  customText    = String(customText == null ? '' : customText).trim();
   // Per-club template (#1): a constrained set of layout switches, resolved by
   // the CALLER (labelTemplateFor) and passed in — the renderer never reads
   // config. Every switch defaults to "on" and the name ceiling to 48, so a
@@ -1602,6 +1661,38 @@ async function generateLabel(input) {
   };
 
   const pngPath = tmpFilePath('awana', 'png');
+
+  // ── Free-text label (POST /print-custom) ──────────────────────────────────
+  // One auto-sized line of operator text, centered, black on white, and
+  // NOTHING else: no badge outline, no icon panel, no club line, no greeting,
+  // no footer, no safety icons, no wordmark. A custom label has no child
+  // behind it, so anything that looks like a check-in label would be a lie on
+  // a safety artifact.
+  //
+  // It returns BEFORE all the layout below rather than switching a dozen
+  // elements off one at a time, so an element added to the stock label later
+  // is absent here automatically, with nothing to remember.
+  //
+  // No TEST band either, even in rehearsal: the band means "this is not a real
+  // check-in", and a custom label never was one in any mode.
+  if (customText) {
+    const cvs = createCanvas(PX_W, PX_H);
+    const cctx = cvs.getContext('2d');
+    cctx.scale(SCALE, SCALE);
+    cctx.fillStyle = '#ffffff';
+    cctx.fillRect(0, 0, PAGE_W, PAGE_H);
+    const layout = fitCustomLabelText(cctx, customText);
+    cctx.fillStyle = '#000000';
+    cctx.textAlign = 'center';
+    cctx.textBaseline = 'middle';
+    cctx.font = `bold ${layout.size}px ${CUSTOM_TEXT_FONT}`;
+    const lineH = layout.size * CUSTOM_TEXT_LINE_H;
+    const firstY = PAGE_H / 2 - ((layout.lines.length - 1) * lineH) / 2;
+    layout.lines.forEach((line, i) => cctx.fillText(line, PAGE_W / 2, firstY + i * lineH));
+    const customBuffer = cvs.toBuffer('image/png');
+    fs.writeFileSync(pngPath, customBuffer);
+    return { pngPath, buffer: customBuffer };
+  }
 
   const canvas = createCanvas(PX_W, PX_H);
   const ctx = canvas.getContext('2d');
@@ -4768,6 +4859,76 @@ app.post('/print-leader', async (req, res) => {
   res.status(status).json(body);
 });
 
+// ── Free-text label (POST /print-custom) ─────────────────────────────────────
+// "VOLUNTEER", "KITCHEN", "Room 4 Helper" — one line of whatever the operator
+// types, on an otherwise blank 4x2 label. It reuses the leader tag's plumbing
+// end to end (generateLabel, the duplicate window, printImage, the effective
+// printer) because that path is already the one that prints something which is
+// NOT a check-in.
+//
+// It goes further than a leader tag, though: a leader tag is still a print with
+// a person's name on it, so it files a flagged history row. A custom label
+// names nobody and records NOTHING —
+//   * no addHistoryEntry, so it never reaches history, the reprint list, the
+//     TwoTimTwo write-back CSV or tonight's stats;
+//   * no recordAttendance, so no ledger row, streak or milestone;
+//   * no events.publish / publishTally, so nothing at all goes on the wire.
+// The console line below is the entire record it leaves, deliberately.
+//
+// PIN-gated like every other route (the global auth gate): it is emphatically
+// not LAN_PUBLIC_PATHS material — a stranger on the church WiFi has no business
+// making the door printer spit labels.
+const CUSTOM_PRINT_TEXT_MAX = CUSTOM_TEXT_MAX_CHARS;
+
+// Pure, and exported, so the input rules are unit-tested without a printer.
+// Control characters are stripped (they would print as tofu or nothing at all),
+// internal whitespace is collapsed (a pasted string with a newline in it is
+// one line on a label, not a ragged gap), and what is left has to be non-empty
+// and short enough to stay legible.
+function normalizeCustomText(raw) {
+  const text = security.sanitizeStoredText(raw == null ? '' : raw, 200).replace(/\s+/g, ' ').trim();
+  if (!text) return { ok: false, error: 'text is required' };
+  if (text.length > CUSTOM_PRINT_TEXT_MAX) {
+    return { ok: false, error: `text must be ${CUSTOM_PRINT_TEXT_MAX} characters or fewer` };
+  }
+  return { ok: true, text };
+}
+
+app.post('/print-custom', async (req, res) => {
+  const b = req.body || {};
+  const norm = normalizeCustomText(b.text);
+  if (!norm.ok) return res.status(400).json({ success: false, error: norm.error });
+  if (!isSafePrinterName(b.printerName)) {
+    return res.status(400).json({ success: false, error: 'invalid printer name' });
+  }
+  const effectivePrinter = (b.printerName && String(b.printerName).trim()) || PRINTER_NAME;
+
+  // Namespaced so it can never collide with a child's check-in key or a
+  // leader's in the same recentPrints map. Keyed on the TEXT, which is all a
+  // custom label is, so a double-tap on the phone absorbs into one label.
+  const dupKey = `custom:${norm.text.toLowerCase()}`;
+  if (isDuplicatePrint(dupKey)) {
+    console.log(`[print-custom] '${norm.text}' already printed within ${DUPLICATE_WINDOW_MS / 1000}s — duplicate suppressed`);
+    return res.json({ success: true, duplicate: true });
+  }
+
+  let pngPath = null;
+  try {
+    const result = await generateLabel({ customText: norm.text });
+    pngPath = result.pngPath;
+    playTuneIfEnabled(effectivePrinter);
+    printImage(pngPath, effectivePrinter);
+    recordPrint(dupKey);
+    console.log(`[print-custom] ${norm.text}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('[print-custom] Error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
 // ── Print an arbitrary PDF (leader worksheets) ────────────────────────────────
 // Leader handbook-agenda / undistributed-award worksheets come out of
 // TwoTimTwo as PDFs (docs/TWOTIMTWO.md §5 — /meeting/handbook,
@@ -6994,6 +7155,11 @@ module.exports = {
   // their file, so the upsert/cap/season rules and the club-table agreement
   // are unit-tested against a temp AWANA_DATA_DIR.
   loadLeaders, saveLeaders, rememberLeader, forgetLeader, activeLeaders, leaderKey,
+  // Free-text labels (POST /print-custom). The validator is pure, so every
+  // rejection (blank, too long, control characters) is pinned without a
+  // printer; the sizing helpers are pure too, so the wrap/shrink order is
+  // testable without reading pixels.
+  normalizeCustomText, splitCustomTextInTwo, CUSTOM_TEXT_MAX_CHARS,
   CLUB_LIST, CLUB_DISPLAY_NAMES, CLUB_MONOGRAM, LEADERS_MAX, LEADER_ACTIVE_DAYS,
   // Birthday/cake helpers — the half-birthday rule (#8) has date math worth
   // pinning (June–August gate, day clamping, ISO-week reuse).
