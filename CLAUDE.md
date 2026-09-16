@@ -77,6 +77,26 @@ That workflow creates and pushes the `vX.Y.Z` tag using its own `GITHUB_TOKEN` (
   purity). Fail open: any broken template renders the stock label. Safety
   content (allergy icons, no-photo camera, birthday) is not templatable.
 
+**Tonight's count:** TwoTimTwo's own `/clubber/checkin_report` is the source of
+truth when it is fresh (received within `REPORT_FRESH_MS`, 12 minutes); the
+printer's own history is the fallback, and `/health` raises a
+`{type:'tally-source'}` warning whenever it is the one being used.
+`authoritativeTonight()` in `print-server/server.js` is **the one function** —
+`publishTally()`, `computeTonightStats()` (so `/stats/tonight` and the
+dashboard), `/phone/tonight` and `/health` all read it, and none of them
+computes a count of its own. Rules: only a report the reconcile pass actually
+APPLIED is kept (one the mass-undo guard refused would zero a night); a row
+marked `undoneBy` — the phone's Remove, or `/reset-tonight` — beats the report,
+because TwoTimTwo goes on listing that child all evening; unregistered visitors
+do not count while a report is fresh (owner's decision — they are not on it);
+identities match on BOTH the clubber id and the name, so one child is never two.
+The `tally` payload shape is unchanged and must stay so.
+
+**Custom labels never write history.** `POST /print-custom` prints one line of
+free text on a blank label and records nothing at all: no `addHistoryEntry`, no
+`recordAttendance`, no `publishTally`, no `events.publish*`. It is not a
+check-in in any mode, so it carries no TEST band either.
+
 **Realtime privacy:** the Pusher channel is PUBLIC and Pusher public channels
 have no server-side authorization primitive, so `checkin`, `recap` and
 `birthdays` are sealed with AES-256-GCM before publish (`print-server/events.js`;
