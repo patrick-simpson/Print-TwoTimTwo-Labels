@@ -473,7 +473,13 @@ function loadClubbers() {
 // check-in, so any /print for a name that already printed successfully within
 // this window is a duplicate — acknowledge it as success without printing.
 // Deliberate reprints go through POST /reprint, which is not gated.
-const DUPLICATE_WINDOW_MS = 25000;
+//
+// 45s, NOT 25s: the extension aborts a print at PRINT_TIMEOUT_MS (35s, see
+// content.js) and then retries, so a window shorter than that client timeout
+// let the retry through as a fresh print and a slow printer produced two
+// labels and two history rows for one child. The window has to outlast the
+// longest wait any client will do before it gives up, plus a little.
+const DUPLICATE_WINDOW_MS = 45000;
 const recentPrints = new Map();  // nameKey → timestamp of last successful print
 
 function isDuplicatePrint(nameKey) {
@@ -3232,10 +3238,10 @@ async function performCheckinPrint(input) {
     // operator's explicit visitor flag, or (when enabled) by the attendance
     // ledger spotting a first-ever check-in. Failure here never fails the
     // check-in — the main label already printed. Must stay a SAME-REQUEST
-    // second printImage: a separate POST would die in the 25s dedup window.
+    // second printImage: a separate POST would die in the duplicate window.
     // The explicit visitor flag always fires (an operator re-flagging after a
     // lost card is deliberate); the AUTO path fires once per kid per night —
-    // a re-print past the 25s dedup window (lost label, roster fix, a second
+    // a re-print past the duplicate window (lost label, roster fix, a second
     // station) must not hand the family a second welcome card, and firstEver
     // alone can't see that because tonight is still the kid's only ledger date.
     // A visiting FAMILY (#323) is several independent prints — one per child —
@@ -3774,7 +3780,185 @@ function tonightCheckins(history = loadHistory(), today = localDayISO()) {
     if (e.undone) continue;
     active.push(e);
   }
-  return { date: today, entries, active };
+  // ── Two keys, one child ───────────────────────────────────────────────────
+  // The same kid can leave BOTH an `id:` row and a `name:` row on one night:
+  // a walk-in printed at the door before the roster knew them (no clubberId),
+  // then a driven check-in from the extension minutes later (clubberId), or
+  // the reverse. historyIdentityKey() cannot see that those are one person, so
+  // the night counted them twice and the lobby screen read one child high.
+  //
+  // Collapse them here, preferring the `id:` row: the id is TwoTimTwo's own
+  // identity for that child, and it is what /phone/undo, reconcile and the
+  // reprint lookup all key on. The name row is dropped, not merged, so
+  // nothing about the surviving row changes.
+  const fullNameOf = (e) => `${e.firstName || ''} ${e.lastName || ''}`.toLowerCase().replace(/\s+/g, ' ').trim();
+  const namesWithAnId = new Set();
+  for (const e of active) {
+    if (historyIdentityKey(e).startsWith('id:')) namesWithAnId.add(fullNameOf(e));
+  }
+  const deduped = namesWithAnId.size
+    ? active.filter((e) => historyIdentityKey(e).startsWith('id:') || !namesWithAnId.has(fullNameOf(e)))
+    : active;
+  return { date: today, entries, active: deduped };
+}
+
+// ── Tonight's count: one definition, one source of truth ─────────────────────
+// The printer counts LABELS IT PRINTED. That is not the same thing as "how
+// many children are here", and the gap is not theoretical: a child checked in
+// on TwoTimTwo while this laptop was asleep never got a label, a walk-in
+// printed twice under two identities counted twice, and a night the extension
+// was not running counted whatever history happened to hold.
+//
+// TwoTimTwo's own /clubber/checkin_report is the real answer, and the extension
+// already fetches it. So: when a report has landed recently, THE REPORT IS THE
+// COUNT, and the printer's own history only adds the children who checked in
+// SINCE that report was taken (the optimistic tick-up, so the lobby screen
+// still moves the moment a label prints instead of sitting still for five
+// minutes). When no report has landed recently - no extension running, Chrome
+// closed, the site down - it falls back to exactly the behaviour that shipped
+// before, and /health says so out loud rather than quietly serving a worse
+// number that looks identical.
+//
+// Rules worth not relearning:
+//   * ONLY a report the reconcile pass actually APPLIED is kept. A report the
+//     mass-undo guard refused (a partial scrape, a login bounce, the wrong
+//     table) is exactly the kind of report that would zero the night here, and
+//     the guard is the one place that judges a report's plausibility.
+//   * A person's removal WINS over the report. A row marked `undoneBy` (the
+//     phone's Remove, or /reset-tonight) suppresses that child even though
+//     TwoTimTwo still lists them - which it will, because Remove is local by
+//     design. Without this, Remove and Reset would both stop working the
+//     moment a report went fresh.
+//   * UNREGISTERED VISITORS DO NOT COUNT while a report is fresh (owner's
+//     decision, 2026-09-16). They are not in the report and they never will
+//     be, so the tick-up skips them too; a visitor who IS on the report (they
+//     were registered) counts like anyone else. They still appear on the phone
+//     page's Tonight list and in `visitors`, which stay history-derived.
+//   * Two keys, one child: a report entry carries TwoTimTwo's clubber id and a
+//     history row may carry only a name, so identities are matched on BOTH and
+//     collapsed. Counting the same child under `id:` and `name:` is the exact
+//     over-count this is meant to remove, not one to reintroduce.
+let lastCheckinReport = null;   // { at, entries } — the last report we trusted
+
+// Two 5-minute extension polls plus slack. Longer than one missed poll (so a
+// single hiccup does not flip the whole count back to history mode), shorter
+// than a club night (so a report from the start of the evening cannot still be
+// speaking for it at the end).
+const REPORT_FRESH_MS = 12 * 60 * 1000;
+
+const normalizedName = (name) => String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+// EVERY key one identity could be filed under, id first. historyIdentityKey()
+// answers with the single canonical key; this answers with all of them, which
+// is what lets a report entry (always id-bearing) find a walk-in's name row.
+function identityKeysOfRow(row) {
+  const keys = [];
+  const id = row && row.clubberId != null ? String(row.clubberId).trim() : '';
+  if (id) keys.push(`id:${id}`);
+  const name = normalizedName(`${(row && row.firstName) || ''} ${(row && row.lastName) || ''}`);
+  if (name) keys.push(`name:${name}`);
+  return keys;
+}
+
+function identityKeysOfReportEntry(entry) {
+  const keys = [];
+  const id = entry && entry.clubberId != null ? String(entry.clubberId).trim() : '';
+  if (id) keys.push(`id:${id}`);
+  const name = normalizedName(entry && entry.name);
+  if (name) keys.push(`name:${name}`);
+  return keys;
+}
+
+// The club name as it should be displayed, from whichever side supplied it.
+// `&amp;` is decoded because the report's club comes out of a crest's alt
+// attribute and a raw entity would make T&T a club of its own.
+const displayClub = (raw) => String(raw == null ? '' : raw).replace(/&amp;/gi, '&').trim();
+
+/**
+ * THE one function every surface asks "how many children are here tonight".
+ * Pure but for its read of lastCheckinReport, so both modes are unit-tested
+ * without a socket, a scrape or a clock.
+ *
+ * @returns {{source:'report'|'history', at:number|null, ageMs:number|null,
+ *            checkedIn:number, byClub:Object}}
+ */
+function authoritativeTonight(tonight = tonightCheckins(), now = Date.now()) {
+  const fromHistory = () => {
+    const byClub = {};
+    tonight.active.forEach((e) => {
+      const club = displayClub(e.clubName) || 'No club';
+      byClub[club] = (byClub[club] || 0) + 1;
+    });
+    return { source: 'history', at: null, ageMs: null, checkedIn: tonight.active.length, byClub };
+  };
+
+  const rep = lastCheckinReport;
+  if (!rep) return fromHistory();
+  const ageMs = now - rep.at;
+  // A report from the future (a clock jump) is not fresh, it is broken.
+  if (ageMs < 0 || ageMs > REPORT_FRESH_MS) return fromHistory();
+  if (localDayISO(new Date(rep.at)) !== tonight.date) return fromHistory();
+
+  // Identities a PERSON took off tonight, and the club each identity's rows
+  // were printed under. Both read the newest row per identity, the same row
+  // every other consumer treats as current.
+  const suppressed = new Set();
+  const clubByKey = new Map();
+  const seen = new Set();
+  for (const e of tonight.entries) {
+    if (!`${e.firstName || ''} ${e.lastName || ''}`.trim()) continue;
+    const canonical = historyIdentityKey(e);
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    const keys = identityKeysOfRow(e);
+    const club = displayClub(e.clubName);
+    keys.forEach((k) => {
+      if (club && !clubByKey.has(k)) clubByKey.set(k, club);
+      if (e.undone && e.undoneBy) suppressed.add(k);
+    });
+  }
+
+  const byKey = new Map();
+  const slots = [];
+  const add = (keys, club) => {
+    if (!keys.length) return;
+    if (keys.some((k) => suppressed.has(k))) return;
+    let slot = null;
+    for (const k of keys) {
+      if (byKey.has(k)) { slot = byKey.get(k); break; }
+    }
+    if (!slot) { slot = { keys: new Set(), club: '' }; slots.push(slot); }
+    if (!slot.club && club) slot.club = club;
+    keys.forEach((k) => { slot.keys.add(k); byKey.set(k, slot); });
+  };
+
+  // The report is the floor.
+  (Array.isArray(rep.entries) ? rep.entries : []).forEach((entry) => {
+    add(identityKeysOfReportEntry(entry), displayClub(entry && entry.club));
+  });
+  // Plus everyone who checked in since it was taken. Visitors excluded: they
+  // have no TwoTimTwo record, so the next report would silently drop them and
+  // the count would go backwards on screen.
+  tonight.active.forEach((row) => {
+    if (row.visitor) return;
+    const at = Date.parse(row.timestamp);
+    if (!Number.isFinite(at) || at <= rep.at) return;
+    add(identityKeysOfRow(row), displayClub(row.clubName));
+  });
+
+  const byClub = {};
+  slots.forEach((slot) => {
+    let club = slot.club;
+    if (!club) {
+      for (const k of slot.keys) {
+        if (clubByKey.has(k)) { club = clubByKey.get(k); break; }
+      }
+    }
+    const name = club || 'No club';
+    byClub[name] = (byClub[name] || 0) + 1;
+  });
+
+  return { source: 'report', at: rep.at, ageMs, checkedIn: slots.length, byClub };
 }
 
 // ── Tonight at a glance ───────────────────────────────────────────────────────
@@ -3782,9 +3966,13 @@ function tonightCheckins(history = loadHistory(), today = localDayISO()) {
 // director needs during the event: kids checked in per club, visitors, and the
 // safety flags for everyone currently in the building (allergies, birthdays,
 // no-photo kids). Each child counts once no matter how many reprints.
-function computeTonightStats(tonight = tonightCheckins()) {
-  const byClub = {};
-  let checkedIn = 0;
+//
+// `checkedIn` and `byClub` come from authoritativeTonight() - the report when
+// one is fresh, this printer's own history otherwise - and `countSource` says
+// which, so no surface has to guess. Everything else here stays history-derived
+// on purpose: the safety flags need a roster row, which the report has no idea
+// about, and `visitors` is a fact about what this printer printed.
+function computeTonightStats(tonight = tonightCheckins(), now = Date.now()) {
   let visitors = 0;
   const allergyKids = [];
   const birthdayKids = [];
@@ -3792,9 +3980,6 @@ function computeTonightStats(tonight = tonightCheckins()) {
 
   tonight.active.forEach(e => {
     const name = `${e.firstName || ''} ${e.lastName || ''}`.trim();
-    checkedIn++;
-    const club = (e.clubName || '').trim() || 'No club';
-    byClub[club] = (byClub[club] || 0) + 1;
     if (e.visitor) visitors++;
 
     const record = findClubber(e.firstName, e.lastName);
@@ -3805,12 +3990,19 @@ function computeTonightStats(tonight = tonightCheckins()) {
     if (noPhotoFor(record)) noPhotoKids.push(name);
   });
 
+  const auth = authoritativeTonight(tonight, now);
+
   return {
     date: tonight.date,
     prints: tonight.entries.length,
-    checkedIn,
+    checkedIn: auth.checkedIn,
     visitors,
-    byClub,
+    byClub: auth.byClub,
+    // Which measurement the two numbers above came from, and how old it is.
+    // Additive: every existing field keeps its meaning.
+    countSource: auth.source,
+    reportAt: auth.at ? new Date(auth.at).toISOString() : null,
+    reportAgeMs: auth.ageMs,
     allergyKids,
     birthdayKids,
     noPhotoKids
@@ -4289,6 +4481,13 @@ app.get('/preview', async (req, res) => {
 // failure costs a synchronous 400ms wait inside playTuneIfEnabled.
 async function reprintRow(entry, printerName, opts = {}) {
   const fullName = `${entry.firstName} ${entry.lastName}`;
+  // Belt and braces with the route's own guard above: this function is also
+  // reached from /reprint-range, and a recognition print that came back out of
+  // here as a plain check-in label would be counted as a child. Refuse rather
+  // than silently render the wrong artifact.
+  if (entry.isAward || entry.isConnectCard) {
+    return { ok: false, name: fullName, error: 'not a check-in label' };
+  }
   const effectivePrinter = (printerName && printerName.trim()) || entry.printer || PRINTER_NAME;
   const silent = opts.silent === true;
 
@@ -4405,6 +4604,20 @@ app.post('/reprint', async (req, res) => {
 
   if (!entry) {
     return res.status(404).json({ error: 'No matching print history entry found' });
+  }
+  // The name/clubberId lookup above already excludes non-check-in rows, but the
+  // INDEX path takes whatever row the client pointed at. An award slip or a
+  // connect card sent down the kid path below would render as a check-in label
+  // AND record a history row WITHOUT its isAward/isConnectCard flag - so
+  // isNonCheckinRow() would stop excluding it and an award slip would count as
+  // a child on every screen for the rest of the night. (Leader rows are fine:
+  // reprintRow has its own leader branch that keeps the flag.)
+  if (entry.isAward || entry.isConnectCard) {
+    return res.status(400).json({
+      error: entry.isAward
+        ? 'That row is an award slip, not a check-in label - reprint it from the award card.'
+        : 'That row is a connect card, not a check-in label.',
+    });
   }
 
   const r = await reprintRow(entry, req.body.printerName);
@@ -5206,15 +5419,26 @@ app.post('/feed/checkin-report', (req, res) => {
   if (!result.valid) return res.status(result.status || 400).json({ ok: false, error: result.reason });
   if (result.throttled) return res.json({ ok: true, throttled: true });
 
-  const outcome = reconcileHistoryWithReport(loadHistory(), result.payload.entries, Date.now());
+  const now = Date.now();
+  const outcome = reconcileHistoryWithReport(loadHistory(), result.payload.entries, now);
   if (outcome.skipped) {
     console.warn('[reconcile]', outcome.reason);
+    // Deliberately NOT stored as the authoritative report. A report the
+    // mass-undo guard just refused is precisely the report that would zero
+    // tonight's count if authoritativeTonight() believed it; the guard is the
+    // one place that judges whether a scrape is plausible, and this honours it.
     return res.json({ ok: true, applied: false, changed: 0, reason: outcome.reason });
   }
+  // Applied (even with nothing to change): this is now what the count is built
+  // from, until it goes stale or a newer one lands.
+  lastCheckinReport = { at: now, entries: result.payload.entries };
   if (outcome.changed > 0) {
     saveHistory(outcome.history);
-    publishTally();
   }
+  // Republished on EVERY applied report, not just a changed one: between polls
+  // the count ticks up optimistically from history, so the report landing is
+  // itself a correction the screens need even when no row moved.
+  publishTally();
   res.json({ ok: true, applied: true, changed: outcome.changed });
 });
 
@@ -5313,7 +5537,14 @@ app.post('/reset-tonight', (req, res) => {
     if (!isOnLocalDay(row.timestamp, today)) return row;
     if (row.undone === true) return row;
     undone++;
-    return { ...row, undone: true, undoneAt: nowIso };
+    // `undoneBy` is what makes the reset STICK. Without it,
+    // reconcileHistoryWithReport() treats these rows as its own earlier work
+    // and clears them again the moment TwoTimTwo's report still lists the
+    // kids, which it does for the rest of the night - so the operator's zero
+    // button un-zeroed itself within a minute. It is the same marker the
+    // phone's Remove uses, under its own name so the phone's "Add back" (which
+    // only reverses undoneBy === 'phone') cannot resurrect a reset night.
+    return { ...row, undone: true, undoneAt: nowIso, undoneBy: 'reset' };
   });
   if (undone) saveHistory(next);
 
@@ -5335,6 +5566,12 @@ app.post('/reset-tonight', (req, res) => {
     fs.writeFileSync(tmp, JSON.stringify(eventBuffer), 'utf8');
     fs.renameSync(tmp, EVENT_BUFFER_FILE);
   } catch (e) { console.warn('[reset] Could not persist emptied event buffer:', e.message); }
+
+  // Drop the report too. "Tonight never happened" has to mean it on every
+  // surface, and TwoTimTwo's report will go on listing those children for the
+  // rest of the evening - the `undoneBy: 'reset'` markers above cover the kids
+  // this printer knows about, and this covers anyone it does not.
+  lastCheckinReport = null;
 
   publishTally();
   console.log(`[reset] Tonight reset by operator: ${undone} check-in(s) marked undone, ledger ${ledgerTouched ? 'cleared for today' : 'untouched'}`);
@@ -5508,6 +5745,24 @@ function onClubNight(fn) {
   };
 }
 
+// An hour past the published end of club. The window in church-config.json is
+// when club RUNS, and it is load-bearing for other behaviour (the dashboard's
+// club-night badge, the extension's own polling cadence), so it is not the
+// thing to widen. But the last children are checked out after it, and the R-1
+// report keeps correcting the count for a while yet - and a lobby screen whose
+// tally simply stops arriving shows the 8 o'clock number all evening. So the
+// TALLY, and only the tally, keeps going for an extra hour.
+const TALLY_GRACE_MIN = 60;
+
+function onTallyWindow(fn) {
+  return () => {
+    try {
+      if (!events.isClubNightNow(churchConfig.clubNights, undefined, TALLY_GRACE_MIN)) return;
+      fn();
+    } catch (e) { /* scheduler must never die */ }
+  };
+}
+
 // Club-night publish timers are started by startListening() so a bare
 // require() of this module never spins up background work — but embedders
 // (the Electron shell) still get them the moment the server actually starts.
@@ -5552,7 +5807,7 @@ async function publishProvision() {
 
 function startClubNightTimers() {
   setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
-  setInterval(onClubNight(publishTally), 60 * 1000);
+  setInterval(onTallyWindow(publishTally), 60 * 1000);
   setInterval(onClubNight(publishBirthdays), 10 * 60 * 1000);
   // Provision heartbeat: NOT club-night-gated and load-bearing — Pusher's cache
   // holds the last frame for ~30 minutes, so this is what a screen switched on
@@ -6091,6 +6346,23 @@ app.get('/health', async (req, res) => {
       message: 'Rehearsal mode is ON: every label prints with a TEST band and nothing is recorded or broadcast as real. Turn it off before real check-ins (it auto-disarms 2 hours after arming).',
     });
   }
+  // Where tonight's number is coming from. Only the FALLBACK is a warning: the
+  // report-backed count is the normal, good state and a yellow box that is up
+  // 165 hours a week is a yellow box people learn to ignore. Gated on the club
+  // window (or on a report having landed today and then gone stale), because
+  // "no report at 3pm on a Tuesday" is not news.
+  const tallyNow = authoritativeTonight();
+  if (tallyNow.source === 'history'
+      && (events.isClubNightNow(churchConfig.clubNights) || lastCheckinReport)) {
+    const mins = lastCheckinReport ? Math.round((Date.now() - lastCheckinReport.at) / 60000) : null;
+    warnings.push({
+      type: 'tally-source',
+      message: mins === null
+        ? "Tonight's count is from the printer's own history; TwoTimTwo's check-in report has not been received tonight. Open the check-in page in Chrome so the extension can read it."
+        : `Tonight's count is from the printer's own history; the TwoTimTwo report has not been received in ${mins} minute${mins === 1 ? '' : 's'}. Check that the check-in page is still open in Chrome.`,
+    });
+  }
+
   const unverified = feeds.getUnverifiedCheckins(Date.now());
   if (unverified.length) {
     const names = unverified.map(e => e.name).join(', ');
@@ -6112,6 +6384,13 @@ app.get('/health', async (req, res) => {
     uptime: Math.round(process.uptime()),
     warnings,
     clubNight: events.isClubNightNow(churchConfig.clubNights),
+    // Which measurement tonight's number came from, as data rather than prose,
+    // so the dashboard can label the Tonight card without parsing a sentence.
+    tallySource: {
+      source: tallyNow.source,
+      at: tallyNow.at ? new Date(tallyNow.at).toISOString() : null,
+      ageMs: tallyNow.ageMs,
+    },
     pusher: events.getPublishState(),
     // Never the key itself — only whether one is installed, plus its public
     // `kid` fingerprint, which is what lets a screen confirm it holds the SAME
@@ -6751,6 +7030,11 @@ app.post('/phone/tonight', (req, res) => {
     checkedIn: st.checkedIn,
     visitors: st.visitors,
     byClub: st.byClub,
+    // 'report' or 'history' — the phone shows the same number the lobby screen
+    // does, so it has to be able to say where that number came from. Note the
+    // list below is always this printer's own rows: in report mode it can hold
+    // an unregistered visitor who is deliberately not in `checkedIn`.
+    countSource: st.countSource,
     entries: t.active.map(e => ({
       key: historyIdentityKey(e),
       firstName: e.firstName || '',
@@ -6810,7 +7094,7 @@ app.post('/phone/restore', (req, res) => {
 // in, so the door laptop records the real check-in; otherwise the same kid
 // would get a name-keyed visitor row AND an id-keyed detection row and count
 // twice. Rehearsal mode still yields a TEST label with nothing recorded, and
-// the 25 s duplicate window inside performCheckinPrint absorbs a double-tap.
+// the duplicate window inside performCheckinPrint absorbs a double-tap.
 app.post('/phone/visitor', async (req, res) => {
   const b = req.body || {};
   const { firstName, lastName } = splitFullName(security.sanitizeStoredText(b.name || '', 160));
@@ -7132,6 +7416,12 @@ module.exports = {
   // (short, over, explained by walk-ins, stale, no source) is unit-tested
   // without a browser or a live report.
   compareCounts, countsForCompare, SOURCE_COUNT_STALE_MS,
+  // Tonight's count. authoritativeTonight() is THE definition every surface
+  // reads; the setter exists so a test can put the server in report mode (and
+  // in stale-report mode) without a scrape, a socket or a wall-clock wait.
+  authoritativeTonight, REPORT_FRESH_MS, TALLY_GRACE_MIN,
+  _setLastCheckinReportForTests(report) { lastCheckinReport = report; },
+  _getLastCheckinReportForTests() { return lastCheckinReport; },
   // Attendance audit (#311) — the diff is PURE so "unknown is not zero" and
   // "additive only" are exhaustively testable without a browser or a scrape.
   auditAttendance, ATTENDANCE_GRID_STALE_MS,
@@ -7141,6 +7431,10 @@ module.exports = {
   // Phone Tonight tab: the shared "who is checked in" set and the manual
   // undo/restore that must survive reconcile — pure, so they are unit-tested.
   tonightCheckins, markManualUndo, clearManualUndo, splitFullName,
+  // The duplicate-print window, exported so a test that has to wait it out
+  // reads the real number instead of a copy that drifts (it was 25s while the
+  // extension's own client timeout was 35s, which is the bug it now outlasts).
+  DUPLICATE_WINDOW_MS,
   shouldSendUpdateBeacon, parseLatestChangeEntry, extensionSkew,
   // Attendance ledger — exported so the id-migration and the auto-connect-card
   // signals (firstEver / priorNightExists) can be unit-tested against a temp

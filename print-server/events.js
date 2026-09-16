@@ -490,16 +490,28 @@ function parseHM(s) {
   return h * 60 + min;
 }
 
-function isClubNightNow(clubNights, date) {
+// `graceMinutes` pushes the END of each window out without moving the window
+// itself, for the one caller that legitimately outlives club time: the periodic
+// tally. The last children of the night are checked out after the published end
+// time, and a lobby screen that stops being told the number goes stale rather
+// than quiet. Everything else (recap, birthdays) still uses the real window, so
+// the channel stays silent the other ~165 hours a week. Clamped to midnight
+// rather than rolled into the next day - a window that ends at 23:30 gets its
+// grace up to 24:00 and no further, which is honest about what this function
+// can express (one day, one window).
+function isClubNightNow(clubNights, date, graceMinutes = 0) {
   if (!Array.isArray(clubNights)) return false;
   const d = date instanceof Date && !isNaN(date.getTime()) ? date : new Date();
   const mins = d.getHours() * 60 + d.getMinutes();
+  const graceRaw = Number(graceMinutes);
+  const grace = Number.isFinite(graceRaw) ? Math.max(0, Math.round(graceRaw)) : 0;
   return clubNights.some(w => {
     if (!w || typeof w !== 'object') return false;
     if (Number(w.dow) !== d.getDay()) return false;
     const start = parseHM(w.start);
     const end = parseHM(w.end);
-    return start !== null && end !== null && mins >= start && mins < end;
+    if (start === null || end === null) return false;
+    return mins >= start && mins < Math.min(end + grace, 24 * 60);
   });
 }
 

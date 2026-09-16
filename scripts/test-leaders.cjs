@@ -249,7 +249,7 @@ async function main() {
     check('and is NOT remembered',
       !(await j('/leaders')).body.leaders.some((l) => nameOf(l) === 'Rehearsal Only'));
 
-    // The 25 s window still absorbs a double-tap.
+    // The duplicate window still absorbs a double-tap.
     const dup = await post('/print-leader', { name: 'Cara Leader', clubName: 'Journey' });
     check('a double-tap is suppressed', dup.body.duplicate === true);
 

@@ -111,7 +111,8 @@ async function main() {
   process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH}`;
 
   // Distinct children per phase: the server suppresses a repeat print of the
-  // same child within 25s, so reusing one name makes later phases test nothing.
+  // same child inside DUPLICATE_WINDOW_MS, so reusing one name makes later
+  // phases test nothing.
   fs.writeFileSync(path.join(dataDir, 'clubbers.csv'),
     // The Inactive column and Erin exist for the phone's Not-here-yet tab:
     // loadClubbers() keeps every row the CSV ever had, so a former clubber
@@ -174,7 +175,7 @@ async function main() {
       JSON.stringify(h.body.warnings));
 
     amyPrintedAt = Date.now(); // phase 7 (R-1 undo detection) reuses her to prove the
-    // 25s duplicate-print window doesn't block a re-check-in "minutes later" —
+    // duplicate-print window doesn't block a re-check-in "minutes later" —
     // by the time that phase runs, real wall-clock time has already done the
     // waiting for us.
     await post('/print', { firstName: 'Amy', lastName: 'Tester', clubName: 'Sparks' });
@@ -601,14 +602,18 @@ async function main() {
     check('she is undone again ahead of the re-check-in test',
       kidsByName((await post('/phone/roster', {})).body).get('Amy Tester') === false);
 
-    // ── The 25s duplicate-print window (recordPrint/dupKey) must not block a
+    // ── The duplicate-print window (recordPrint/dupKey) must not block a
     // real re-check-in minutes later — only an immediate retry of the SAME
     // request. Amy's ORIGINAL /print call was all the way back in phase 1;
     // everything phases 2-6 did is real wall-clock time that has already
     // elapsed since then, so this proves the window against the actual /print
     // path a re-check-in takes, with no artificial shortcut around it.
     const elapsed = Date.now() - amyPrintedAt;
-    const remaining = 25200 - elapsed; // DUPLICATE_WINDOW_MS (25000) + margin
+    // Read from the server rather than copied here: the window was raised to
+    // 45s in 6.14.0 (it has to outlast the extension's own 35s client timeout,
+    // or the retry after an abort prints a second label), and a hardcoded copy
+    // would have gone on "proving" the old number.
+    const remaining = server.DUPLICATE_WINDOW_MS + 200 - elapsed;
     if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
 
     const reprint = await post('/print', { firstName: 'Amy', lastName: 'Tester', clubName: 'Sparks' });
@@ -863,7 +868,20 @@ async function main() {
     const t1 = (await post('/phone/tonight', {})).body;
     const vera = t1.entries.find((e) => e.firstName === 'Vera');
     check('the visitor is on the list, flagged, in her club', vera && vera.visitor === true && vera.clubName === 'Cubbies', JSON.stringify(vera));
-    check('byClub and visitors reflect her', t1.byClub.Cubbies === 1 && t1.visitors === 1, JSON.stringify(t1));
+    // 6.14.0 changed this deliberately. While TwoTimTwo's own check-in report
+    // is fresh, THAT is the count, and an unregistered visitor is by
+    // definition not on it and never will be (the owner's call: a visitor the
+    // church has no record of is not part of the official headcount). So Vera
+    // is on the list, flagged, and counted in `visitors` — but she does not
+    // move checkedIn or byClub while a report is speaking. `countSource` is
+    // what makes that visible instead of mysterious.
+    check('the report is the count, so an unregistered visitor is not in it',
+      t1.countSource === 'report' && t1.checkedIn === stats0.checkedIn
+      && t1.byClub.Cubbies === undefined,
+      JSON.stringify(t1));
+    check('she is still flagged as a visitor and listed by name',
+      t1.visitors === 1 && t1.entries.some((e) => e.firstName === 'Vera' && e.visitor === true),
+      JSON.stringify(t1));
     check('a double-tap is a duplicate', (await post('/phone/visitor', { name: 'Vera Visitor', clubName: 'Cubbies' })).body.duplicate === true);
     const onRoster = await post('/phone/visitor', { name: 'Dana Tester' });
     check('a roster name is refused with 409 and pointed at Check in', onRoster.status === 409 && /Check in/.test(onRoster.body.error || ''), JSON.stringify(onRoster.body));
