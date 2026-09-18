@@ -120,6 +120,7 @@
       <div class="card-body stat">
         <div class="value" id="roster-count">--</div>
         <div class="label">Clubbers in Roster</div>
+        <div id="roster-consent" style="display:none;margin-top:6px;font-size:11px;line-height:1.4;color:#64748b;text-align:left"></div>
       </div>
     </div>
     <div class="card">
@@ -1051,7 +1052,32 @@ function loadTonightStats() {
 function loadRoster() {
   fetch(BASE + '/roster-status').then(function(r) { return r.json(); }).then(function(data) {
     document.getElementById('roster-count').textContent = data.count || 0;
+    renderRosterConsent(data.consent);
   });
+}
+
+// What the roster's two release columns actually say, as value counts (never
+// names), and how many children the no-photo camera will print for. This is
+// the readout for "no camera icons are showing up": if it says 0 flagged and
+// lists a spelling this app does not know, that spelling is the bug.
+function describeValues(bucket) {
+  var keys = Object.keys(bucket || {}).sort(function(a, b) { return bucket[b] - bucket[a]; });
+  if (!keys.length) return '(no values)';
+  return keys.slice(0, 8).map(function(v) {
+    return (v === '' ? 'blank' : '\u201C' + esc(v) + '\u201D') + ' \u00D7' + bucket[v];
+  }).join(', ') + (keys.length > 8 ? ', \u2026' : '');
+}
+function renderRosterConsent(c) {
+  var el = document.getElementById('roster-consent');
+  if (!el) return;
+  if (!c || !c.total) { el.style.display = 'none'; return; }
+  var color = c.flagged > 0 ? '#16a34a' : (c.unrecognized && c.unrecognized.length ? '#b45309' : '#64748b');
+  var html = '<div style="font-weight:700;color:' + color + '">\uD83D\uDCF7\uD83D\uDEAB ' + c.flagged + ' no-photo' +
+    (c.flagged === 0 && c.unrecognized && c.unrecognized.length ? ' \u2014 unrecognized values, see warning' : '') + '</div>';
+  html += '<div>Photo Release?: ' + (c.hasPhotoColumn ? describeValues(c.photoValues) : '<em>column missing</em>') + '</div>';
+  html += '<div>Med Release?: ' + (c.hasMedColumn ? describeValues(c.medValues) : '<em>column missing</em>') + '</div>';
+  el.innerHTML = html;
+  el.style.display = 'block';
 }
 
 // Load print history

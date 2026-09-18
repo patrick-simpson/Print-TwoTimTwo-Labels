@@ -27,6 +27,7 @@ const path = require('path');
 
 const {
   parseCSV, normalizeHeader, findClubberIn, parseNoPhoto, noPhotoFor,
+  parseYesRelease, rosterConsentSummary, consentWarningFor,
   parseAllergies, isSafePrinterName,
   effectiveHandbookGroup, reconcileHistoryWithReport, reportEntryIdentityKey,
   tonightCheckins, markManualUndo, clearManualUndo, computeTonightStats, isNonCheckinRow, splitFullName,
@@ -145,6 +146,67 @@ console.log('parseNoPhoto — an explicit "no" in either release column flags');
   check('Ben (med=y, photo=n) → no-photo flag', noPhotoFor(ben) === true);
   check('Cal (both blank) → photos allowed', noPhotoFor(cal) === false);
   check('legacy single-column fallback still works', parseNoPhoto('No') === true);
+}
+
+console.log('parseNoPhoto — every spelling of "the family said no" flags; unknowns never do');
+{
+  // TwoTimTwo has changed this column's shape once already without notice
+  // (v5.8.2). A consent flag fails toward protection, so a word, a word with a
+  // note, or a volunteer's phrase all flag; blank / "?" / "N/A" never do.
+  ['n', 'N', 'no', 'No', 'NO ', 'false', '0', 'Declined', 'declined - see mom',
+   'Not signed', 'Unsigned', 'Opt out', 'opted-out', 'No photos please', 'no pics',
+   'N (9/1/26)', 'Do not photograph', 'Denied', 'Refused', 'Not on file', 'None']
+    .forEach(v => check(`flags ${JSON.stringify(v)}`, parseNoPhoto(v) === true));
+  ['y', 'Y', 'yes', 'Yes', 'true', '1', '', '?', 'N/A', 'na', 'NA', 'unknown', 'pending',
+   'Signed', 'Signed 9/1/2026', 'Yes - all media', 'Nora', 'Nathan', 'Not sure', 'Needs form', 'new', null, undefined]
+    .forEach(v => check(`does not flag ${JSON.stringify(v)}`, parseNoPhoto(v) === false));
+  check('parseYesRelease reads a clear yes', parseYesRelease('Yes') && parseYesRelease('y') && parseYesRelease('Signed 9/1/2026'));
+  check('parseYesRelease is not fooled by a no or a blank', !parseYesRelease('No') && !parseYesRelease('') && !parseYesRelease('?'));
+}
+
+console.log('normalizeHeader — a renamed consent column still lands on its key');
+{
+  check('"Photo/Video Release?" → PhotoRelease', normalizeHeader('Photo/Video Release?') === 'PhotoRelease');
+  check('"Photo Release (Y/N)" → PhotoRelease', normalizeHeader('Photo Release (Y/N)') === 'PhotoRelease');
+  check('"Media Consent" → PhotoRelease', normalizeHeader('Media Consent') === 'PhotoRelease');
+  check('"Medical Release Signed?" → MedRelease', normalizeHeader('Medical Release Signed?') === 'MedRelease');
+  check('"Release Notes" is left alone', normalizeHeader('Release Notes') === 'Release Notes');
+}
+
+console.log('rosterConsentSummary — the dashboard readout for "no camera icons"');
+{
+  const rows = parseCSV(FIXTURE);
+  const sum = rosterConsentSummary(rows);
+  check('sees both columns', sum.hasMedColumn && sum.hasPhotoColumn);
+  check('counts every row', sum.total === 3);
+  check('flags Amy and Ben', sum.flagged === 2, `got ${sum.flagged}`);
+  check('tallies Med values', sum.medValues.n === 1 && sum.medValues.y === 1 && sum.medValues[''] === 1, JSON.stringify(sum.medValues));
+  check('no unrecognized values in a y/n roster', sum.unrecognized.length === 0);
+  check('healthy roster → no warning', consentWarningFor(sum) === null);
+
+  // The failure this exists for: an export whose values this app cannot read.
+  const odd = rows.map(r => Object.assign({}, r, { MedRelease: 'Form B', PhotoRelease: 'Form B' }));
+  const oddSum = rosterConsentSummary(odd);
+  check('odd spelling flags nobody', oddSum.flagged === 0);
+  check('odd spelling is listed', oddSum.unrecognized.length === 1 && oddSum.unrecognized[0] === 'Form B', JSON.stringify(oddSum.unrecognized));
+  const msg = consentWarningFor(oddSum);
+  check('odd spelling → warning quoting the value', /"Form B"/.test(msg || ''), msg);
+  check('warning carries no names', !/Amy|Ben|Cal|Zephyr/.test(msg || ''));
+
+  // Columns missing altogether.
+  const bare = rows.map(r => { const c = Object.assign({}, r); delete c.MedRelease; delete c.PhotoRelease; return c; });
+  check('missing columns → warning', /no "Med Release\?" or "Photo Release\?" column/.test(consentWarningFor(rosterConsentSummary(bare)) || ''));
+  // Mixed: some children flag, but most cells are unreadable → still warn.
+  const mixed = rows.map((r, i) => Object.assign({}, r, { MedRelease: i === 0 ? 'No' : 'Form B', PhotoRelease: 'Form B' }));
+  const mixedMsg = consentWarningFor(rosterConsentSummary(mixed));
+  check('mostly-unreadable roster warns even with a flag', /not recognized as yes or no/.test(mixedMsg || ''), mixedMsg);
+  // One stray note on an otherwise clean roster stays quiet.
+  const stray = rows.map((r, i) => Object.assign({}, r, { MedRelease: i === 0 ? 'No' : 'Yes', PhotoRelease: i === 2 ? 'see notes' : 'Yes' }));
+  check('one stray value on a readable roster → no warning', consentWarningFor(rosterConsentSummary(stray)) === null);
+  // Blank everywhere is quiet: rosters that never used the column are unaffected.
+  const blank = rows.map(r => Object.assign({}, r, { MedRelease: '', PhotoRelease: '' }));
+  check('all blank → no warning', consentWarningFor(rosterConsentSummary(blank)) === null);
+  check('empty roster → no warning', consentWarningFor(rosterConsentSummary([])) === null);
 }
 
 console.log('findClubberIn — id-first lookup');

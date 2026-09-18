@@ -311,7 +311,18 @@ function normalizeHeader(raw) {
   // columns with a question mark ("Med Release?", "Photo Release?") which
   // otherwise never match the map.
   const key = raw.toLowerCase().replace(/[_\s]+/g, ' ').replace(/[?!.:]+$/, '').trim();
-  return HEADER_MAP[key] || raw;  // keep original if no mapping found
+  if (HEADER_MAP[key]) return HEADER_MAP[key];
+  // The two consent columns get a shape match as well as the exact one. A
+  // renamed export ("Photo/Video Release?", "Photo Release (Y/N)", "Medical
+  // Release Signed?") used to fall straight through as an unknown header, and
+  // an unknown header means noPhotoFor() never sees the column: every child
+  // prints as photographable and nothing says why. Consent is the one field
+  // where silently losing the column is worse than an imperfect match.
+  if (/release|consent|permission|waiver/.test(key)) {
+    if (/photo|picture|pictures|image|video|media/.test(key)) return 'PhotoRelease';
+    if (/\bmed\b|medical/.test(key)) return 'MedRelease';
+  }
+  return raw;  // keep original if no mapping found
 }
 
 function parseCSV(raw) {
@@ -442,6 +453,13 @@ function loadClubbers() {
       // Log a few sample names to verify parsing
       const samples = rows.slice(0, 3).map(r => `${r.FirstName} ${r.LastName}`).join(', ');
       console.log(`[csv] Sample names: ${samples}`);
+      // And what the consent columns hold, as value counts. This is the line
+      // to read when "no camera icons are printing": it shows the literal
+      // spellings TwoTimTwo exported and how many rows they flagged.
+      const consent = rosterConsentSummary(rows);
+      console.log(`[csv] Photo consent: ${consent.flagged} of ${consent.total} flagged no-photo | Med Release? ${consent.hasMedColumn ? describeConsentColumns(consent.medValues) : '(column missing)'} | Photo Release? ${consent.hasPhotoColumn ? describeConsentColumns(consent.photoValues) : '(column missing)'}`);
+      const consentMsg = consentWarningFor(consent);
+      if (consentMsg) console.warn(`[csv] WARNING: ${consentMsg}`);
     } else {
       console.log('[csv] clubbers.csv is empty or has no data rows');
     }
@@ -1148,12 +1166,111 @@ const ALLERGY_EMOJI = {
 };
 
 // ── Med Release parser ────────────────────────────────────────────────────────
-// The roster's Med Release column is y/n. Only an explicit "no" flags the
-// label with a crossed-out camera (do-not-photograph) icon — blank, missing,
-// or unrecognized values print nothing, so rosters without the column are
-// unaffected.
+// The roster's release columns are nominally y/n. Only an explicit "no" flags
+// the label with a crossed-out camera (do-not-photograph) icon — blank,
+// missing, "?" and unrecognized values print nothing, so rosters without the
+// column are unaffected.
+//
+// "Explicit no" is read generously on purpose. A consent flag must fail toward
+// protection, and TwoTimTwo's export has already changed the spelling once
+// without notice: besides the bare y/n the column can carry a word ("No",
+// "Declined", "Not signed", "Opt out"), a word with a note after it ("No -
+// see mom", "N (2026-09-01)"), or a "no photos" phrase typed by a volunteer.
+// All of those mean the family said no and all of them flag. What never flags:
+// blank, "?", "unknown", "pending", "N/A" and friends, because "we do not know"
+// is not "they said no" and a camera on every unanswered child would train
+// leaders to ignore the icon.
+const NO_PHOTO_UNKNOWN = /^(\?|n\/?a|na|none given|not asked|not answered|unknown|unk|pending|tbd|not sure|maybe)$/i;
+const NO_PHOTO_NEGATIVE = new RegExp([
+  // a bare negative word, alone or followed by punctuation / a note
+  '^(n|no|nope|none|false|0|f|nein|non|declined?|denied|deny|refused?|withheld|withhold)(?![a-z])',
+  // negative phrases anywhere in the value
+  '\\b(not?[ -]?(signed|granted|permitted|allowed|approved|returned|received|on file|consented)|unsigned|opt(ed)?[ -]?out|do(es)? ?not|don\'t|no ?photo\\w*|no ?pic\\w*|no ?media|no ?video|no ?release|no ?consent|no ?permission)',
+].join('|'), 'i');
 function parseNoPhoto(value) {
-  return /^(n|no|false|0)$/i.test(String(value == null ? '' : value).trim());
+  const v = String(value == null ? '' : value).trim();
+  if (!v || NO_PHOTO_UNKNOWN.test(v)) return false;
+  return NO_PHOTO_NEGATIVE.test(v);
+}
+
+// The mirror image, for diagnostics only: does a release value read as a
+// clear "yes"? Anything that is neither a yes nor a no is "unrecognized", and
+// a roster whose consent columns hold ONLY unrecognized values is exactly the
+// silent failure this file has had twice - the dashboard and /health now say
+// so, with the literal values, instead of printing every child as
+// photographable and leaving the operator to notice at the door.
+const YES_RELEASE = /^(y|yes|yep|true|1|t|ok|okay|signed|granted|approved|on file|received|consented?|allowed|permitted)(?![a-z])/i;
+function parseYesRelease(value) {
+  const v = String(value == null ? '' : value).trim();
+  return !!v && YES_RELEASE.test(v) && !parseNoPhoto(v);
+}
+
+// What the roster's consent columns actually contain, as counts of distinct
+// values (never names). `flagged` is how many rows noPhotoFor() marks;
+// `unrecognized` lists non-blank values that read as neither yes nor no.
+// Values are truncated so a stray free-text column cannot flood a log line.
+function rosterConsentSummary(rows) {
+  const summary = {
+    total: Array.isArray(rows) ? rows.length : 0,
+    hasMedColumn: false,
+    hasPhotoColumn: false,
+    medValues: {},
+    photoValues: {},
+    flagged: 0,
+    unrecognized: [],
+    // Non-blank cells across both columns, and how many of them read as
+    // neither yes nor no. The warning below is scaled by these, so one stray
+    // "see notes" on a healthy roster does not shout every night.
+    nonBlank: 0,
+    unrecognizedCount: 0,
+  };
+  if (!summary.total) return summary;
+  const seenUnrecognized = new Set();
+  const tally = (bucket, value) => {
+    const v = String(value == null ? '' : value).trim().slice(0, 40);
+    bucket[v] = (bucket[v] || 0) + 1;
+    if (!v) return;
+    summary.nonBlank++;
+    if (!parseNoPhoto(v) && !parseYesRelease(v) && !NO_PHOTO_UNKNOWN.test(v)) {
+      seenUnrecognized.add(v);
+      summary.unrecognizedCount++;
+    }
+  };
+  rows.forEach(r => {
+    if (!r || typeof r !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(r, 'MedRelease')) { summary.hasMedColumn = true; tally(summary.medValues, r.MedRelease); }
+    if (Object.prototype.hasOwnProperty.call(r, 'PhotoRelease')) { summary.hasPhotoColumn = true; tally(summary.photoValues, r.PhotoRelease); }
+    if (noPhotoFor(r)) summary.flagged++;
+  });
+  summary.unrecognized = Array.from(seenUnrecognized).sort().slice(0, 12);
+  return summary;
+}
+
+// One line for the console and one sentence for /health. `null` when the
+// roster gives no cause for concern (some child is flagged, or every value
+// present is a recognized yes/no), so the warning list stays quiet on a
+// healthy night.
+function describeConsentColumns(bucket) {
+  return Object.keys(bucket).sort((a, b) => bucket[b] - bucket[a])
+    .map(v => `${JSON.stringify(v)} x${bucket[v]}`).join(', ') || '(none)';
+}
+function consentWarningFor(summary) {
+  if (!summary || !summary.total) return null;
+  if (!summary.hasMedColumn && !summary.hasPhotoColumn) {
+    return 'The roster has no "Med Release?" or "Photo Release?" column, so no label can carry the no-photo camera. Check which columns TwoTimTwo is exporting.';
+  }
+  if (!summary.unrecognizedCount) return null;
+  const listed = summary.unrecognized.map(v => JSON.stringify(v)).join(', ');
+  const detail = `Photo Release? values: ${describeConsentColumns(summary.photoValues)}. Med Release? values: ${describeConsentColumns(summary.medValues)}. If one of those means "no photos", report it so the label can flag it.`;
+  if (summary.flagged === 0) {
+    return `No child is flagged no-photo, and the release columns hold values this app does not recognize as yes or no: ${listed}. ${detail}`;
+  }
+  // Some children flag, but a real share of the cells still cannot be read:
+  // three or more of them AND at least a quarter of everything filled in.
+  if (summary.unrecognizedCount >= 3 && summary.unrecognizedCount * 4 >= summary.nonBlank) {
+    return `${summary.unrecognizedCount} release value(s) are not recognized as yes or no: ${listed}. Children with those values print WITHOUT the no-photo camera. ${detail}`;
+  }
+  return null;
 }
 
 // The do-not-photograph flag for a roster row: an explicit "no" in EITHER
@@ -2852,7 +2969,9 @@ app.use(express.static(path.join(__dirname, 'public')));  // serve static files 
 // Health endpoint defined below with enhanced warnings
 
 app.get('/roster-status', (req, res) => {
-  res.json({ count: clubbers.length });
+  // `consent` is counts of distinct release values and how many rows flag
+  // no-photo: never a name, so it is as safe to read as the count itself.
+  res.json({ count: clubbers.length, consent: rosterConsentSummary(clubbers) });
 });
 
 app.get('/printers', (req, res) => {
@@ -6166,6 +6285,10 @@ async function checkPrinterWarnings() {
       if (ageHours > 24) {
         warnings.push({ type: 'csvStale', message: `clubbers.csv is ${Math.round(ageHours)}h old` });
       }
+      // A roster whose consent columns nobody can read is a silent consent
+      // failure (every child prints photographable). Say so, with the values.
+      const consentMsg = consentWarningFor(rosterConsentSummary(rows));
+      if (consentMsg) warnings.push({ type: 'photoRelease', message: consentMsg });
     }
   } catch (e) { /* ignore */ }
 
@@ -7407,6 +7530,7 @@ module.exports = {
   // Pure helpers exported for scripts/test-server-helpers.cjs — they carry
   // the assumptions about TwoTimTwo's real /clubber/csv export format.
   parseCSV, normalizeHeader, findClubberIn, parseNoPhoto, noPhotoFor,
+  parseYesRelease, rosterConsentSummary, consentWarningFor,
   isSafePrinterName,
   parseAllergies,
   historyRowMatches, historyIdentityKey, distinctChildrenPrintedToday,

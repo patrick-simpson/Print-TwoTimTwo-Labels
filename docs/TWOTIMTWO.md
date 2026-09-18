@@ -218,10 +218,24 @@ whitespace-collapsed, trailing `?!.:` stripped):
 | `Handbook Group` / `Group` | `HandbookGroup` / `Group` | table-sorting line on label |
 | `Birthdate` | `Birthdate` | birthday-week cake |
 | `Notes` | `Notes` | **allergy source** (no dedicated allergy column) |
-| `Med Release?` | `MedRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
-| `Photo Release?` | `PhotoRelease` | **no-photo camera icon** — an explicit "no" in either release column flags |
+| `Med Release?` | `MedRelease` | **no-photo camera icon** — an explicit "no" in either release column flags (any spelling of no, see §3.4) |
+| `Photo Release?` | `PhotoRelease` | **no-photo camera icon** — an explicit "no" in either release column flags (any spelling of no, see §3.4) |
 | `Share Balance` | `ShareBalance` | Store-Night shares badge (also see §5) |
 | `Leader Notes` | `LeaderNotes` | (reserved) |
+
+### 3.4 Consent column values (verified 2026-09-18 to be the open question)
+The register form stores `med_release` as `Y|N|?`, and the export has carried
+`y`/`n` for it in the past (v5.8.2's field data). What the two columns hold
+**today** is not confirmed: labels stopped carrying the camera icon in
+September 2026 with the y/n reader unchanged and verified. `parseNoPhoto()`
+therefore accepts any value that starts with a negative word or carries a
+negative phrase, and never flags blank / `?` / `N/A` / `unknown` / `pending`.
+`normalizeHeader()` also shape-matches renamed consent headers (release /
+consent / permission / waiver + photo / picture / video / media → `PhotoRelease`,
++ med / medical → `MedRelease`). The dashboard's roster card and the
+`[csv] Photo consent:` console line print the literal values with counts;
+whatever they show for a known no-photo child is the ground truth to bring
+back here.
 
 ### 3.2 Quoting rules the parser must survive
 - UTF-8 BOM sometimes present (stripped before parse).

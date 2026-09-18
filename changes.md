@@ -21,6 +21,21 @@ Free-text labels, and a tonight count that comes from TwoTimTwo instead of from 
 
 Two new suites: `npm run test:custom` (51 checks - the input rules, the wrap, "no history row, no wire frame, no count change", the duplicate window, and all three surfaces) and `npm run test:tonight` (67 checks - both count modes, the freshness boundary, the identity collapse, Remove and Reset against a report that disagrees, the visitor rule, the reprint guard, the grace window on a fake clock, and the `/health` wording). `npm run test:extension` gains 22 for the walk-in matcher, and there is one new golden baseline for the custom label. One assertion in `test-server-realtime.cjs` was updated on purpose, to pin the new visitor rule rather than the old one. 21 suites, 0 failures.
 
+## [6.15.0] - 2026-09-18
+No child was printing with the no-photo camera. The code path was verified end to end (a roster in TwoTimTwo's real 66-column shape with "N" under either release column draws the crossed-out camera), so the failure is in what the export now says, not in how the label reads it. This release makes the reader tolerant of the spellings TwoTimTwo could plausibly be using, and, more importantly, makes the dashboard show the literal values so a consent failure can never again be silent.
+
+### The no-photo flag reads every spelling of "no"
+`parseNoPhoto()` used to accept exactly `n`, `no`, `false` and `0`. It now flags any value that starts with a negative word (`No`, `Declined`, `Denied`, `Refused`, `None`, `N (9/1/26)`, `No - see mom`) and any value carrying a negative phrase (`Not signed`, `Unsigned`, `Not returned`, `Not on file`, `Opt out`, `Do not photograph`, `No photos`, `no pics`, `no media`). Blank, `?`, `N/A`, `unknown`, `pending` and the like still mean "not answered" and never flag: a camera on every unanswered child would train leaders to ignore the icon. Names that begin with N (`Nathan`, `Nora`) do not flag either; the negative word has to stand alone.
+
+### A renamed consent column still lands on its key
+`normalizeHeader()` keeps the exact-name map but adds a shape match for the two consent columns: any header containing release / consent / permission / waiver together with photo / picture / image / video / media maps to `PhotoRelease`, and with med / medical to `MedRelease`. `Photo/Video Release?`, `Photo Release (Y/N)` and `Medical Release Signed?` all resolve now, where before they fell through as unknown headers and the column vanished from every label.
+
+### The dashboard shows what the release columns actually say
+`GET /roster-status` now carries a `consent` summary: whether each column is present, a count of every distinct value in it, how many children are flagged no-photo, and which non-blank values read as neither yes nor no. The roster card on the dashboard renders it under the clubber count (values only, never names). `/health` raises a `{type:'photoRelease'}` warning when the roster has no release column at all, when nobody is flagged and an unreadable value is present, or when three or more cells and at least a quarter of the filled-in ones are unreadable. The console logs the same line on every roster load: `[csv] Photo consent: N of M flagged no-photo | Med Release? "Y" x120, "N" x3 | Photo Release? "" x123`. That line, or the roster card, is what to read the next time the camera icon goes missing.
+
+### Tests
+`scripts/test-server-helpers.cjs` pins 21 flagging spellings and 22 non-flagging ones, the renamed-header matches, the summary counts, and the warning in each of its three shapes (columns missing, nothing flagged, mostly unreadable), including that the warning never carries a name.
+
 ## [6.13.0] - 2026-09-09
 The display login can hand a new screen its settings address too, not just the secrets.
 
