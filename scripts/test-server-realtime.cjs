@@ -923,6 +923,43 @@ async function main() {
       JSON.stringify(ledger));
   }
 
+  // ── Screen season rides the tally (#16/#18) ──────────────────────────────
+  // The labels stopped wearing the season in the 2026-27 rebrand; the setting
+  // stayed, renamed "Screen season" on the dashboard, because it is what tells
+  // the lobby screens which skin to wear. Its config key (seasonTheme) and its
+  // payload field (tally.season) are the signage app's contract, so neither
+  // may move. The retired collectible-of-the-week toggle must save harmlessly.
+  console.log('\nrealtime: the Screen season broadcast');
+  {
+    const lastTallySeason = async () => {
+      const before = wire.filter((w) => w.event === 'tally').length;
+      await post('/reset-tonight', { confirm: true });   // publishes a tally at once
+      const tallies = wire.filter((w) => w.event === 'tally');
+      return tallies.length > before ? { season: tallies[tallies.length - 1].payload.season } : null;
+    };
+
+    const saved = await post('/config', { seasonTheme: 'winter', collectibleIcons: false });
+    check('a pinned Screen season saves (and a stale collectibleIcons field does not break the save)',
+      saved.status === 200, JSON.stringify(saved.body));
+    check('it is stored under the old key, seasonTheme', onDisk().seasonTheme === 'winter', JSON.stringify(onDisk()));
+    check('the retired collectibleIcons toggle is not written', !('collectibleIcons' in onDisk()), JSON.stringify(onDisk()));
+    const pinned = await lastTallySeason();
+    check('the tally carries the pinned season', pinned && pinned.season === 'winter', JSON.stringify(pinned));
+
+    await post('/config', { seasonTheme: 'off' });
+    const off = await lastTallySeason();
+    check('Off: the tally carries no season (each screen follows its own skin)',
+      off && off.season === undefined, JSON.stringify(off));
+
+    check('an unknown season is still refused', (await post('/config', { seasonTheme: 'halloween' })).status === 400);
+
+    await post('/config', { seasonTheme: 'auto' });
+    check('Auto deletes the key', !('seasonTheme' in onDisk()), JSON.stringify(onDisk()));
+    const auto = await lastTallySeason();
+    check('Auto: the tally carries the calendar season',
+      auto && auto.season === server.seasonForDate(new Date()), JSON.stringify(auto));
+  }
+
   listener.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
   fs.rmSync(binDir, { recursive: true, force: true });

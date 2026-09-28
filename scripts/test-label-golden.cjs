@@ -42,6 +42,14 @@
 // To police pixels on a given machine, regenerate the baselines there with
 // `npm run test:golden:update` — which rewrites the fingerprint too.
 //
+// Since the 2026-27 rebrand the label's TEXT is set in fonts that ship with the
+// app (print-server/public/brand/fonts: Galindo, Londrina Solid, Figtree), so
+// most of each label rasterises the same everywhere. What still comes from the
+// host is the emoji row and the old Windows fonts the renderer falls back to
+// (the fail-open cases below render them on purpose), which is why the
+// fingerprint probe keeps drawing system fonts and not the bundled ones: a
+// change to a bundled font must fail as a pixel diff, never skip the check.
+//
 // A consequence worth knowing: a glyph missing from the LINUX font stack appears
 // as a tofu box in these baselines without necessarily being wrong in
 // production. The attendance-milestone line's star (U+2B50) is exactly that case
@@ -111,12 +119,35 @@ fs.writeFileSync(path.join(dataDir, 'clubbers.csv'),
   + 'Testkid,Sample,2018-03-15,peanut allergy,Cubbies A,y\n');
 process.env.AWANA_DATA_DIR = dataDir;
 
-const { generateLabel, prepareLogoForThermal } = (() => {
+const { generateLabel, prepareLogoForThermal, labelType, clubKey, CLUB_MONOGRAM } = (() => {
   const mod = require(path.join(__dirname, '..', 'print-server', 'server.js'));
-  return { generateLabel: mod.generateLabel, prepareLogoForThermal: mod.prepareLogoForThermal };
+  return {
+    generateLabel: mod.generateLabel, prepareLogoForThermal: mod.prepareLogoForThermal,
+    labelType: mod.labelType, clubKey: mod.clubKey, CLUB_MONOGRAM: mod.CLUB_MONOGRAM,
+  };
 })();
 const { createCanvas, loadImage } = require(
   path.join(__dirname, '..', 'print-server', 'node_modules', '@napi-rs', 'canvas'));
+// The SAME module instance server.js loaded (require cache keys on the path),
+// so pointing it at another folder changes what the renderer sees.
+const brand = require(path.join(__dirname, '..', 'print-server', 'brand.js'));
+
+// ── Brand-kit variants for the fail-open cases ───────────────────────────────
+// A case with `kit: '<name>'` renders with the kit reloaded from a copy that is
+// missing a piece — exactly what a broken or partial install looks like — and
+// the shipped kit is restored straight after. Every one of them must still be
+// a complete, printable label: that is the fail-open promise, pinned in pixels.
+const KIT_DIR = brand.DEFAULT_BRAND_DIR;
+const kitCopy = (name, keep) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), `awana-golden-kit-${name}-`));
+  for (const sub of keep) fs.cpSync(path.join(KIT_DIR, sub), path.join(d, sub), { recursive: true });
+  return d;
+};
+const KITS = {
+  'no-marks': kitCopy('no-marks', ['fonts']),   // fonts load, every club mark is missing
+  'no-fonts': kitCopy('no-fonts', ['logos']),   // marks load, every font is missing
+  none:       kitCopy('none', []),              // nothing at all
+};
 
 // ── Synthetic club logos ─────────────────────────────────────────────────────
 // Deterministic geometry, no text — a logo drawn with fonts would tie these
@@ -191,21 +222,6 @@ const CASES = [
   // middle-initial variant riding the first-name line.
   { name: 'twin-hint',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', nameHint: 'b. Mar' } },
   { name: 'twin-initial',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', middleInitial: 'G' } },
-  // Collectibles (#20): two of the twelve — the distinctness check proves
-  // they differ from each other and from the plain label.
-  { name: 'collectible-star',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 0 } },
-  { name: 'collectible-rocket', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 1 } },
-  // Seasonal art (#16): all eight, short name so the motif headroom exists.
-  // The pairwise-distinctness check below is what proves each season's art
-  // actually differs from every other's.
-  { name: 'season-back-to-school', model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'back-to-school' } },
-  { name: 'season-fall',           model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'fall' } },
-  { name: 'season-thanksgiving',   model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'thanksgiving' } },
-  { name: 'season-christmas',      model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'christmas' } },
-  { name: 'season-winter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'winter' } },
-  { name: 'season-spring',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'spring' } },
-  { name: 'season-easter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'easter' } },
-  { name: 'season-vbs-summer',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'vbs-summer' } },
   { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
@@ -223,7 +239,40 @@ const CASES = [
   { name: 'leader',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isLeader: true, greeting: 'Sparks Leader', template: { showClubLine: false } } },
   { name: 'leader-no-club',   model: { firstName: 'Pat', lastName: 'Sample', clubName: '', isLeader: true, greeting: 'Leader' } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
-  { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  // The official one-colour club mark (brand kit) in the icon column when no
+  // TwoTimTwo logo was supplied: one case per club, a short name so the
+  // Galindo name is as big as it gets (the approved mockup's "Ivy"). The mark
+  // replaces the club line, as a real logo always has. `plain` above is
+  // Cubbies with a longer name.
+  { name: 'club-puggles',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Puggles' } },
+  { name: 'club-cubbies',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Cubbies' } },
+  { name: 'club-sparks',      model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'club-tnt',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'T&T' } },
+  { name: 'club-trek',        model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Trek' } },
+  { name: 'club-journey',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Journey' } },
+  // The mark on an inverted (first-timer) label: re-inked WHITE by the thermal
+  // converter, or it would vanish into the near-black panel.
+  { name: 'mark-inverted',    model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Trek', isVisitor: true, extras: { inverted: true } } },
+  // Fail-open, in pixels. The marks are missing: the letter monogram comes
+  // back, and with it the club line. The fonts are missing: every line prints
+  // in the old Windows fonts and the mark stays. Nothing loads: the label the
+  // printer made before the kit existed, wave edge aside.
+  { name: 'monogram-fallback', kit: 'no-marks', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  { name: 'fonts-fallback',    kit: 'no-fonts', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', allergyTokens: ['NUTS'], isVisitor: true } },
+  { name: 'kit-missing',       kit: 'none',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', handbookGroup: 'Flight 3:16', isVisitor: true, footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm' } },
+  // A name the brand face cannot fully draw (Galindo has no Vietnamese): the
+  // whole first name prints in the old font rather than with a hole in it,
+  // and the last name, whose letters Figtree does have, stays in the kit. One
+  // voice falling back must never take the next one with it. (The last name
+  // is plain Latin on purpose: the kit's Figtree lacks the precomposed
+  // Vietnamese letters too, so "Nguyễn" would fall back as well and the case
+  // would pin nothing but "every line falls back". The font-face checks after
+  // the loop pin the same split by name, in CI too.)
+  { name: 'name-outside-galindo', model: { firstName: 'Thảo', lastName: 'Sample', clubName: 'Sparks' } },
+  // A line of mixed faces under a 'top' baseline (the handbook group): the
+  // words in Figtree, the star from the old stack, both on one baseline, not
+  // the star's line an ascent above the words (on top of the last name).
+  { name: 'group-mixed-faces',  model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16 ⭐' } },
   // Per-club templates: switches OFF what the stock label shows. no-icon pins
   // the full-width text reflow; minimal pins that every templatable slot can
   // go dark (name + allergy safety icons survive — those are not templatable).
@@ -250,6 +299,10 @@ const CASES = [
   // this file would show up as ink here the moment the early return above the
   // stock layout stopped returning early.
   { name: 'custom-label',     model: { customText: 'VOLUNTEER' } },
+  // A custom label Galindo cannot fully draw prints WHOLE in the old bold
+  // sans, as every custom label did before the kit, never as Galindo words
+  // with Arial letters inside them ("Nguy[ễ]n").
+  { name: 'custom-outside-galindo', model: { customText: 'Chào mừng Nguyễn Thị Thảo' } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -315,8 +368,14 @@ function callLabel(model) {
   return generateLabel({ ...model });
 }
 
-async function render(model) {
-  const result = await callLabel(model);
+async function render(model, kit) {
+  if (kit) brand.loadBrandKit(KITS[kit]);
+  let result;
+  try {
+    result = await callLabel(model);
+  } finally {
+    if (kit) brand.loadBrandKit(KIT_DIR);
+  }
   // generateLabel writes a temp PNG and also returns the buffer; use the buffer
   // and clean up the file so a test run leaves nothing behind.
   const buf = result.buffer || fs.readFileSync(result.pngPath);
@@ -407,7 +466,7 @@ async function main() {
     const file = path.join(BASELINE_DIR, `${c.name}.png`);
     let actual;
     try {
-      actual = await render(c.model);
+      actual = await render(c.model, c.kit);
     } catch (e) {
       check(`render ${c.name}`, false, e.message);
       continue;
@@ -491,7 +550,15 @@ async function main() {
   //
   // The floor of 3% separates cleanly: a binarized logo or monogram covers
   // 10–23% of the zone; the unbinarized cyan wordmark left 0.09% (two eyes).
+  // The official club marks are outline wordmarks — mostly holes, and the wide
+  // ones (Cubbies, Trek, Journey) only ~20 pt tall at full column width — so
+  // they cover 2.5–5% (T&T's solid hexagon, 19%), and their floor is 1.5%:
+  // still more than 15x the speck that failure mode leaves.
   {
+    const MARK_CASES = new Set(['club-puggles', 'club-cubbies', 'club-sparks', 'club-tnt',
+      'club-trek', 'club-journey', 'leader', 'logo-ghost', 'fonts-fallback',
+      'visitor-inverted', 'mark-inverted']);
+    const floorFor = (name) => (MARK_CASES.has(name) ? 0.015 : 0.03);
     const ICON_ZONE_X = Math.round((6 + 84) * (300 / 72));   // 375
     const iconInkRatio = async (buf) => {
       const px = await pixels(buf);
@@ -507,12 +574,17 @@ async function main() {
       return ink / zone;
     };
     const byName = new Map(rendered.map((r) => [r.name, r.buf]));
-    for (const name of ['logo-light-cyan', 'logo-padded', 'logo-ghost', 'logo-white-on-dark', 'club-monogram']) {
+    // logo-ghost's logo is rejected, so it now carries the Sparks MARK; the
+    // club-* cases and the leader tag carry marks; monogram-fallback and
+    // kit-missing are the letter badge with the marks gone.
+    for (const name of ['logo-light-cyan', 'logo-padded', 'logo-ghost', 'logo-white-on-dark',
+      'club-puggles', 'club-cubbies', 'club-sparks', 'club-tnt', 'club-trek', 'club-journey',
+      'leader', 'monogram-fallback', 'kit-missing', 'fonts-fallback']) {
       const buf = byName.get(name);
       if (!buf) { check(`${name}: rendered (needed for icon-zone check)`, false); continue; }
       const ratio = await iconInkRatio(buf);
       check(`${name}: icon zone carries ink a thermal printer can actually print`,
-        ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
+        ratio > floorFor(name), `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
     }
 
     // The inverted label is the mirror image: its icon panel prints BLACK, so
@@ -520,10 +592,10 @@ async function main() {
     // pass trivially (the panel itself is dark) and prove nothing — which is
     // exactly how the black-on-black regression slipped past the first five
     // logo checks and had to be caught by review instead.
-    {
-      const buf = byName.get('logo-inverted-visitor');
+    for (const name of ['logo-inverted-visitor', 'visitor-inverted', 'mark-inverted']) {
+      const buf = byName.get(name);
       if (!buf) {
-        check('logo-inverted-visitor: rendered (needed for icon-zone check)', false);
+        check(`${name}: rendered (needed for icon-zone check)`, false);
       } else {
         const px = await pixels(buf);
         let light = 0, zone = 0;
@@ -536,9 +608,338 @@ async function main() {
           }
         }
         const ratio = light / zone;
-        check('logo-inverted-visitor: the logo is WHITE on the dark panel, not black-on-black',
-          ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
+        check(`${name}: the logo/mark is WHITE on the dark panel, not black-on-black`,
+          ratio > floorFor(name), `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
       }
+    }
+  }
+
+  // ── The official club marks, at unit level ────────────────────────────────
+  // Font-independent (vector art through the thermal converter), so CI
+  // enforces all of it.
+  {
+    const clubs = ['puggle', 'cubbie', 'spark', 't&t', 'trek', 'journey'];
+    for (const key of clubs) {
+      const svg = brand.clubMarkSvg(key);
+      check(`mark ${key}: ships in the kit`, Buffer.isBuffer(svg));
+      if (!svg) continue;
+      const black = await prepareLogoForThermal(svg);
+      check(`mark ${key}: survives the thermal converter as ink`, black !== null);
+      check(`mark ${key}: rasterised well above the renderer's too-small gate`,
+        black !== null && Math.max(black.sourceWidth, black.sourceHeight) >= 317,
+        black ? `${black.sourceWidth}x${black.sourceHeight}` : 'null');
+      const white = await prepareLogoForThermal(svg, { ink: [255, 255, 255] });
+      check(`mark ${key}: re-inks white for an inverted label`, white !== null);
+    }
+    check('no mark for an unknown club', brand.clubMarkSvg('choir') === null);
+    check('no mark for a null club', brand.clubMarkSvg(null) === null);
+
+    // WHICH mark. brand.js's MARK_FILES is the only thing that says which file
+    // is which club's, and every check above passes with two clubs' marks
+    // swapped: only the pixel baselines would notice, and CI cannot compare
+    // pixels. A Puggles child with the Cubbies mark would carry nothing else
+    // naming the club either, because a drawn mark suppresses the club line.
+    // So each key is pinned to its own file, named HERE rather than read from
+    // brand.js, and the six must differ.
+    const OWN_MARK_FILE = {
+      puggle: 'puggles-black.svg', cubbie: 'cubbies-black.svg', spark: 'sparks-black.svg',
+      't&t': 'tnt-black.svg', trek: 'trek-black.svg', journey: 'journey-black.svg',
+    };
+    const markHashes = new Set();
+    for (const key of clubs) {
+      const svg = brand.clubMarkSvg(key);
+      const own = brand.svgAtSize(
+        fs.readFileSync(path.join(KIT_DIR, 'logos', OWN_MARK_FILE[key]), 'utf8'), brand.MARK_RASTER_LONG_SIDE);
+      check(`mark ${key}: is ${OWN_MARK_FILE[key]}, not another club's mark`,
+        Buffer.isBuffer(svg) && typeof own === 'string' && svg.toString('utf8') === own);
+      if (svg) markHashes.add(crypto.createHash('sha256').update(svg).digest('hex'));
+    }
+    check('the six clubs get six different marks', markHashes.size === clubs.length, `${markHashes.size} distinct`);
+    // ...and each club NAME reaches its own key (the renderer asks by clubKey).
+    for (const [name, key] of [['Puggles', 'puggle'], ['Cubbies', 'cubbie'], ['Sparks', 'spark'],
+      ['T&T', 't&t'], ['Trek', 'trek'], ['Journey', 'journey']]) {
+      check(`clubKey('${name}') is '${key}', the key its mark is filed under`, clubKey(name) === key, clubKey(name));
+    }
+
+    // Fail-open, cheaply: with the marks gone, a label still renders, and it
+    // is the monogram label, not a blank icon zone (the ink check above).
+    brand.loadBrandKit(KITS['no-marks']);
+    check('with the marks missing, clubMarkSvg answers null rather than throwing',
+      clubs.every((k) => brand.clubMarkSvg(k) === null));
+    brand.loadBrandKit(KIT_DIR);
+    check('...and the shipped kit comes back', clubs.every((k) => Buffer.isBuffer(brand.clubMarkSvg(k))));
+  }
+
+  // ── One line in two faces (labelType().fill) ──────────────────────────────
+  // A line with a character the kit face lacks ('⭐' in a handbook group or a
+  // greeting) is drawn as runs, and under a 'top' or 'middle' baseline every
+  // run is moved onto ONE alphabetic baseline, because each face's own 'top'
+  // sits at a different height. Get that wrong and the group line prints an
+  // ascent too high, on top of the last name, and no baseline above has a
+  // mixed run under a non-alphabetic baseline to show it. So: the words of a
+  // mixed line must land on exactly the pixels the same words land on alone,
+  // for each baseline and alignment the renderer uses. Font-independent: the
+  // words are Figtree (bundled), and both renders are made here, on this
+  // machine, so only the star's face varies, and it is outside the compared
+  // region.
+  {
+    const type = labelType('Sparks');
+    const S = 300 / 72;
+    const W = 1200, H = 260;
+    const words = 'Flight 3:16';
+    const mixed = `${words} ⭐`;
+    const runs = brand.splitRuns('Figtree', mixed);
+    check('the probe line really is two faces (Figtree words, a fallback star)',
+      runs.length === 2 && runs[0].brand === true && runs[1].brand === false, JSON.stringify(runs));
+    const draw = (text, baseline, align, x) => {
+      const c = createCanvas(W, H);
+      const ctx = c.getContext('2d');
+      ctx.scale(S, S);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W / S, H / S);
+      ctx.fillStyle = '#000000';
+      ctx.textBaseline = baseline;
+      ctx.textAlign = align;
+      type.fill(ctx, 'group', 12, text, x, 24);
+      const restored = ctx.textBaseline === baseline && ctx.textAlign === align;
+      return { ctx, restored, data: ctx.getImageData(0, 0, W, H).data };
+    };
+    for (const baseline of ['top', 'middle', 'alphabetic']) {
+      for (const align of ['left', 'center', 'right']) {
+        const X = 140;
+        const m = draw(mixed, baseline, align, X);
+        const total = type.measure(m.ctx, 'group', 12, mixed);
+        const left = align === 'center' ? X - total / 2 : align === 'right' ? X - total : X;
+        const alone = draw(words, baseline, 'left', left);
+        const wordsW = type.measure(alone.ctx, 'group', 12, words);
+        const x0 = Math.max(0, Math.floor(left * S) - 2);
+        const x1 = Math.min(W, Math.ceil((left + wordsW) * S));
+        let ink = 0, differ = 0;
+        for (let y = 0; y < H; y++) {
+          for (let x = x0; x < x1; x++) {
+            const i = (y * W + x) * 4;
+            if (alone.data[i] < 128) ink++;
+            if (Math.abs(alone.data[i] - m.data[i]) > CHANNEL_TOLERANCE) differ++;
+          }
+        }
+        check(`mixed faces, ${baseline} baseline, ${align}: the words land where they land alone`,
+          ink > 500 && differ === 0, `${differ} px differ, ${ink} px of ink in the words`);
+        check(`mixed faces, ${baseline} baseline, ${align}: fill leaves the context's alignment as it found it`,
+          m.restored);
+      }
+    }
+  }
+
+  // ── Which face each line ASKS for ─────────────────────────────────────────
+  // Font-independent, so CI enforces it: the font string the renderer has set
+  // at every fillText, recorded off the canvas's own prototype. Pixels cannot
+  // pin this where the baselines are made: none of the old club faces (Comic
+  // Sans, Trebuchet, Arial Black, Georgia, Palatino) is installed there, so
+  // every club's fallback rasterises as the same generic sans, and a fallback
+  // that forgot the club's font would still match every baseline. The
+  // fail-open promise is "the label it printed before the kit": each club's own
+  // old face, in each line's own old style.
+  {
+    const ctxProto = Object.getPrototypeOf(createCanvas(1, 1).getContext('2d'));
+    const fontsDrawn = async (model, kit) => {
+      const calls = [];
+      const orig = ctxProto.fillText;
+      ctxProto.fillText = function recordFont(text, ...rest) {
+        calls.push({ text: String(text), font: this.font });
+        return orig.call(this, text, ...rest);
+      };
+      try { await render(model, kit); } finally { ctxProto.fillText = orig; }
+      return calls;
+    };
+    const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fontOf = (calls, text) => { const c = calls.find((k) => k.text === text); return c ? c.font : null; };
+    // T&T's monogram and club line are the same text, so these two ask "is one
+    // of the draws of this text in that face?".
+    const fontsOf = (calls, text) => calls.filter((k) => k.text === text).map((k) => k.font);
+    const anyAsks = (calls, text, style, family) => fontsOf(calls, text).some((f) => asks(f, style, family));
+    const anyInKit = (calls, text, kitFamily, family) => fontsOf(calls, text).some((f) => inKit(f, kitFamily, family));
+    // `<style> <size>px <family>`, the shape every pre-kit font string had.
+    const asks = (font, style, family) => typeof font === 'string'
+      && new RegExp(`^${style ? esc(style) + ' ' : ''}[0-9.]+px ${esc(family)}$`).test(font);
+    const inKit = (font, kitFamily, family) => asks(font, '', `"${kitFamily}", ${family}`);
+
+    // 6.16.0's getClubFontFamily, copied rather than imported: this table is
+    // the promise, and the renderer's own copy is what is checked against it.
+    const OLD_SANS = 'Helvetica, Arial, sans-serif';
+    const PRE_KIT_FAMILY = [
+      ['Puggles', "'Comic Sans MS', cursive, sans-serif"],
+      ['Cubbies', "'Comic Sans MS', cursive, sans-serif"],
+      ['Sparks',  "'Trebuchet MS', Arial, sans-serif"],
+      ['T&T',     "'Arial Black', 'Arial Bold', Arial, sans-serif"],
+      ['Trek',    "Georgia, 'Times New Roman', serif"],
+      ['Journey', "'Palatino Linotype', Palatino, Georgia, serif"],
+      ['',        OLD_SANS],
+      ['Choir',   OLD_SANS],
+    ];
+    const everyLine = (clubName) => ({
+      firstName: 'Testkid', lastName: 'Sample', clubName, handbookGroup: 'Flight 3:16', nameHint: 'b. Mar',
+      isVisitor: true, footerText: 'Wednesdays', extras: { goToLine: 'Go to: Rm 4', milestoneLine: '10th club night tonight!' },
+    });
+    const stepUpLine = (clubName) => ({
+      firstName: 'Testkid', lastName: 'Sample', clubName, stepUp: true, stepUpNextClub: 'T&T',
+      testBanner: true, isBirthday: true, birthdayAge: 7,
+    });
+    // [text, the pre-kit style] for each line of those two labels.
+    const PRE_KIT_STYLE = [
+      ['Testkid', 'bold'], ['Sample', ''], ['b. Mar', 'italic'], ['Flight 3:16', 'italic'], ['VISITOR', 'bold'],
+      ['Wednesdays', 'italic'], ['10th club night tonight!', ''], ['Go to: Rm 4', 'bold'],
+    ];
+
+    let spied = 0;
+    for (const [clubName, family] of PRE_KIT_FAMILY) {
+      const who = clubName || 'no club';
+      // The kit is gone entirely: every line in its club's old face and style.
+      const a = await fontsDrawn(everyLine(clubName), 'none');
+      spied += a.length;
+      for (const [text, style] of PRE_KIT_STYLE) {
+        check(`no kit, ${who}: "${text}" asks for ${style || 'plain'} ${family}`,
+          asks(fontOf(a, text), style, family), fontOf(a, text));
+      }
+      if (clubName) {
+        check(`no kit, ${who}: the club line asks for italic bold ${family}`,
+          anyAsks(a, clubName, 'italic bold', family), JSON.stringify(fontsOf(a, clubName)));
+      }
+      const letter = CLUB_MONOGRAM[clubKey(clubName)];
+      if (letter) {
+        check(`no kit, ${who}: the monogram asks for bold ${family}`,
+          anyAsks(a, letter, 'bold', family), JSON.stringify(fontsOf(a, letter)));
+      }
+      const b = await fontsDrawn(stepUpLine(clubName), 'none');
+      check(`no kit, ${who}: the step-up callout asks for bold ${family}`,
+        asks(fontOf(b, 'Stepping up to T&T'), 'bold', family), fontOf(b, 'Stepping up to T&T'));
+      check(`no kit, ${who}: the birthday age asks for plain ${family}`,
+        asks(fontOf(b, 'Turning 7 this week!'), '', family), fontOf(b, 'Turning 7 this week!'));
+      check(`no kit, ${who}: the TEST band asks for bold ${OLD_SANS}, as it always did`,
+        asks(fontOf(b, 'TEST — NOT A CHECK-IN'), 'bold', OLD_SANS), fontOf(b, 'TEST — NOT A CHECK-IN'));
+
+      // The kit whole: the voices, each with the club's old face behind it.
+      const k = await fontsDrawn(everyLine(clubName));
+      check(`kit, ${who}: the first name asks for Galindo over ${family}`,
+        inKit(fontOf(k, 'Testkid'), 'Galindo', family), fontOf(k, 'Testkid'));
+      for (const text of ['Sample', 'b. Mar', 'Flight 3:16', 'Wednesdays', '10th club night tonight!', 'Go to: Rm 4']) {
+        check(`kit, ${who}: "${text}" asks for Figtree over ${family}`,
+          inKit(fontOf(k, text), 'Figtree', family), fontOf(k, text));
+      }
+      check(`kit, ${who}: the pill asks for Londrina Solid Black over ${family}`,
+        inKit(fontOf(k, 'VISITOR'), 'Londrina Solid Black', family), fontOf(k, 'VISITOR'));
+      if (clubName && letter) {
+        // Marks gone, fonts whole: the monogram and the club line come back,
+        // in the kit's voices.
+        const n = await fontsDrawn(everyLine(clubName), 'no-marks');
+        check(`kit without marks, ${who}: the club line asks for Londrina Solid over ${family}`,
+          anyInKit(n, clubName, 'Londrina Solid', family), JSON.stringify(fontsOf(n, clubName)));
+        check(`kit without marks, ${who}: the monogram asks for Galindo over ${family}`,
+          anyInKit(n, letter, 'Galindo', family), JSON.stringify(fontsOf(n, letter)));
+      }
+    }
+    check('the font recorder saw the renderer draw (it hooks the right prototype)', spied > 50, `${spied} calls`);
+
+    // One voice falling back never takes the next with it: a first name
+    // Galindo cannot draw prints in the old face, and the last name after it
+    // is still Figtree.
+    {
+      const trebuchet = PRE_KIT_FAMILY[2][1];
+      const c = await fontsDrawn({ firstName: 'Thảo', lastName: 'Sample', clubName: 'Sparks' });
+      check('a first name outside Galindo asks for the old bold face, whole',
+        asks(fontOf(c, 'Thảo'), 'bold', trebuchet), fontOf(c, 'Thảo'));
+      check('...and the last name after it stays in Figtree',
+        inKit(fontOf(c, 'Sample'), 'Figtree', trebuchet), fontOf(c, 'Sample'));
+    }
+
+    // A custom label is one face, whole: the kit's when Galindo draws every
+    // letter, else the old bold sans for the whole line, never both.
+    {
+      const plain = await fontsDrawn({ customText: 'VOLUNTEER' });
+      check('custom label: plain text asks for Galindo over the old sans',
+        plain.length === 1 && inKit(plain[0].font, 'Galindo', OLD_SANS), JSON.stringify(plain));
+      for (const text of ['Chào mừng Nguyễn Thị Thảo', 'Bun venit, Ștefan!', 'Добро пожаловать', 'Kitchen Crew ⭐']) {
+        const got = await fontsDrawn({ customText: text });
+        check(`custom label "${text}": the whole line asks for bold ${OLD_SANS}, no letter in Galindo`,
+          got.length >= 1 && got.every((g) => asks(g.font, 'bold', OLD_SANS))
+          && got.map((g) => g.text).join(' ') === text, JSON.stringify(got));
+      }
+
+      // ...and that is one decision for the WHOLE text, not one per wrapped
+      // line. A custom text long enough to wrap used to ask each line on its
+      // own whether Galindo draws it, so a letter Galindo lacks in only one
+      // half printed the other half in Galindo and this one in Helvetica.
+      // Each case wraps (asserted: two lines) and puts the missing letter in
+      // only one half (asserted: the halves really do differ in coverage).
+      // The old-sans cases are drawn in whatever the HOST resolves Helvetica /
+      // Arial to, so each must wrap with room to spare on every stack a run
+      // meets: Arial's metrics (Windows, Liberation Sans), DejaVu Sans (the
+      // Ubuntu CI runner, about 17% wider) and narrower fallbacks. Each half
+      // stays at or under 91% of the line in DejaVu, and the whole is at least
+      // 116% of it in the narrowest face. A half at 104% in DejaVu is what
+      // broke CI on 6.17.0 ("Sunday School Room 12 — please …").
+      const wrapped = [
+        // [text, does Galindo draw all of it?]
+        ["Welcome to Parents' Night, with our special guest Ștefan", false],   // Ș in the second half
+        ["Ștefan is our special guest at Parents' Night. Welcome!", false],     // Ș in the first half
+        ['Sunday School is in Room 12 with Mrs. Nguyễn Thị Thảo', false],       // ễ, ị, ả in the second half
+        ["Welcome to Parents' Night, with our special guest Stefan", true],     // every letter drawable
+      ];
+      for (const [text, galindoDrawsAll] of wrapped) {
+        const got = await fontsDrawn({ customText: text });
+        const twoLines = got.length === 2 && got.map((g) => g.text).join(' ') === text;
+        check(`custom label "${text}": wraps onto two lines`, twoLines, JSON.stringify(got));
+        const halfDraws = got.map((g) => brand.fontCovers('Galindo', g.text));
+        check(`custom label "${text}": ${galindoDrawsAll ? 'Galindo draws both halves' : 'Galindo lacks a letter in one half only'}`,
+          galindoDrawsAll ? halfDraws.every(Boolean) : halfDraws.filter(Boolean).length === 1, JSON.stringify(halfDraws));
+        const face = galindoDrawsAll
+          ? (g) => inKit(g.font, 'Galindo', OLD_SANS)
+          : (g) => asks(g.font, 'bold', OLD_SANS);
+        check(`custom label "${text}": every line asks for ${galindoDrawsAll ? 'Galindo' : `bold ${OLD_SANS}`}, none for the other`,
+          got.length >= 2 && got.every(face), JSON.stringify(got));
+        // Same size too: the lines are measured and drawn as one block.
+        const sizes = new Set(got.map((g) => (g.font.match(/([0-9.]+)px/) || [])[1]));
+        check(`custom label "${text}": both lines are one size`, sizes.size === 1, JSON.stringify([...sizes]));
+      }
+      // With no kit at all the same wrapped text is old-sans on both lines.
+      {
+        const got = await fontsDrawn({ customText: wrapped[3][0] }, 'none');
+        check('custom label, no kit: a wrapped text asks for bold old sans on every line',
+          got.length === 2 && got.every((g) => asks(g.font, 'bold', OLD_SANS)), JSON.stringify(got));
+      }
+      // The clip path (60 characters, no space) is one face as well.
+      {
+        const clipped = 'Ș' + 'W'.repeat(59);
+        const got = await fontsDrawn({ customText: clipped });
+        check('custom label with no space, clipped: both pieces ask for bold old sans',
+          got.length === 2 && got.every((g) => asks(g.font, 'bold', OLD_SANS)), JSON.stringify(got));
+      }
+    }
+
+    // A small line that mixes faces changes face only BETWEEN words: a word
+    // Figtree lacks a letter of ("Nguyễn", precomposed) is drawn whole in the
+    // old face, never as Figtree with one Arial letter inside it.
+    {
+      const footer = 'Gặp cô Nguyễn ở phòng 4';
+      const got = (await fontsDrawn({ firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', footerText: footer }))
+        .filter((g) => footer.includes(g.text));
+      const pieces = [];
+      let at = 0;
+      for (const g of got) {
+        const i = footer.indexOf(g.text, at);
+        if (i >= 0) { pieces.push({ ...g, from: i, to: i + g.text.length }); at = i + g.text.length; }
+      }
+      const letter = /[\p{L}\p{M}]/u;
+      const cutsAWord = pieces.some((p) => (p.from > 0 && letter.test(footer[p.from - 1]) && letter.test(footer[p.from]))
+        || (p.to < footer.length && letter.test(footer[p.to - 1]) && letter.test(footer[p.to])));
+      check('a mixed small line is drawn in pieces that together are the whole line',
+        pieces.map((p) => p.text).join('') === footer, JSON.stringify(pieces.map((p) => p.text)));
+      check('...and no piece starts or ends inside a word', !cutsAWord, JSON.stringify(pieces.map((p) => p.text)));
+      const word = pieces.find((p) => p.text === 'Nguyễn');
+      check('...so "Nguyễn" is one piece, in the old italic face',
+        !!word && asks(word.font, 'italic', PRE_KIT_FAMILY[2][1]), word && word.font);
+      const kitWords = pieces.find((p) => p.text.includes('phòng'));
+      check('...and the words Figtree can draw stay in Figtree',
+        !!kitWords && inKit(kitWords.font, 'Figtree', PRE_KIT_FAMILY[2][1]), kitWords && kitWords.font);
     }
   }
 
@@ -705,6 +1106,9 @@ async function main() {
   }
 
   try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  for (const d of Object.values(KITS)) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
 
   console.log('');
   console.log(`${passed} passed, ${failed} failed`);

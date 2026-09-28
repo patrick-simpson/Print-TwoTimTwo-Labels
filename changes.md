@@ -1,4 +1,38 @@
-﻿## [6.16.0] - 2026-09-28
+﻿## [6.17.0] - 2026-09-28
+The labels, the dashboard, the phone page and the Windows window wear the Awana 2026-27 catalog, the printer's half of the rebrand the lobby screens, the projector and the Journey kiosk shipped alongside.
+
+### Labels wear the Awana 2026-27 catalog (labels half of the rebrand)
+
+**What changed on the label**
+- The label is set in the catalog's fonts, which now ship inside the app, so every PC prints the same label. They used to be whichever Windows font each club mapped to (Comic Sans for Puggles and Cubbies, Georgia for Trek, and so on). The first name is in **Galindo**. The last name and the small lines (handbook group, "Go to", milestone, footer, birthday age) are in **Figtree**. The club line, the VISITOR/LEADER pill, the trophy chip, the step-up callout and the TEST band are in **Londrina Solid**. Custom labels and leader name tags use the same fonts.
+- When TwoTimTwo's club image can't be fetched (or is unusable), the icon column prints the club's **official one-colour mark** (Puggles, Cubbies, Sparks, T&T, Trek, Journey), converted for the thermal printer the same way a downloaded logo is, and printed white on first-timer and award labels. The letter-in-a-circle badge only appears if the mark itself is missing. As before, the club name line prints only when no logo or mark does.
+- The icon column's edge is now the catalog's gentle wave instead of a straight rule.
+- **The seasonal motif (the pencil and the rest) and the weekly collectible icon are gone from the label**, along with their tests and golden images. Shares, streak and the new-kid sparkle stay. The allergy, no-photo and birthday icons are unchanged. So are the label's layout rules: name fitting, fail-open templates and the safety icons.
+
+**Settings**
+- "Season theme" is now **"Screen season"** on the dashboard. It still tells the lobby welcome screens which seasonal skin to wear, and "Off" now means each screen uses its own skin. The saved setting and what the screens receive are unchanged.
+- The "Collectible icon of the week" checkbox is gone. An older saved setting is simply ignored.
+
+**Never at the cost of a label**
+- Every new piece fails open. Suppose a font is missing, damaged, or lacks a letter in a child's name (Galindo has no Vietnamese, for example). That text prints in the Windows font it used before, and a name is never printed with a hole in it. A font file that is cut short or corrupted (an interrupted update) is refused at startup and counted as failed, instead of registering and printing every name blank. The face changes only between words: a name, a custom label or a word the kit font cannot fully draw prints whole in the old font, never with one letter in another typeface. A missing or broken club mark falls back to the letter badge. With the whole kit gone, the label is the one this app printed before the rebrand, apart from the wave edge.
+- `/health` now lists which label fonts (`fonts`) and club marks (`clubMarks`) loaded. If anything failed, it shows a clear warning on the dashboard ("Label fonts did not load…", "Official club marks did not load…"). The Windows installer's release check now fails if the installed app didn't load them.
+
+**For maintainers**
+- `print-server/public/brand/` is a byte-identical copy of the canonical kit (Awana-Check-in-Display `shared/brand/`), pinned by `scripts/brand-kit.sha256`. To take a new kit, run `node scripts/gen-brand-manifest.cjs --from <canonical>`. The kit's text files are LF only: the script and the test refuse a CRLF copy (Git for Windows' default checkout), and `.gitattributes` keeps them LF on checkout and commit. `npm test` now includes `scripts/test-brand-kit.cjs`, which checks drift, packaging, every broken-kit case and `/health`. The golden label images were regenerated on purpose and reviewed side by side.
+
+### The operator's screens wear it too
+
+**The dashboard, the phone page and the Windows window wear the Awana 2026-27 catalog.** Every screen the operator touches now matches the lobby TV and the projector: an Awana-blue header with the official white Awana Clubs mark, "Club Label Printer" in Galindo, and a stepped **PRINTER / ONLINE** chip that turns **PROBLEM** when the printer is missing or jammed and **OFFLINE** when the server does not answer. Each card is named by the catalog's wavy corner tab; the big numbers are Galindo, the labels and buttons Londrina Solid, and everything you read Figtree, all from the bundled brand kit (`print-server/public/brand/`, a byte-identical mirror of the signage repo's kit), so they look the same on every PC with no network. Tonight's per-club counts are chips in each club's own colour (Puggles blue, T&T green), and each page has exactly one hot red-orange button: **Print leader tag** on the dashboard and the phone, **Open Check-in Page** in the status window, **Save & Start** in the setup wizard.
+
+**At a glance, the top row now answers the four questions.** Prints today (with the time of the first label), children in the roster, whether names on the welcome screen are sealed (the privacy banner's verdict in two words: *Names sealed*, *Not sealed*, *Not connected*), and which printer is active with how long the server has been up. The **Season theme** setting is now called **Screen season**. The dashboard's section tabs (History, Label Preview, Settings, Diagnostics, Attendance Audit) are real buttons, so they work from the keyboard. Nothing else changed: every setting, button, count, warning and PIN rule behaves exactly as before, and a missing kit falls back to a plain, legible page rather than a broken one.
+
+**The status window stopped claiming the server was down.** Its security policy blocked its own `/health` check, so the window always showed "Server NOT running" and a Start Server card even while labels printed normally (and Print Test Label could not reach the server either). It now allows exactly that one local address.
+
+**Phones load the kit on the PIN screen.** The phone page is opened on the church Wi-Fi before anyone has typed a PIN, so the kit's stylesheets, fonts and SVG marks under `/brand/` are served without one. That folder holds only the public brand kit (the same files the repo and the installer ship) and no roster data; only `.css`, `.woff2`, `.ttf` and `.svg` files with plain paths are served there, nothing can climb out of it, and every other address still needs the PIN.
+
+`npm run test:security` gains 22 checks (every asset the phone page loads comes through from the LAN with no PIN; traversal, encoded traversal, other kit files and the dashboard's chip script stay refused). New suite `npm run test:dashboard` (54 checks, in `npm test`): every colour fallback on the four surfaces equals the kit's `tokens.css`, every element the page scripts look up still exists, warnings still render their message, one hot button per surface, the phone page loads only `/brand/` assets, the Windows window ships its own copy of the kit, and the stepped chip keeps its shape. 22 suites, 0 failures.
+
+## [6.16.0] - 2026-09-28
 A lobby slide can be marked "Hold check-ins", so the banners wait for it instead of talking over it.
 
 **A slide the room is meant to read should not be covered by a banner.** As part of the 2026-27 rebrand, the lobby displays can hold their check-in banners while a slide the operator has marked is on screen. The arrivals wait, then play at full length on the next slide, the same way the fall promo posters will. The printer's half is one optional field on a published slide, `holdCheckIns`. The display update that honours it follows this release.

@@ -125,6 +125,22 @@ do not count while a report is fresh (owner's decision — they are not on it);
 identities match on BOTH the clubber id and the name, so one child is never two.
 The `tally` payload shape is unchanged and must stay so.
 
+**The brand kit (6.17.0).** `print-server/public/brand/` is a byte-identical
+mirror of the canonical kit in Awana-Check-in-Display (`shared/brand/`), pinned
+by `scripts/brand-kit.sha256` and checked by `scripts/test-brand-kit.cjs` (in
+`npm test`); take a new kit with `node scripts/gen-brand-manifest.cjs --from
+<canonical>`, never by hand (the text files are LF only; `.gitattributes`
+keeps them so). `print-server/brand.js` registers Galindo / Londrina Solid /
+Figtree with the canvas and loads the official one-colour club marks, and
+EVERYTHING in it fails open: a missing or damaged font, or a letter the font
+lacks, prints that word in the old Windows face; a missing mark falls back to
+the letter monogram; with the whole kit gone the label is the pre-rebrand one.
+`/health` reports `fonts` / `clubMarks` and raises `brandFonts` / `brandMarks`
+`{type, message}` warnings (reasons are fixed strings, never paths). The kit
+folder is the ONE path served before the PIN gate (`/brand/`, only `.css`,
+`.woff2`, `.ttf`, `.svg` with plain paths), because the phone page is the PIN
+screen; keep it to public brand files only.
+
 **Custom labels never write history.** `POST /print-custom` prints one line of
 free text on a blank label and records nothing at all: no `addHistoryEntry`, no
 `recordAttendance`, no `publishTally`, no `events.publish*`. It is not a

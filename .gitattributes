@@ -1,0 +1,17 @@
+# The brand kit mirror must stay byte-identical to the canonical kit
+# (Awana-Check-in-Display/shared/brand/) and to its sha256 pin
+# (scripts/brand-kit.sha256, checked by scripts/test-brand-kit.cjs). Its text
+# files are LF only: they stay LF in a Windows checkout, and a CRLF copy (Git
+# for Windows checks the canonical kit out as CRLF by default) is normalised
+# back to LF when committed, so its CRLF-pinned manifest fails the drift check
+# instead of shipping. The fonts are binary and never converted.
+# (scripts/gen-brand-manifest.cjs and the test also refuse any CR outright.)
+print-server/public/brand/** text=auto eol=lf
+print-server/public/brand/**/*.svg text eol=lf
+print-server/public/brand/**/*.css text eol=lf
+print-server/public/brand/**/*.json text eol=lf
+print-server/public/brand/**/*.md text eol=lf
+print-server/public/brand/**/*.txt text eol=lf
+print-server/public/brand/**/*.ttf binary
+print-server/public/brand/**/*.woff2 binary
+scripts/brand-kit.sha256 text eol=lf

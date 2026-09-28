@@ -231,6 +231,18 @@ jobs:
             if ($health.version -ne $expected) { throw "Version mismatch: server=$($health.version) tag=$expected" }
           }
 
+          # The label brand kit (print-server/public/brand, shipped by
+          # extraResources' public/** filter) must have made it into the
+          # installed app. A label still prints without it (every piece falls
+          # back), which is exactly why a packaging slip would otherwise go
+          # unnoticed until someone looks at a label: fail the release here.
+          if (-not $health.fonts -or $health.fonts.failed.Count -ne 0 -or $health.fonts.loaded.Count -lt 4) {
+            throw "Label fonts did not load in the installed app: $($health.fonts | ConvertTo-Json -Compress)"
+          }
+          if (-not $health.clubMarks -or $health.clubMarks.failed.Count -ne 0 -or $health.clubMarks.loaded.Count -lt 6) {
+            throw "Club marks did not load in the installed app: $($health.clubMarks | ConvertTo-Json -Compress)"
+          }
+
           # /preview only exists on the FULL server — this is the check that
           # the packaged server (and its canvas renderer) actually loaded
           # instead of anything degraded. It must return a real PNG.

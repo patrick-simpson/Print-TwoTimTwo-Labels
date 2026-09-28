@@ -175,7 +175,7 @@ async function main() {
       allergyTokens: ['NUTS', 'DAIRY'], handbookGroup: 'Flight 3:16',
       isBirthday: true, birthdayAge: 7, isVisitor: true, stepUp: true, stepUpNextClub: 'T&T',
       awanaShares: 12, noPhoto: true, streakCount: 9, isNewKid: true, isLeader: true,
-      greeting: 'Sparks Leader', footerText: 'KVBC Awana', season: 'fall', collectibleIndex: 1,
+      greeting: 'Sparks Leader', footerText: 'KVBC Awana',
       testBanner: true,
       extras: { inverted: true, goToLine: 'Go to: Music, Rm 4', milestoneLine: '10th night' },
     });

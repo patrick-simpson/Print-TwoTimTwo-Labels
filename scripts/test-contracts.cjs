@@ -164,7 +164,7 @@ console.log('buildTally');
     && events.buildTally({}, 0, { rehearsal: true }).rehearsal === true);
   check('a non-slug season is dropped, not rejected',
     events.buildTally({}, 0, { season: '<script>alert(1)</script>' }).season === undefined);
-  check('empty season omitted (art turned off broadcasts nothing)',
+  check('empty season omitted (Screen season off broadcasts nothing)',
     events.buildTally({}, 0, { season: '' }).season === undefined);
 }
 
