@@ -271,6 +271,34 @@ async function main() {
       !('showUntil' in opened[0].slides[1]) && !JSON.stringify(opened).includes('whenever'));
   }
 
+  // ── 6c. The "Hold check-ins" mark rides the publish surface end to end ─────
+  console.log('lobby-slides: a slide marked holdCheckIns');
+  {
+    wire.length = 0;
+    const r = await post('/api/lobby-slides', {
+      slides: [
+        { text: "Parents' Night", showUntil: '2026-11-04', holdCheckIns: true },
+        { text: 'Welcome to Awana!', holdCheckIns: 'true' },
+        { text: 'Store night is back!', holdCheckIns: 1 },
+        { text: 'Bring a friend night', holdCheckIns: false },
+      ],
+    });
+    check('publish with a held slide accepted', r.status === 200 && r.body.ok === true, JSON.stringify(r.body));
+    const opened = openAll();
+    check('it reached the wire sealed', slidesFrames().length === 1 && isSealed(slidesFrames()[0].payload));
+    check('the sealed chunk carries holdCheckIns: true verbatim, beside its window',
+      opened[0].slides[0].holdCheckIns === true && opened[0].slides[0].showUntil === '2026-11-04');
+    check("a non-true mark ('true', 1, false) is dropped, never published as false",
+      opened[0].slides.length === 4
+      && opened[0].slides.slice(1).every((s) => !('holdCheckIns' in s)));
+    const echo = (await j('/api/lobby-slides')).body;
+    check('the committed deck the dashboard reads back carries the same mark',
+      echo.slides[0].holdCheckIns === true && echo.slides.slice(1).every((s) => !('holdCheckIns' in s)));
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'lobby-slides.json'), 'utf8'));
+    check('and it survives on disk for the rebroadcast',
+      onDisk.slides[0].holdCheckIns === true && onDisk.slides.slice(1).every((s) => !('holdCheckIns' in s)));
+  }
+
   // ── 7. Size gates ────────────────────────────────────────────────────────────
   console.log('lobby-slides: the deck size gates');
   {

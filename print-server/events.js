@@ -328,10 +328,11 @@ const SLIDE_MAX_DURATION_SEC = 600;
 // One chunk's JSON must seal into the 4096 pad rung (4 length-prefix bytes
 // spare), and 12 chunks must cover any deck the size gate below admits. The
 // budget leaves margin for the {deckRev, publishedAt, seq, total} wrapper.
-// The optional showFrom/showUntil pair costs 49 more bytes per slide, which
-// eats into this budget: the worst deck the caps admit (50 slides, 500-char
-// text, a 60-char eyebrow and both dates) needs 10 of the 12 chunks, pinned
-// in scripts/test-contracts.cjs so a future field cannot quietly overflow it.
+// The optional showFrom/showUntil pair costs 49 more bytes per slide and
+// holdCheckIns another 20, which eats into this budget: the worst deck the
+// caps admit (50 slides, 500-char text, a 60-char eyebrow, both dates and
+// holdCheckIns, 35,251 bytes) still needs 10 of the 12 chunks, pinned in
+// scripts/test-contracts.cjs so a future field cannot quietly overflow it.
 const SLIDES_CHUNK_JSON_BUDGET = 3900;
 const SLIDES_TOTAL_MAX = 12;
 // Coarse publish-time cap on the whole sanitized deck's serialized size —
@@ -410,6 +411,13 @@ function buildSlidesDeck(rawSlides) {
     if (showFrom) slide.showFrom = showFrom;
     const showUntil = slideDate(item.showUntil);
     if (showUntil) slide.showUntil = showUntil;
+    // The optional "Hold check-ins" mark: while this slide is up the displays
+    // hold their check-in banners and play them afterwards at full length.
+    // Literal true ONLY, and otherwise OMITTED, never written as false: an
+    // unmarked slide is byte-identical to before the field existed, and a
+    // 'true' string or a 1 from a hand-edited export is not the operator
+    // marking the slide, so it is not guessed into one.
+    if (item.holdCheckIns === true) slide.holdCheckIns = true;
     // The display keys its React lists and dedupe on ids; a clean one passes
     // through, anything else is omitted and the consumer mints its own.
     if (typeof item.id === 'string' && item.id.trim() && item.id.length <= SLIDE_ID_MAX
