@@ -57,7 +57,9 @@
         .btn:hover { transform: translateY(-1px); }
         .btn-primary { background: var(--c-hot); color: #fff; font-weight: 900; box-shadow: 3px 3px 0 var(--c-hot-deep); }
         .btn-secondary { background: #fff; color: var(--c-ink); border-color: var(--line-strong); box-shadow: 0 3px 0 var(--line-strong); }
-        :focus-visible { outline: 3px solid var(--c-sun); outline-offset: 2px; }
+        /* Ink, not sunflower: a focus ring needs 3:1 against the white card
+           and the page, and the sunflower managed under 1.8:1 there. */
+        :focus-visible { outline: 3px solid var(--c-ink); outline-offset: 2px; }
         .code-block {
             background: var(--c-ink); color: var(--c-cloud); padding: 12px; border-radius: 10px;
             font-family: Consolas, 'Courier New', monospace; font-size: 11px; margin: 12px 0 0;

@@ -172,8 +172,24 @@ async function main() {
     // gated are checked after the refusal sweep, below.
     {
       const phone = await request({ host: lan, pathname: '/phone' });
-      const assets = [...phone.body.matchAll(/(?:src|href)="(\/[^"]*)"|url\('(\/[^']*)'\)/g)]
-        .map((m) => (m[1] || m[2]).split('#')[0]);
+      // Markup attributes, CSS url()s (quoted either way, or bare), AND the
+      // URLs its scripts assign (the tab-shape probe is `probe.src =
+      // '/brand/…'`): a script-set path outside /brand/ 403s on the Wi-Fi
+      // exactly like a tag's. Same collector as test-dashboard-chrome.cjs.
+      const ASSET_REF = new RegExp([
+        /(?:src|href)="(?<attr>\/[^"]*)"/.source,
+        /url\('(?<q1>\/[^']*)'\)/.source,
+        /url\("(?<q2>\/[^"]*)"\)/.source,
+        /url\((?<bare>\/[^'")\s]*)\)/.source,
+        /\.(?:src|href)\s*=\s*(?<sq>['"])(?<prop>\/[^'"]*)\k<sq>/.source,
+        /setAttribute\(\s*['"](?:src|href)['"]\s*,\s*(?<aq>['"])(?<set>\/[^'"]*)\k<aq>/.source,
+      ].join('|'), 'g');
+      const refs = [...phone.body.matchAll(ASSET_REF)].map(({ groups: g }) => ({
+        url: (g.attr || g.q1 || g.q2 || g.bare || g.prop || g.set).split('#')[0], script: !!(g.prop || g.set),
+      }));
+      const assets = refs.map((r) => r.url);
+      check('the phone page’s script-set asset (the tab-shape probe) is collected too',
+        refs.some((r) => r.script && r.url === '/brand/shapes/tab-b-sparks.svg'), JSON.stringify(refs));
       check('the phone page loads brand assets at all', assets.length >= 4, JSON.stringify(assets));
       check('every asset the phone page loads is under /brand/ (anything else would 403 on the Wi-Fi)',
         assets.every((a) => a.startsWith('/brand/')), JSON.stringify(assets));

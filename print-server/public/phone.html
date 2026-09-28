@@ -70,7 +70,11 @@
   }
   input:focus, select:focus { border-color: var(--c-blue); box-shadow: 0 0 0 3px var(--c-cloud); }
   input[type="checkbox"] { accent-color: var(--c-blue); width: 18px; height: 18px; }
-  :focus-visible { outline: 3px solid var(--c-sun); outline-offset: 2px; }
+  /* Ink, not sunflower: a focus ring needs 3:1 against what it sits on, and
+     the sunflower managed under 1.8:1 on the white cards and the page. Ink is
+     3.4:1 or better on every light surface, the header blue included; the one
+     dark surface, the ink toast, gets the sunflower back (9:1 there). */
+  :focus-visible { outline: 3px solid var(--c-ink); outline-offset: 2px; }
   .pin-box { display: flex; flex-direction: column; gap: 12px; margin-top: 18vh; text-align: center; background: #fff; border-radius: 18px; padding: 22px 18px; box-shadow: 0 2px 0 var(--line); }
   .pin-box label { font-family: var(--f-label); font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-blue); }
   .pin-box input { text-align: center; font-size: 22px; letter-spacing: 0.3em; }
@@ -175,6 +179,7 @@
     font-size: 14px; font-weight: 600; display: none; max-width: 92vw; text-align: center; z-index: 30;
   }
   .toast button { background: none; border: none; color: var(--c-sun); font-family: var(--f-label); font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 10px; text-decoration: underline; }
+  .toast :focus-visible { outline-color: var(--c-sun); }
   .err { color: var(--bad); font-size: 14px; font-weight: 600; min-height: 18px; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }

@@ -83,8 +83,12 @@
 
   /* ── Cards and their corner tabs ── */
   .card { background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 2px 0 var(--line); }
-  .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 0 16px 0 0; min-height: 50px; }
-  .card-header > :not(.corner-tab) { padding-top: 12px; }
+  /* The header wraps: the card clips (overflow: hidden, for the tab's corner),
+     so on a narrow window (400% zoom, a phone) a button that cannot sit beside
+     the tab drops under it, still right-aligned, rather than being cut off. */
+  .card-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0 12px; padding: 0 16px 0 0; min-height: 50px; }
+  .card-header > :not(.corner-tab) { padding-top: 12px; margin-left: auto; max-width: calc(100% - 16px); }
+  .card-header .btn { white-space: nowrap; }
   .card-header .note-right { font-size: 13px; color: var(--ink-faint); text-align: right; }
   .card-body { padding: 14px 20px 18px; }
   .card-tools { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
@@ -150,7 +154,10 @@
   .btn-secondary { background: #fff; color: var(--c-ink); }
   .btn-sm { padding: 5px 12px; font-size: 13px; box-shadow: 0 2px 0 var(--line-strong); }
   .btn-primary.btn-sm { box-shadow: 0 2px 0 var(--c-blue-deep); }
-  :focus-visible { outline: 3px solid var(--c-sun); outline-offset: 2px; }
+  /* Ink, not sunflower: a focus ring needs 3:1 against what it sits on, and
+     the sunflower managed 1.4-1.8:1 on the white cards, the page and the cream
+     chips (1:1 on the update banner). Ink is 9:1 or better on all of them. */
+  :focus-visible { outline: 3px solid var(--c-ink); outline-offset: 2px; }
 
   /* ── Form controls: Figtree, because they are read ── */
   input[type="text"], input[type="number"], input[type="time"], input[type="password"], select, textarea {
@@ -281,8 +288,16 @@
     0%, 100% { opacity: 0; }
     20%, 60% { opacity: 0.3; }
   }
+  /* The same wash held still: no in-between frames at all. */
+  @keyframes flash-hold {
+    from, to { opacity: 0.3; }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
+    /* The fade above is the wash's ONLY visible frame, so the blanket rule
+       would land a reduced-motion deep link on an unmarked block. Give it the
+       same 1.6 s as a still instead: on, held, off, with nothing moving. */
+    .flash::after { animation: flash-hold 1.6s 1 !important; }
   }
   @media (max-width: 640px) {
     .header { padding: 12px 16px; gap: 12px; flex-wrap: wrap; }
