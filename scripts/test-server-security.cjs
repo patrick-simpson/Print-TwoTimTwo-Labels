@@ -164,6 +164,28 @@ async function main() {
       check('LAN GET /phone serves the PIN form', res.status === 200, `status ${res.status}`);
       check('LAN GET /phone carries no roster data', !res.body.includes('Leakcanary'));
     }
+    // ...and so must its brand kit: the fonts, tokens, corner-tab shape and
+    // the Awana Clubs mark it draws the PIN screen with. They are served
+    // BEFORE the gate (no PIN exists yet on that screen, and a stylesheet's
+    // url() could never send one), so they never touch the rate limiter —
+    // which is why these run before the happy path. The paths that must stay
+    // gated are checked after the refusal sweep, below.
+    {
+      const phone = await request({ host: lan, pathname: '/phone' });
+      const assets = [...phone.body.matchAll(/(?:src|href)="(\/[^"]*)"|url\('(\/[^']*)'\)/g)]
+        .map((m) => (m[1] || m[2]).split('#')[0]);
+      check('the phone page loads brand assets at all', assets.length >= 4, JSON.stringify(assets));
+      check('every asset the phone page loads is under /brand/ (anything else would 403 on the Wi-Fi)',
+        assets.every((a) => a.startsWith('/brand/')), JSON.stringify(assets));
+      for (const a of new Set(assets)) {
+        const res = await request({ host: lan, pathname: a });
+        check(`LAN GET ${a} loads without a PIN`, res.status === 200, `status ${res.status}`);
+      }
+      const font = await request({ host: lan, pathname: '/brand/fonts/galindo-latin-400-normal.woff2' });
+      check('LAN GET a brand WOFF2 font loads without a PIN', font.status === 200, `status ${font.status}`);
+      const css = await request({ host: lan, pathname: '/brand/fonts.css' });
+      check('the brand stylesheet is the kit, not the dashboard', /@font-face/.test(css.body) && !css.body.includes('Leakcanary'));
+    }
 
     // ── Happy path first ──────────────────────────────────────────────────────
     // Ordered before the refusal sweep on purpose: a correct PIN clears the
@@ -331,6 +353,26 @@ async function main() {
       check('the refused forget did not remove a remembered leader',
         Array.isArray(kept.leaders) && kept.leaders.some((l) => /Lan/.test(l.firstName || '')),
         JSON.stringify(kept.leaders));
+    }
+
+    // ── The brand mount opens the kit and nothing else ────────────────────────
+    // Only stylesheets, fonts and SVGs with a plain path are served ahead of
+    // the gate. A climb out of the kit, an encoded one, another file type in
+    // the kit, and the dashboard's own chip script all still need the PIN.
+    // After the sweep on purpose: each refusal counts toward the limiter.
+    for (const p of [
+      '/brand/../index.html',
+      '/brand/%2e%2e/index.html',
+      '/brand/..%2findex.html',
+      '/brand/README.md',
+      '/brand/tokens.json',
+      '/brand/',
+      '/step-chip.js',
+    ]) {
+      const res = await request({ host: lan, pathname: p });
+      check(`LAN GET ${p} is still refused without a PIN`,
+        res.status === 403 || res.status === 429, `status ${res.status}`);
+      check(`LAN GET ${p} does not serve the dashboard`, !res.body.includes('id="print-count"'));
     }
 
     // ── Brute force ───────────────────────────────────────────────────────────

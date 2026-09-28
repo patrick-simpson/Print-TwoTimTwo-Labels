@@ -4,123 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Club Print Bookmarklet</title>
+    <!-- The brand kit mirror (public/brand/). The hex after each var() is the
+         kit's own value, pinned to tokens.css by scripts/test-dashboard-chrome.cjs. -->
+    <link rel="stylesheet" href="/brand/fonts.css">
+    <link rel="stylesheet" href="/brand/tokens.css">
     <style>
+        :root {
+            --c-blue: var(--brand-blue, #4C72B8);
+            --c-blue-deep: var(--brand-blue-deep, #34569A);
+            --c-ink: var(--brand-ink, #231F20);
+            --c-hot: var(--brand-hot, #F15A28);
+            --c-hot-deep: var(--brand-hot-deep, #9E3512);
+            --c-sun: var(--brand-sun, #FCB614);
+            --c-cream: var(--brand-cream, #FFE8C2);
+            --c-orange: var(--brand-orange, #FAA41D);
+            --c-cloud: var(--brand-cloud, #D6EFF8);
+            --c-tnt-deep: var(--brand-tnt-deep, #2F8A4E);
+            --c-tnt-tint: var(--brand-tnt-tint, #D0E9D5);
+            --c-sparks-deep: var(--brand-sparks-deep, #B82B32);
+            --c-sparks-tint: var(--brand-sparks-tint, #FDDACF);
+            --page: #F6F8FB;
+            --line: #E1E7EF;
+            --line-strong: #CFD8E3;
+            --ink-soft: #4A5160;
+            --f-shout: var(--brand-font-display, 'Galindo', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif);
+            --f-label: var(--brand-font-label, 'Londrina Solid', 'Arial Narrow', 'Helvetica Neue', sans-serif);
+            --f-read: var(--brand-font-body, 'Figtree', 'Segoe UI', system-ui, sans-serif);
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .card {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-            padding: 40px;
-            text-align: center;
-        }
-        h1 {
-            color: #1a202c;
-            margin-bottom: 10px;
-            font-size: 28px;
-        }
-        .subtitle {
-            color: #718096;
-            margin-bottom: 30px;
-            font-size: 14px;
-        }
+        body { font-family: var(--f-read); background: var(--page); color: var(--c-ink); min-height: 100vh; }
+        .header { background: var(--c-blue); color: #fff; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+        .brand-mark { display: block; height: 44px; width: auto; }
+        .header h1 { font-family: var(--f-shout); font-weight: 400; font-size: 26px; line-height: 1.05; }
+        .header .sub { font-family: var(--f-label); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-cloud); }
+        .wrap { display: flex; justify-content: center; padding: 28px 16px; }
+        .card { background: #fff; border-radius: 18px; box-shadow: 0 2px 0 var(--line); max-width: 540px; width: 100%; padding: 26px 28px 28px; text-align: center; }
+        h2 { font-family: var(--f-shout); font-weight: 400; font-size: 26px; line-height: 1.15; margin-bottom: 6px; }
+        .subtitle { color: var(--ink-soft); margin-bottom: 22px; font-size: 15px; }
         .instructions {
-            text-align: left;
-            background: #f7fafc;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 25px;
-            font-size: 13px;
-            line-height: 1.6;
-            color: #2d3748;
+            text-align: left; background: var(--c-cream); border-left: 5px solid var(--c-orange); padding: 14px 16px;
+            border-radius: 12px; margin-bottom: 24px; font-size: 14px; line-height: 1.6;
         }
-        .instructions ol {
-            margin-left: 20px;
-            margin-top: 10px;
-        }
-        .instructions li {
-            margin-bottom: 8px;
-        }
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
+        .instructions > strong:first-child { font-family: var(--f-label); font-weight: 400; font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase; }
+        .instructions ol { margin-left: 20px; margin-top: 8px; }
+        .instructions li { margin-bottom: 6px; }
+        .button-group { display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
         .btn {
-            flex: 1;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.2s;
+            flex: 1; min-width: 180px; padding: 12px 18px; border: 2px solid transparent; border-radius: 999px; cursor: pointer; text-decoration: none;
+            font-family: var(--f-label); font-size: 17px; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase;
+            transition: transform var(--brand-dur-quick, 200ms) var(--brand-ease-pop, cubic-bezier(0.34, 1.56, 0.64, 1));
         }
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #5a67d8;
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-        .btn-secondary {
-            background: #e2e8f0;
-            color: #2d3748;
-        }
-        .btn-secondary:hover {
-            background: #cbd5e0;
-        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn-primary { background: var(--c-hot); color: #fff; font-weight: 900; box-shadow: 3px 3px 0 var(--c-hot-deep); }
+        .btn-secondary { background: #fff; color: var(--c-ink); border-color: var(--line-strong); box-shadow: 0 3px 0 var(--line-strong); }
+        :focus-visible { outline: 3px solid var(--c-sun); outline-offset: 2px; }
         .code-block {
-            background: #2d3748;
-            color: #68d391;
-            padding: 12px;
-            border-radius: 6px;
-            font-family: 'Monaco', 'Courier New', monospace;
-            font-size: 11px;
-            margin: 15px 0;
-            max-height: 150px;
-            overflow: auto;
-            text-align: left;
-            word-break: break-all;
-            cursor: pointer;
+            background: var(--c-ink); color: var(--c-cloud); padding: 12px; border-radius: 10px;
+            font-family: Consolas, 'Courier New', monospace; font-size: 11px; margin: 12px 0 0;
+            max-height: 150px; overflow: auto; text-align: left; word-break: break-all; cursor: pointer;
         }
-        .code-block:hover {
-            background: #1a202c;
-        }
-        .status {
-            padding: 10px;
-            border-radius: 6px;
-            margin-top: 15px;
-            font-size: 13px;
-            display: none;
-        }
-        .status.success {
-            background: #c6f6d5;
-            color: #22543d;
-            display: block;
-        }
-        .status.error {
-            background: #fed7d7;
-            color: #742a2a;
-            display: block;
-        }
+        .code-label { font-family: var(--f-label); font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; text-align: left; }
+        .status { padding: 10px; border-radius: 10px; margin-top: 12px; font-size: 14px; font-weight: 600; display: none; }
+        .status.success { background: var(--c-tnt-tint); color: var(--c-tnt-deep); display: block; }
+        .status.error { background: var(--c-sparks-tint); color: var(--c-sparks-deep); display: block; }
+        @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
     </style>
 </head>
 <body>
+    <div class="header">
+        <img class="brand-mark" src="/brand/logos/awana-clubs-white.svg" alt="Awana Clubs" width="105" height="44">
+        <div>
+            <h1>Club Label Printer</h1>
+            <div class="sub">Bookmarklet setup</div>
+        </div>
+    </div>
+    <div class="wrap">
     <div class="card">
-        <h1>🖨️ Auto-Print Bookmarklet</h1>
+        <h2>Auto-Print Bookmarklet</h2>
         <p class="subtitle">One-click silent printing on check-in</p>
 
         <div class="instructions">
@@ -143,10 +103,11 @@
 
         <div id="status" class="status"></div>
 
-        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
-            <p style="font-size: 12px; color: #718096; margin-bottom: 10px;">Bookmarklet code:</p>
+        <div style="margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line);">
+            <p class="code-label">Bookmarklet code</p>
             <div class="code-block" id="code-display" title="Click to copy"></div>
         </div>
+    </div>
     </div>
 
     <script>
