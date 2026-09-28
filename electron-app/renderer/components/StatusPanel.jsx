@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import BrandHeader from './BrandHeader.jsx';
+import CornerTab from './CornerTab.jsx';
+import StepChip from './StepChip.jsx';
 
 const SERVER = 'http://localhost:3456';
 
@@ -100,118 +103,127 @@ export default function StatusPanel({ config, onReset }) {
   const csv = health?.csv;
   const warnings = health?.warnings || [];
 
-  return (
-    <div style={s.page}>
+  // Same rule as the dashboard's header chip: PROBLEM when a warning means
+  // nothing is coming out of the printer.
+  const printerProblem = warnings.some(w => w && (w.type === 'printerNotFound' || w.type === 'spoolerBacklog'));
+  const chip = failed ? { value: 'OFFLINE', plate: 'var(--bad)' }
+    : printerProblem ? { value: 'PROBLEM', plate: 'var(--c-hot-deep)' }
+    : { value: 'ONLINE', plate: 'var(--c-plate)' };
 
-      {/* Header */}
-      <div style={s.header}>
-        <div style={s.logoRow}>
-          <span style={s.logo}>🖨️</span>
-          <div>
-            <h1 style={s.title}>Club Label Printer</h1>
-            {failed
-              ? <span style={s.badgeBad}>● Server NOT running</span>
-              : <span style={s.badge}>● Server running{health?.version ? ` — v${health.version}` : ''}</span>}
+  return (
+    <div className="app">
+      <BrandHeader
+        sub={failed ? 'Server NOT running' : `Server running${health?.version ? ` · v${health.version}` : ''}`}
+        subTone={failed ? 'bad' : ''}
+      >
+        <StepChip label="PRINTER" value={chip.value} plate={chip.plate} />
+      </BrandHeader>
+
+      <main className="app-body">
+
+        {/* Server down: never hide it, and give the one-click way back up */}
+        {failed && (
+          <div className="notice bad" role="alert">
+            <b>The print server is not running — labels cannot print.</b>
+            {serverState?.status === 'failed' && (
+              <pre>{String(serverState.error || '').split('\n')[0]}</pre>
+            )}
+            <button className="btn btn-go btn-block" style={{ marginTop: 10 }} onClick={startServerNow} disabled={starting}>
+              {starting ? 'Starting…' : '▶ Start Server'}
+            </button>
+            {serverState?.status === 'failed' && (
+              <div className="notice-hint">If it won't start, send a screenshot of this window to your administrator.</div>
+            )}
+          </div>
+        )}
+
+        {/* Updates: always visible, always says where the updater is */}
+        {updateReady ? (
+          <div className="notice update">
+            <span>Update v{updateReady} is downloaded and ready.</span>
+            <button className="btn btn-primary btn-sm" onClick={() => window.awana.installUpdate()}>Restart to update</button>
+          </div>
+        ) : updateAvailable ? (
+          <div className="notice update">
+            <span>
+              Version {updateAvailable} is available — downloading
+              {upd.percent != null ? ` (${upd.percent}%)` : ' in the background'}…
+            </span>
+          </div>
+        ) : (
+          <div className="notice update">
+            <span>
+              {appVersion ? `Version ${appVersion}` : 'Version …'}
+              {checkNote ? ` — ${checkNote}` : upd.upToDate ? ' — ✓ up to date' : ''}
+            </span>
+            <button className="btn btn-sm" onClick={checkForUpdatesNow} disabled={checking}>
+              {checking ? 'Checking…' : 'Check for Updates'}
+            </button>
+          </div>
+        )}
+
+        {/* Status card */}
+        <div className="card">
+          <CornerTab>This PC</CornerTab>
+          <div className="card-pad">
+            <Row label="Printer"  value={health?.printer || config.printerName} />
+            <Row label="Server"   value={SERVER} mono />
+            <Row label="Check-in" value={config.checkinUrl} small />
+            <Row label="Roster"   value={csv ? `${csv.count} clubbers${csv.updatedAt ? ` — updated ${timeAgo(csv.updatedAt)}` : ''}` : '—'} />
+            {lanAddress && (
+              <Row label="Phones" value={`http://${lanAddress}:3456/phone`} mono small />
+            )}
           </div>
         </div>
-      </div>
 
-      {/* Server down: never hide it, and give the one-click way back up */}
-      {failed && (
-        <div style={s.errorCard}>
-          <b>The print server is not running — labels cannot print.</b>
-          {serverState?.status === 'failed' && (
-            <pre style={s.errorPre}>{String(serverState.error || '').split('\n')[0]}</pre>
-          )}
-          <button style={s.startBtn} onClick={startServerNow} disabled={starting}>
-            {starting ? 'Starting…' : '▶ Start Server'}
-          </button>
-          {serverState?.status === 'failed' && (
-            <div style={s.errorHint}>If it won't start, send a screenshot of this window to your administrator.</div>
-          )}
-        </div>
-      )}
-
-      {/* Updates: always visible, always says where the updater is */}
-      {updateReady ? (
-        <div style={s.updateCard}>
-          <span>Update v{updateReady} is downloaded and ready.</span>
-          <button style={s.updateBtn} onClick={() => window.awana.installUpdate()}>Restart to update</button>
-        </div>
-      ) : updateAvailable ? (
-        <div style={s.updateCard}>
-          <span>
-            Version {updateAvailable} is available — downloading
-            {upd.percent != null ? ` (${upd.percent}%)` : ' in the background'}…
-          </span>
-        </div>
-      ) : (
-        <div style={s.updateCard}>
-          <span>
-            {appVersion ? `Version ${appVersion}` : 'Version …'}
-            {checkNote ? ` — ${checkNote}` : upd.upToDate ? ' — ✓ up to date' : ''}
-          </span>
-          <button style={s.updateBtn} onClick={checkForUpdatesNow} disabled={checking}>
-            {checking ? 'Checking…' : 'Check for Updates'}
-          </button>
-        </div>
-      )}
-
-      {/* Status card */}
-      <div style={s.card}>
-        <Row label="Printer"  value={health?.printer || config.printerName} />
-        <Row label="Server"   value={SERVER} mono />
-        <Row label="Check-in" value={config.checkinUrl} small />
-        <Row label="Roster"   value={csv ? `${csv.count} clubbers${csv.updatedAt ? ` — updated ${timeAgo(csv.updatedAt)}` : ''}` : '—'} />
-        {lanAddress && (
-          <Row label="Phones" value={`http://${lanAddress}:3456/phone`} mono small />
+        {/* Health warnings from the server (printer offline, stale CSV, …) */}
+        {warnings.length > 0 && (
+          <div className="card">
+            <CornerTab tone="t-sun">Warnings</CornerTab>
+            <div className="card-pad">
+              {warnings.map((w, i) => <div key={i} className="warn-row">⚠ {w.message || w.type}</div>)}
+            </div>
+          </div>
         )}
-      </div>
 
-      {/* Health warnings from the server (printer offline, stale CSV, …) */}
-      {warnings.length > 0 && (
-        <div style={s.warnCard}>
-          {warnings.map((w, i) => <div key={i} style={s.warnRow}>⚠ {w.message || w.type}</div>)}
+        {/* Actions */}
+        <div className="actions">
+          <button className="btn btn-hot btn-block" onClick={() => window.awana.openCheckinPage(config.checkinUrl)}>
+            Open Check-in Page
+          </button>
+
+          <button
+            className="btn"
+            onClick={printTestLabel}
+            disabled={testState === 'printing' || failed}
+          >
+            {testState === 'printing' ? 'Printing…'
+             : testState === 'ok'     ? '✓ Test label sent'
+             : testState === 'error'  ? '✗ Test print failed'
+             : 'Print Test Label'}
+          </button>
+
+          <button
+            className="btn"
+            onClick={enablePhone}
+            disabled={fwState === 'working'}
+            title="Adds a Windows Firewall rule (asks for administrator approval) so phones on your Wi-Fi can reach phone check-in"
+          >
+            {fwState === 'working' ? 'Waiting for approval…'
+             : fwState === 'ok'    ? '✓ Phone check-in enabled'
+             : fwState === 'error' ? '✗ Not enabled'
+             : 'Enable Phone Check-in (firewall)'}
+          </button>
+
+          <button className="btn btn-ghost" onClick={onReset}>
+            Change Settings
+          </button>
         </div>
-      )}
 
-      {/* Actions */}
-      <div style={s.actions}>
-        <button style={s.primaryBtn} onClick={() => window.awana.openCheckinPage(config.checkinUrl)}>
-          Open Check-in Page
-        </button>
-
-        <button
-          style={s.outlineBtn}
-          onClick={printTestLabel}
-          disabled={testState === 'printing' || failed}
-        >
-          {testState === 'printing' ? 'Printing…'
-           : testState === 'ok'     ? '✓ Test label sent'
-           : testState === 'error'  ? '✗ Test print failed'
-           : 'Print Test Label'}
-        </button>
-
-        <button
-          style={s.outlineBtn}
-          onClick={enablePhone}
-          disabled={fwState === 'working'}
-          title="Adds a Windows Firewall rule (asks for administrator approval) so phones on your Wi-Fi can reach phone check-in"
-        >
-          {fwState === 'working' ? 'Waiting for approval…'
-           : fwState === 'ok'    ? '✓ Phone check-in enabled'
-           : fwState === 'error' ? '✗ Not enabled'
-           : 'Enable Phone Check-in (firewall)'}
-        </button>
-
-        <button style={s.ghostBtn} onClick={onReset}>
-          Change Settings
-        </button>
-      </div>
-
-      <p style={s.hint}>
-        Close this window — the server keeps running in the system tray.
-      </p>
+        <p className="hint">
+          Close this window — the server keeps running in the system tray.
+        </p>
+      </main>
     </div>
   );
 }
@@ -227,42 +239,11 @@ function timeAgo(iso) {
 
 function Row({ label, value, mono, small }) {
   return (
-    <div style={s.row}>
-      <span style={s.rowLabel}>{label}</span>
-      <span style={{ ...s.rowValue, ...(mono ? s.mono : {}), ...(small ? s.small : {}) }}>
+    <div className="row">
+      <span className="row-label">{label}</span>
+      <span className={`row-value${mono ? ' mono' : ''}${small ? ' small' : ''}`} title={typeof value === 'string' ? value : undefined}>
         {value}
       </span>
     </div>
   );
 }
-
-const PURPLE = '#5c2d91';
-
-const s = {
-  page:       { fontFamily: 'Segoe UI, Arial, sans-serif', padding: '20px 24px', backgroundColor: '#f4f4f8', minHeight: '100vh', boxSizing: 'border-box' },
-  header:     { marginBottom: '18px' },
-  logoRow:    { display: 'flex', alignItems: 'center', gap: '12px' },
-  logo:       { fontSize: '32px' },
-  title:      { margin: 0, fontSize: '20px', fontWeight: '700', color: '#1a1a2e' },
-  badge:      { fontSize: '12px', color: '#27ae60', fontWeight: '600' },
-  badgeBad:   { fontSize: '12px', color: '#c0392b', fontWeight: '700' },
-  errorCard:  { backgroundColor: '#fdecea', border: '1px solid #f5c6cb', borderRadius: '8px', padding: '12px 14px', marginBottom: '14px', fontSize: '12px', color: '#7a1f1a' },
-  errorPre:   { whiteSpace: 'pre-wrap', margin: '8px 0', fontSize: '11px', fontFamily: 'Consolas, monospace' },
-  errorHint:  { fontSize: '11px', color: '#a94442', marginTop: '8px' },
-  startBtn:   { display: 'block', width: '100%', marginTop: '10px', padding: '10px', backgroundColor: '#27ae60', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' },
-  updateCard: { backgroundColor: '#eef4ff', border: '1px solid #c9dcff', borderRadius: '8px', padding: '10px 14px', marginBottom: '14px', fontSize: '12px', color: '#1f3f7a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' },
-  updateBtn:  { padding: '6px 10px', backgroundColor: PURPLE, color: '#fff', border: 'none', borderRadius: '5px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' },
-  card:       { backgroundColor: '#fff', borderRadius: '10px', padding: '4px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.09)', marginBottom: '14px' },
-  warnCard:   { backgroundColor: '#fff8e1', border: '1px solid #ffe1a8', borderRadius: '8px', padding: '8px 14px', marginBottom: '14px' },
-  warnRow:    { fontSize: '12px', color: '#8a6d1a', padding: '2px 0' },
-  row:        { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f0f0f0' },
-  rowLabel:   { fontSize: '12px', fontWeight: '600', color: '#888', minWidth: '70px' },
-  rowValue:   { fontSize: '13px', color: '#333', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '320px', whiteSpace: 'nowrap' },
-  mono:       { fontFamily: 'Consolas, monospace', fontSize: '12px' },
-  small:      { fontSize: '11px' },
-  actions:    { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' },
-  primaryBtn: { padding: '10px', backgroundColor: PURPLE, color: '#fff', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' },
-  outlineBtn: { padding: '9px', backgroundColor: '#fff', color: '#333', border: '1px solid #ccc', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' },
-  ghostBtn:   { padding: '8px', backgroundColor: 'transparent', color: '#888', border: 'none', fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' },
-  hint:       { fontSize: '11px', color: '#bbb', textAlign: 'center', margin: 0 }
-};

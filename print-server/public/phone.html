@@ -4,86 +4,208 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Club Phone Check-in</title>
+<!-- The brand kit mirror (public/brand/), served to the Wi-Fi without a PIN
+     because this page is the PIN screen; see BRAND_PUBLIC_PATH in server.js.
+     The hex after each var() is the kit's own value, a fallback pinned to
+     tokens.css by scripts/test-dashboard-chrome.cjs. -->
+<link rel="stylesheet" href="/brand/fonts.css">
+<link rel="stylesheet" href="/brand/tokens.css">
 <style>
+  :root {
+    --c-blue: var(--brand-blue, #4C72B8);
+    --c-blue-deep: var(--brand-blue-deep, #34569A);
+    --c-ink: var(--brand-ink, #231F20);
+    --c-hot: var(--brand-hot, #F15A28);
+    --c-hot-deep: var(--brand-hot-deep, #9E3512);
+    --c-sun: var(--brand-sun, #FCB614);
+    --c-orange: var(--brand-orange, #FAA41D);
+    --c-orange-deep: var(--brand-orange-deep, #C97A08);
+    --c-cream: var(--brand-cream, #FFE8C2);
+    --c-cloud: var(--brand-cloud, #D6EFF8);
+    --c-puggles: var(--brand-puggles, #1DB6D9);
+    --c-puggles-deep: var(--brand-puggles-deep, #1A627C);
+    --c-cubbies: var(--brand-cubbies, #4C72B8);
+    --c-cubbies-deep: var(--brand-cubbies-deep, #2F4F8A);
+    --c-sparks: var(--brand-sparks, #F04A4B);
+    --c-sparks-deep: var(--brand-sparks-deep, #B82B32);
+    --c-sparks-tint: var(--brand-sparks-tint, #FDDACF);
+    --c-tnt: var(--brand-tnt, #58BD79);
+    --c-tnt-deep: var(--brand-tnt-deep, #2F8A4E);
+    --c-trek: var(--brand-trek, #047E71);
+    --c-trek-deep: var(--brand-trek-deep, #02554C);
+    --c-journey: var(--brand-journey, #8A649D);
+    --c-journey-deep: var(--brand-journey-deep, #56467F);
+    --bad: var(--c-sparks-deep);
+    --page: #F6F8FB;
+    --line: #E1E7EF;
+    --line-strong: #CFD8E3;
+    --ink-soft: #4A5160;
+    --ink-faint: #6B7280;
+    --f-shout: var(--brand-font-display, 'Galindo', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif);
+    --f-label: var(--brand-font-label, 'Londrina Solid', 'Arial Narrow', 'Helvetica Neue', sans-serif);
+    --f-read: var(--brand-font-body, 'Figtree', 'Segoe UI', system-ui, sans-serif);
+    --quick: var(--brand-dur-quick, 200ms);
+    --ease-pop: var(--brand-ease-pop, cubic-bezier(0.34, 1.56, 0.64, 1));
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; color: #1e293b; padding-bottom: 40px; }
-  /* flex-wrap so a second header button (Custom label) drops to its own row on
-     a narrow phone instead of squeezing the title to nothing. */
-  .header { background: #4caf50; color: #fff; padding: 14px 16px; position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-  .header h1 { font-size: 17px; }
-  .header .sub { font-size: 11px; opacity: 0.85; }
-  .header .hbtn { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.45); border-radius: 8px; padding: 7px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; display: none; }
-  .header .hbtn.on { background: #fff; color: #2e7d32; }
-  .wrap { padding: 12px; max-width: 520px; margin: 0 auto; }
+  body { font-family: var(--f-read); background: var(--page); color: var(--c-ink); padding-bottom: 40px; }
+  /* The header: the Awana Clubs mark and the page name on the Awana blue. The
+     two print buttons wrap to their own row on a narrow phone instead of
+     squeezing the title to nothing. */
+  .header { background: var(--c-blue); color: #fff; padding: 12px 16px; position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; }
+  .brand-mark { display: block; height: 34px; width: auto; flex: none; }
+  .titles { flex: 1 1 180px; min-width: 0; }
+  .header h1 { font-family: var(--f-shout); font-weight: 400; font-size: 21px; line-height: 1.1; }
+  .header .sub { font-size: 12px; line-height: 1.3; color: var(--c-cloud); margin-top: 2px; }
+  .hbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .header .hbtn {
+    background: transparent; color: #fff; border: 2px solid rgba(255, 255, 255, 0.75); border-radius: 999px; padding: 6px 14px;
+    font-family: var(--f-label); font-size: 15px; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; display: none;
+  }
+  .header .hbtn.on { background: #fff; color: var(--c-blue-deep); border-color: #fff; }
+  .wrap { padding: 14px; max-width: 520px; margin: 0 auto; }
   input[type="search"], input[type="password"], input[type="text"], select {
-    width: 100%; padding: 12px 14px; font-size: 16px; border: 1px solid #cbd5e1;
-    border-radius: 10px; background: #fff; outline: none;
+    width: 100%; padding: 12px 14px; font-family: var(--f-read); font-size: 16px; color: var(--c-ink);
+    border: 2px solid var(--line-strong); border-radius: 12px; background: #fff; outline: none;
   }
-  .pin-box { display: flex; flex-direction: column; gap: 10px; margin-top: 30vh; text-align: center; }
-  .pin-box label { font-size: 14px; color: #475569; font-weight: 600; }
+  input:focus, select:focus { border-color: var(--c-blue); box-shadow: 0 0 0 3px var(--c-cloud); }
+  input[type="checkbox"] { accent-color: var(--c-blue); width: 18px; height: 18px; }
+  /* Ink, not sunflower: a focus ring needs 3:1 against what it sits on, and
+     the sunflower managed under 1.8:1 on the white cards and the page. Ink is
+     3.4:1 or better on every light surface, the header blue included; the one
+     dark surface, the ink toast, gets the sunflower back (9:1 there). */
+  :focus-visible { outline: 3px solid var(--c-ink); outline-offset: 2px; }
+  .pin-box { display: flex; flex-direction: column; gap: 12px; margin-top: 18vh; text-align: center; background: #fff; border-radius: 18px; padding: 22px 18px; box-shadow: 0 2px 0 var(--line); }
+  .pin-box label { font-family: var(--f-label); font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-blue); }
+  .pin-box input { text-align: center; font-size: 22px; letter-spacing: 0.3em; }
   .btn {
-    padding: 12px 16px; border: none; border-radius: 10px; font-size: 15px;
-    font-weight: 700; cursor: pointer; background: #4caf50; color: #fff;
+    padding: 12px 18px; border: none; border-radius: 999px; cursor: pointer;
+    font-family: var(--f-label); font-size: 18px; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase;
+    background: var(--c-blue); color: #fff; box-shadow: 0 3px 0 var(--c-blue-deep);
+    transition: transform var(--quick) var(--ease-pop);
   }
+  .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--c-blue-deep); }
   .btn:disabled { opacity: 0.5; }
-  .btn.danger { background: #dc2626; }
-  .btn.ghost { background: #fff; color: #475569; border: 1px solid #cbd5e1; }
-  .btn.link { background: none; color: #2563eb; font-size: 13px; padding: 10px 4px; text-decoration: underline; }
-  .tabs { display: flex; gap: 6px; background: #e2e8f0; border-radius: 12px; padding: 4px; margin-bottom: 10px; }
-  .tab { flex: 1; padding: 10px; border: none; border-radius: 9px; background: transparent; font-size: 14px; font-weight: 700; color: #475569; }
-  .tab.on { background: #fff; color: #1e293b; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-  /* Three tabs do not fit one row on a 360px phone at 14px/10px padding — the
+  .btn.hot { background: var(--c-hot); font-weight: 900; box-shadow: 3px 3px 0 var(--c-hot-deep); }
+  .btn.danger { background: var(--c-sparks-deep); box-shadow: 0 3px 0 var(--c-ink); }
+  .btn.ghost { background: #fff; color: var(--c-ink); border: 2px solid var(--line-strong); box-shadow: 0 3px 0 var(--line-strong); }
+  .btn.link { background: none; box-shadow: none; color: var(--c-blue-deep); font-family: var(--f-read); font-size: 14px; font-weight: 600; letter-spacing: 0; text-transform: none; padding: 12px 4px; text-decoration: underline; }
+  /* The three views as one segmented control, the section tabs of this page. */
+  .tabs { display: flex; gap: 4px; background: #fff; border-radius: 999px; padding: 4px; margin-bottom: 12px; box-shadow: 0 2px 0 var(--line); }
+  .tab {
+    flex: 1; padding: 10px; border: none; border-radius: 999px; background: transparent; color: var(--ink-soft);
+    font-family: var(--f-label); font-size: 17px; line-height: 1.1; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+  }
+  .tab.on { background: var(--c-blue); color: #fff; box-shadow: 0 2px 0 var(--c-blue-deep); }
+  /* Three tabs do not fit one row on a 360px phone at full size — the
      third label was clipped off the edge. Must stay AFTER the base .tab rule
      or it loses the cascade. */
-  @media (max-width: 420px) { .tab { font-size: 12px; padding: 10px 4px; } }
+  @media (max-width: 420px) { .tab { font-size: 15px; padding: 10px 4px; letter-spacing: 0.03em; } }
   .group-btn {
     display: flex; align-items: center; justify-content: space-between; width: 100%;
-    background: none; border: none; padding: 14px 2px 2px; font-size: 12px; font-weight: 800;
-    color: #64748b; text-transform: uppercase; letter-spacing: 0.04em;
+    background: none; border: none; padding: 16px 2px 2px; color: var(--ink-soft);
+    font-family: var(--f-label); font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase;
   }
-  .group-btn .caret { font-weight: 700; }
+  .group-btn .caret { font-family: var(--f-read); font-weight: 700; }
   .kid {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
-    padding: 12px 14px; margin-top: 8px;
+    --club: transparent;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: #fff; border-radius: 14px; border-left: 6px solid var(--club);
+    padding: 12px 14px; margin-top: 8px; box-shadow: 0 2px 0 var(--line);
   }
-  .kid .name { font-weight: 700; font-size: 15px; }
-  .kid .club { font-size: 11px; color: #64748b; }
-  .kid button { padding: 9px 14px; font-size: 13px; font-weight: 700; border: none; border-radius: 8px; background: #4caf50; color: #fff; }
-  .kid.done { opacity: 0.55; }
-  .kid.done button { background: #94a3b8; }
-  .kid button.busy { background: #f59e0b; }
-  .kid button.restore { background: #475569; }
-  .kid button.remove { background: #fff; color: #dc2626; border: 1px solid #fca5a5; }
-  .kid .tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; margin-left: 6px; vertical-align: middle; }
-  .note { font-size: 12px; color: #64748b; margin: 10px 2px; }
-  .total { font-size: 22px; font-weight: 800; margin: 6px 2px 2px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
-  .chip { font-size: 12px; font-weight: 700; background: #fff; border: 1px solid #e2e8f0; border-radius: 999px; padding: 4px 10px; color: #334155; }
-  .group-h { font-size: 12px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin: 14px 2px 2px; }
-  .panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; margin: 8px 0 12px; display: flex; flex-direction: column; gap: 8px; }
-  .panel h2 { font-size: 15px; }
-  .sheet { position: fixed; inset: 0; background: rgba(15,23,42,0.55); display: none; align-items: flex-end; z-index: 20; }
-  .sheet .card { background: #fff; width: 100%; max-width: 520px; margin: 0 auto; border-radius: 16px 16px 0 0; padding: 18px 16px 24px; display: flex; flex-direction: column; gap: 10px; }
-  .sheet .title { font-size: 17px; font-weight: 800; }
-  .sheet .body { font-size: 14px; color: #475569; line-height: 1.4; }
+  .kid .name { font-weight: 700; font-size: 16px; }
+  .kid .club { font-size: 13px; color: var(--ink-faint); }
+  .kid button {
+    flex: none; padding: 9px 16px; border: none; border-radius: 999px; background: var(--c-blue); color: #fff; box-shadow: 0 2px 0 var(--c-blue-deep);
+    font-family: var(--f-label); font-size: 16px; line-height: 1.1; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .kid.done { opacity: 0.6; }
+  .kid.done button { background: var(--line); color: var(--ink-soft); box-shadow: none; }
+  .kid button.busy { background: var(--c-sun); color: var(--c-ink); box-shadow: 0 2px 0 var(--c-orange-deep); }
+  .kid button.restore { background: var(--c-ink); box-shadow: none; }
+  .kid button.remove { background: #fff; color: var(--c-sparks-deep); border: 2px solid var(--c-sparks-tint); box-shadow: none; }
+  .kid .tag { display: inline-block; font-family: var(--f-label); font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; background: var(--c-cream); color: var(--c-hot-deep); margin-left: 6px; vertical-align: 1px; }
+  .kid[data-club="puggles"] { --club: var(--c-puggles); }
+  .kid[data-club="cubbies"] { --club: var(--c-cubbies); }
+  .kid[data-club="sparks"]  { --club: var(--c-sparks); }
+  .kid[data-club="tnt"]     { --club: var(--c-tnt); }
+  .kid[data-club="trek"]    { --club: var(--c-trek); }
+  .kid[data-club="journey"] { --club: var(--c-journey); }
+  .note { font-size: 13px; line-height: 1.45; color: var(--ink-soft); margin: 10px 2px; }
+  .total { font-family: var(--f-shout); font-weight: 400; font-size: 28px; line-height: 1.1; margin: 8px 2px 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 6px; }
+  .chip { font-family: var(--f-label); font-size: 15px; letter-spacing: 0.05em; text-transform: uppercase; background: #fff; border: 2px solid var(--line-strong); border-radius: 999px; padding: 4px 12px; color: var(--c-ink); }
+  .chip.club-chip {
+    font-weight: 900; border-color: var(--club, var(--ink-soft)); background: var(--club, var(--ink-soft)); color: #fff;
+    text-shadow: 0.07em 0.07em 0 var(--club-deep, transparent);
+  }
+  .club-puggles { --club: var(--c-puggles); --club-deep: var(--c-puggles-deep); }
+  .club-cubbies { --club: var(--c-cubbies); --club-deep: var(--c-cubbies-deep); }
+  .club-sparks  { --club: var(--c-sparks);  --club-deep: var(--c-sparks-deep); }
+  .club-tnt     { --club: var(--c-tnt);     --club-deep: var(--c-tnt-deep); }
+  .club-trek    { --club: var(--c-trek);    --club-deep: var(--c-trek-deep); }
+  .club-journey { --club: var(--c-journey); --club-deep: var(--c-journey-deep); }
+  .chip.leader-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-read); font-size: 14px; letter-spacing: 0; text-transform: none; background: var(--c-cream); border-color: var(--c-orange); }
+  .chip.leader-chip button { border: none; background: transparent; color: var(--c-hot-deep); padding: 2px 4px; font-family: var(--f-label); font-size: 14px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .chip.leader-chip button.x { font-family: var(--f-read); font-size: 18px; line-height: 1; }
+  .group-h { font-family: var(--f-label); font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); margin: 16px 2px 2px; }
+  /* A print panel: a white card whose corner tab names it. */
+  .panel { background: #fff; border-radius: 16px; padding: 0 14px 14px; margin: 8px 0 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; box-shadow: 0 2px 0 var(--line); }
+  .corner-tab {
+    --tab: var(--c-blue); --tab-deep: var(--c-blue-deep);
+    position: relative; align-self: flex-start; margin-left: -14px; padding: 10px 52px 20px 16px; isolation: isolate;
+    font-family: var(--f-label); font-weight: 900; font-size: 16px; line-height: 1.15; letter-spacing: 0.06em; text-transform: uppercase;
+    color: #fff; text-shadow: 0.07em 0.07em 0 var(--tab-deep);
+  }
+  .corner-tab::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; background: var(--tab);
+    -webkit-mask: url('/brand/shapes/tab-b-sparks.svg#svgView(preserveAspectRatio(none))') no-repeat 0 0 / 100% 100%;
+    mask: url('/brand/shapes/tab-b-sparks.svg#svgView(preserveAspectRatio(none))') no-repeat 0 0 / 100% 100%;
+  }
+  /* Fail open: if the kit's shape cannot load (a missing mirror), a failed
+     mask would hide the field and leave white type on a white card, so the
+     tab falls back to a plain rounded field. Set by the probe in <head>. */
+  .no-kit-shape .corner-tab::before { -webkit-mask: none; mask: none; border-bottom-right-radius: 16px; }
+  .t-orange  { --tab: var(--c-orange);  --tab-deep: var(--c-orange-deep); }
+  .t-puggles { --tab: var(--c-puggles); --tab-deep: var(--c-puggles-deep); }
+  .t-tnt     { --tab: var(--c-tnt);     --tab-deep: var(--c-tnt-deep); }
+  .sheet { position: fixed; inset: 0; background: rgba(35, 31, 32, 0.55); display: none; align-items: flex-end; z-index: 20; }
+  .sheet .card { background: #fff; width: 100%; max-width: 520px; margin: 0 auto; border-radius: 22px 22px 0 0; padding: 20px 16px 26px; display: flex; flex-direction: column; gap: 12px; }
+  .sheet .title { font-family: var(--f-shout); font-weight: 400; font-size: 21px; line-height: 1.15; }
+  .sheet .body { font-size: 15px; color: var(--ink-soft); line-height: 1.45; }
   .toast {
     position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
-    background: #1e293b; color: #fff; padding: 10px 18px; border-radius: 999px;
-    font-size: 13px; font-weight: 600; display: none; max-width: 92vw; text-align: center; z-index: 30;
+    background: var(--c-ink); color: #fff; padding: 11px 18px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; display: none; max-width: 92vw; text-align: center; z-index: 30;
   }
-  .toast button { background: none; border: none; color: #fbbf24; font-weight: 800; font-size: 13px; margin-left: 10px; text-decoration: underline; }
-  .err { color: #dc2626; font-size: 13px; font-weight: 600; min-height: 18px; }
+  .toast button { background: none; border: none; color: var(--c-sun); font-family: var(--f-label); font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 10px; text-decoration: underline; }
+  .toast :focus-visible { outline-color: var(--c-sun); }
+  .err { color: var(--bad); font-size: 14px; font-weight: 600; min-height: 18px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
 </style>
+<script>
+  // The corner tabs are masked by the kit's own shape; if it cannot load, say
+  // so on <html> so they fall back to a plain field (see .no-kit-shape).
+  (function () {
+    var probe = new Image();
+    probe.onerror = function () { document.documentElement.classList.add('no-kit-shape'); };
+    probe.src = '/brand/shapes/tab-b-sparks.svg';
+  })();
+</script>
 </head>
 <body>
 <div class="header">
-  <div>
+  <img class="brand-mark" src="/brand/logos/awana-clubs-white.svg" alt="Awana Clubs" width="81" height="34">
+  <div class="titles">
     <h1>Club Phone Check-in</h1>
     <div class="sub">Checks the kid in on the door laptop — the label prints there.</div>
   </div>
-  <button class="hbtn" id="leader-toggle" type="button">Leader tag</button>
-  <button class="hbtn" id="custom-toggle" type="button">Custom label</button>
+  <div class="hbtns">
+    <button class="hbtn" id="leader-toggle" type="button">Leader tag</button>
+    <button class="hbtn" id="custom-toggle" type="button">Custom label</button>
+  </div>
 </div>
 
 <div class="wrap" id="pin-screen">
@@ -97,15 +219,15 @@
 
 <div class="wrap" id="main-screen" style="display:none">
   <div class="panel" id="leader-panel" style="display:none">
-    <h2>Leader name tag</h2>
+    <h2 class="corner-tab t-orange">Leader name tag</h2>
     <input type="text" id="leader-name" maxlength="80" placeholder="Leader's name" autocomplete="off">
     <!-- Options are filled from the server's one club list (see loadClubs). -->
     <select id="leader-club">
       <option value="">No club</option>
     </select>
-    <button class="btn" id="leader-print" type="button">Print leader tag</button>
+    <button class="btn hot" id="leader-print" type="button">Print leader tag</button>
     <div id="leader-chips-wrap" style="display:none">
-      <div class="row" style="justify-content:space-between;align-items:center">
+      <div class="row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span class="note" style="margin:0;font-weight:600">Remembered leaders</span>
         <button class="btn ghost" id="leader-print-selected" type="button">Print selected</button>
       </div>
@@ -120,7 +242,7 @@
        panel shape as the leader section above, and the same rule — it prints
        at the door and counts as nothing. -->
   <div class="panel" id="custom-panel" style="display:none">
-    <h2>Custom label</h2>
+    <h2 class="corner-tab t-puggles">Custom label</h2>
     <input type="text" id="custom-text" maxlength="60" placeholder="VOLUNTEER, KITCHEN, Room 4 Helper…" autocomplete="off">
     <button class="btn" id="custom-print" type="button">Print custom label</button>
     <div class="err" id="custom-status"></div>
@@ -128,17 +250,17 @@
   </div>
 
   <div class="tabs" role="tablist">
-    <button class="tab on" type="button" data-tab="checkin">Check in</button>
-    <button class="tab" type="button" data-tab="tonight">Tonight <span id="tonight-n"></span></button>
+    <button class="tab on" type="button" role="tab" aria-selected="true" data-tab="checkin">Check in</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="tonight">Tonight <span id="tonight-n"></span></button>
     <!-- Short label so three tabs fit a 360px phone; the view's own note
          carries the full "not checked in yet" wording. The count stays blank
          until a roster has actually loaded — "(0)" would read as "nobody is
          missing", which is the one thing this tab must never say wrongly. -->
-    <button class="tab" type="button" data-tab="waiting">Not here <span id="waiting-n"></span></button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-tab="waiting">Not here <span id="waiting-n"></span></button>
   </div>
 
   <div id="checkin-view">
-    <input type="search" id="search" placeholder="Search kids by name…" autocomplete="off">
+    <input type="search" id="search" placeholder="Search kids by name…" autocomplete="off" aria-label="Search kids by name">
     <div class="note">Tap Check in — the door laptop does the real check-in and prints the label. Greyed kids are already in.</div>
     <div id="list"></div>
   </div>
@@ -154,7 +276,7 @@
     <div id="tonight-list"></div>
     <button class="btn link" id="visitor-toggle" type="button">Not on the list? Print a visitor label</button>
     <div class="panel" id="visitor-form" style="display:none">
-      <h2>Visitor label</h2>
+      <h2 class="corner-tab t-tnt">Visitor label</h2>
       <input type="text" id="visitor-name" maxlength="80" placeholder="Visitor's full name" autocomplete="off">
       <select id="visitor-club"></select>
       <div class="note" style="margin:0">Prints a first-timer label at the door and counts them tonight. This does <b>not</b> register them in TwoTimTwo — do that at the desk.</div>
@@ -261,6 +383,20 @@ function toast(msg, ms, actionLabel, onAction) {
 }
 
 function esc(s) { return String(s == null ? '' : s); }
+
+// A club name to the brand kit's club key, for the row's colour edge and the
+// Tonight chips. The same rules as clubKey() in server.js; '' for anything else.
+function clubKit(name) {
+  var n = String(name || '').trim().toLowerCase();
+  if (!n) return '';
+  if (n.indexOf('puggle') !== -1) return 'puggles';
+  if (n.indexOf('cubbie') !== -1) return 'cubbies';
+  if (n.indexOf('spark') !== -1) return 'sparks';
+  if (n.indexOf('trek') !== -1) return 'trek';
+  if (n.indexOf('journey') !== -1) return 'journey';
+  if (n.indexOf('t&t') !== -1 || n.indexOf('t & t') !== -1 || n === 'tnt' || n === 't t') return 'tnt';
+  return '';
+}
 
 // One low-level POST, used by the initial unlock, the auto-unlock-on-load,
 // every background refresh and every Tonight-tab action — so all of them agree
@@ -441,6 +577,7 @@ function setTab(name) {
   var tabs = document.querySelectorAll('.tab');
   for (var i = 0; i < tabs.length; i++) {
     tabs[i].className = 'tab' + (tabs[i].getAttribute('data-tab') === name ? ' on' : '');
+    tabs[i].setAttribute('aria-selected', tabs[i].getAttribute('data-tab') === name ? 'true' : 'false');
   }
   document.getElementById('checkin-view').style.display = name === 'checkin' ? 'block' : 'none';
   document.getElementById('tonight-view').style.display = name === 'tonight' ? 'block' : 'none';
@@ -466,6 +603,7 @@ function render() {
     var st = STATE[key];
     var row = document.createElement('div');
     row.className = 'kid' + (!st && k.checkedIn ? ' done' : '');
+    row.setAttribute('data-club', clubKit(k.club));
     var left = document.createElement('div');
     var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k.name;
     var cl = document.createElement('div'); cl.className = 'club';
@@ -594,6 +732,7 @@ function renderWaiting() {
     if (collapsed && !single) return;
     rows.forEach(function(k) {
       var row = document.createElement('div'); row.className = 'kid';
+      row.setAttribute('data-club', clubKit(k.club));
       var left = document.createElement('div');
       var nm = document.createElement('div'); nm.className = 'name'; nm.textContent = k.name;
       var sub = document.createElement('div'); sub.className = 'club';
@@ -615,7 +754,7 @@ function renderTonight() {
   var chips = document.getElementById('tonight-chips');
   chips.innerHTML = '';
   Object.keys(TONIGHT.byClub || {}).sort().forEach(function(club) {
-    var c = document.createElement('span'); c.className = 'chip';
+    var c = document.createElement('span'); c.className = 'chip club-chip' + (clubKit(club) ? ' club-' + clubKit(club) : '');
     c.textContent = club + ' ' + TONIGHT.byClub[club];
     chips.appendChild(c);
   });
@@ -637,6 +776,7 @@ function renderTonight() {
     list.appendChild(h);
     groups[g].sort(function(a, b) { return String(b.at).localeCompare(String(a.at)); }).forEach(function(e) {
       var row = document.createElement('div'); row.className = 'kid';
+      row.setAttribute('data-club', clubKit(e.clubName));
       var left = document.createElement('div');
       var nm = document.createElement('div'); nm.className = 'name';
       nm.textContent = (e.firstName + ' ' + e.lastName).trim();
@@ -1067,8 +1207,7 @@ function renderLeaderChips(leaders, hidden) {
   leaderCache.forEach(function(l) {
     var name = ((l.firstName || '') + ' ' + (l.lastName || '')).trim();
     var chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:#fffbeb;border-color:#fde68a;color:#92400e';
+    chip.className = 'chip leader-chip';
     var pick = document.createElement('label');
     pick.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
     var cb = document.createElement('input');
@@ -1082,13 +1221,12 @@ function renderLeaderChips(leaders, hidden) {
     var one = document.createElement('button');
     one.type = 'button';
     one.textContent = 'Print';
-    one.style.cssText = 'border:none;background:transparent;color:#b45309;font-weight:700;font-size:12px;padding:2px 4px';
     one.addEventListener('click', function() { printLeaders([l]); });
     var x = document.createElement('button');
     x.type = 'button';
     x.textContent = '\u00D7';
     x.setAttribute('aria-label', 'Forget ' + name);
-    x.style.cssText = 'border:none;background:transparent;color:#b45309;font-size:18px;line-height:1;padding:2px 4px';
+    x.className = 'x';
     x.addEventListener('click', function() { forgetLeader(l.key, name); });
     chip.appendChild(pick); chip.appendChild(one); chip.appendChild(x);
     list.appendChild(chip);

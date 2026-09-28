@@ -2931,6 +2931,24 @@ app.use((req, res, next) => {
 // data — every byte of that arrives via POST /phone/roster, which is gated.
 const LAN_PUBLIC_PATHS = new Set(['/phone']);
 
+// The brand kit (public/brand/, the byte-identical mirror of the signage repo's
+// shared/brand/) is public too, for the same reason: the phone page's fonts,
+// tokens, corner-tab shapes and the Awana Clubs mark must load on the PIN
+// screen, before any PIN exists, and a stylesheet's url() could never send one.
+// The kit ships in the public repo and the installer and carries no roster
+// data. Served from its own root, so no path can climb out of it (serve-static
+// refuses `..`), and only stylesheets, fonts and SVGs whose path is plain
+// letters, digits, dashes and slashes; anything else, and any miss, falls
+// through to the gate below exactly as before.
+const BRAND_PUBLIC_PATH = /^\/[A-Za-z0-9_\-/]+\.(css|woff2|ttf|svg)$/;
+const brandStatic = express.static(path.join(__dirname, 'public', 'brand'), {
+  index: false, redirect: false, dotfiles: 'ignore', fallthrough: true,
+});
+app.use('/brand', (req, res, next) => {
+  if (!BRAND_PUBLIC_PATH.test(req.path)) return next();
+  return brandStatic(req, res, next);
+});
+
 app.use((req, res, next) => {
   if (security.isLoopbackRequest(req)) return next();
   if (LAN_PUBLIC_PATHS.has(req.path)) return next();
