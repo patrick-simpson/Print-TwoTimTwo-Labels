@@ -1,0 +1,83 @@
+/* ==========================================================================
+   Club Label Printer website stylesheet (index.html + capabilities.html).
+
+   Compiled Tailwind v4 replaces the old runtime cdn.tailwindcss.com script.
+   Scanning is pinned to the site's own source files: the print server, the
+   Chrome extension, the Electron app and node_modules are never scanned, so
+   their class-like strings can never leak utilities into this bundle.
+
+   Layer order: theme, base (preflight), components (family.css, then this
+   site's page CSS), utilities. family.css is a byte-identical copy of the
+   family design system's canonical file; never edit it here. Page-specific
+   styling lives in page.css under the `lbl-` prefix.
+   ========================================================================== */
+@import "tailwindcss" source(none);
+@import "./family.css" layer(components);
+@import "./page.css" layer(components);
+
+@source "../App.tsx";
+@source "../index.tsx";
+@source "../capabilities.tsx";
+@source "../components";
+@source "../src";
+
+/* Family tokens exposed as Tailwind theme values. `inline` makes each utility
+   emit var(--accent) itself, so [data-accent] and dark-mode swaps keep
+   working. Tailwind-side names never reuse a family token's own name (Tailwind
+   writes theme variables to :root, and --x: var(--x) would be a cycle). */
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-sunken: var(--paper-sunken);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+  --color-accent-line: var(--accent-line);
+  --color-accent-on: var(--accent-on);
+  --color-accent-deep: var(--accent-deep);
+  --color-label-paper: var(--label-paper);
+  --color-label-ink: var(--label-ink);
+
+  --font-serif: var(--font-display);
+  --font-sans: var(--font-body);
+  --font-code: var(--font-mono);
+
+  --text-step--1: var(--step--1);
+  --text-step-0: var(--step-0);
+  --text-step-1: var(--step-1);
+  --text-step-2: var(--step-2);
+  --text-step-3: var(--step-3);
+  --text-step-4: var(--step-4);
+  --text-step-5: var(--step-5);
+
+  --radius-chip: var(--radius-s);
+  --radius-card: var(--radius-m);
+  --radius-panel: var(--radius-l);
+  --shadow-card: var(--shadow-1);
+  --shadow-liner: var(--shadow-2);
+  --shadow-device: var(--shadow-3);
+}
+
+/* The colour names the pre-redesign components used, kept so any remaining
+   brand-* / club-* class still resolves to the same value it always did. The
+   club-* pair is TwoTimTwo's own pink/blue row colours (simulator only). */
+@theme {
+  --color-brand-50: #f0fdf4;
+  --color-brand-100: #dcfce7;
+  --color-brand-200: #bbf7d0;
+  --color-brand-500: #22c55e;
+  --color-brand-600: #16a34a;
+  --color-brand-700: #15803d;
+  --color-brand-900: #14532d;
+  --color-club-girl: #fdccce;
+  --color-club-girlBorder: #fd8388;
+  --color-club-boy: #d6dcff;
+  --color-club-boyBorder: #8295ff;
+}
+
+/* Dark mode is token-driven (family.css), so no dark: variants are used. */
