@@ -71,6 +71,11 @@ const MARK_FILES = Object.freeze({
   journey: 'journey-black.svg',
 });
 
+// How the warnings name them to an operator.
+const MARK_NAMES = Object.freeze({
+  puggle: 'Puggles', cubbie: 'Cubbies', spark: 'Sparks', 't&t': 'T&T', trek: 'Trek', journey: 'Journey',
+});
+
 // The long side, in pixels, a mark is rasterised at. The icon zone is 76 pt,
 // about 317 device px at 300 dpi; twice that gives the downscale real pixels
 // to work with and clears the renderer's too-small gate (half the zone) by a
@@ -274,8 +279,15 @@ function loadBrandKit(dir = DEFAULT_BRAND_DIR) {
     next.marks.set(key, r);
   }
   kit = next;
+  generation++;
   return status();
 }
+
+// Bumped by every loadBrandKit, so a caller caching something derived from
+// the kit (server.js keeps each mark's thermal-converted raster) knows when
+// to drop it.
+let generation = 0;
+function kitGeneration() { return generation; }
 
 // ── Queries the renderer makes ────────────────────────────────────────────────
 function fontReady(family) {
@@ -350,7 +362,8 @@ function markFailed(clubKey, reason) {
   const m = kit.marks.get(clubKey);
   if (!m || !m.ok) return;
   kit.marks.set(clubKey, { ok: false, reason: String(reason || 'could not be drawn'), svg: null });
-  console.warn(`[brand] Club mark for ${clubKey} could not be drawn (${reason}); labels use the letter monogram instead`);
+  generation++;
+  console.warn(`[brand] Club mark for ${MARK_NAMES[clubKey] || clubKey} could not be drawn (${reason}); labels use the letter monogram instead`);
 }
 
 // ── What /health reports ──────────────────────────────────────────────────────
@@ -386,7 +399,7 @@ function warnings() {
     });
   }
   if (st.marks.failed.length) {
-    const list = st.marks.failed.map((k) => `${k} (${st.marks.reasons[k]})`).join(', ');
+    const list = st.marks.failed.map((k) => `${MARK_NAMES[k] || k} (${st.marks.reasons[k]})`).join(', ');
     out.push({
       type: 'brandMarks',
       message: `Official club marks did not load: ${list}. When TwoTimTwo's club image cannot be fetched, those labels print the club's letter badge instead. Reinstall or update Club Label Printer to restore them.`,
@@ -410,7 +423,7 @@ function warnings() {
 module.exports = {
   DEFAULT_BRAND_DIR, FONT_FILES, MARK_FILES, MARK_RASTER_LONG_SIDE,
   loadBrandKit, status, warnings,
-  fontReady, fontCovers, splitRuns, clubMarkSvg, markFailed,
+  fontReady, fontCovers, splitRuns, clubMarkSvg, markFailed, kitGeneration,
   // Pure helpers, exported for unit tests.
   readCmapRanges, svgAtSize,
 };

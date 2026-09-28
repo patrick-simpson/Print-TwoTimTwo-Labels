@@ -1581,6 +1581,34 @@ async function prepareLogoForThermal(clubImageBuffer, { ink = [0, 0, 0] } = {}) 
   };
 }
 
+// The official club mark, rasterised and put through the thermal converter
+// once per club and ink colour, then reused: the result is deterministic, and
+// decoding the SVG and scanning it costs ~30 ms a label on a fast PC. Dropped
+// whenever the brand kit reloads. null when the club has no mark or it would
+// not draw (reported to the kit, so /health says so) — the caller then falls
+// back to the monogram.
+const thermalMarkCache = new Map();   // `${key}|${white}` -> prepared raster
+let thermalMarkCacheGen = -1;
+async function thermalClubMark(key, inkWhite) {
+  if (thermalMarkCacheGen !== brand.kitGeneration()) {
+    thermalMarkCache.clear();
+    thermalMarkCacheGen = brand.kitGeneration();
+  }
+  const cacheKey = `${key}|${inkWhite ? 'white' : 'black'}`;
+  if (thermalMarkCache.has(cacheKey)) return thermalMarkCache.get(cacheKey);
+  const svg = brand.clubMarkSvg(key);
+  if (!svg) return null;
+  const gen = brand.kitGeneration();
+  const mark = await prepareLogoForThermal(svg, { ink: inkWhite ? [255, 255, 255] : [0, 0, 0] });
+  if (!mark) {
+    brand.markFailed(key, 'decoded to no printable ink');
+    return null;
+  }
+  // Only cache what was made from the kit that is still loaded.
+  if (gen === brand.kitGeneration()) thermalMarkCache.set(cacheKey, mark);
+  return mark;
+}
+
 // Render one 4x2in label to a PNG.
 //
 // ONE OPTIONS OBJECT, not fourteen positional parameters. The old signature was
@@ -1868,15 +1896,10 @@ async function generateLabel(input) {
       // solid ink colour, re-inked white on an inverted label). Fails open: a
       // missing or undecodable mark falls through to the monogram.
       const key = clubKey(clubName);
-      const markSvg = brand.clubMarkSvg(key);
-      if (markSvg) {
-        const mark = await prepareLogoForThermal(markSvg, { ink });
-        if (mark) {
-          drawArt(mark);
-          markDrawn = true;
-        } else {
-          brand.markFailed(key, 'decoded to no printable ink');
-        }
+      const mark = await thermalClubMark(key, inkWhite);
+      if (mark) {
+        drawArt(mark);
+        markDrawn = true;
       }
     }
     if (!logoDrawn && !markDrawn) {
