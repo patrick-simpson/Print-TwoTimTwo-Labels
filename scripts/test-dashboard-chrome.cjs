@@ -7,6 +7,9 @@
 // that quietly stop being true are pinned against the shipped files instead.
 // Where a claim is about the DOM, the page's markup is parsed with jsdom (its
 // own scripts NOT run) and the page's shipped functions are run against it.
+// The header chip is the exception: it is drawn from /health, so the page's
+// own scripts DO run (fetch stubbed), and the status window's real component
+// is bundled and rendered.
 //
 // WHAT THIS GUARDS
 //
@@ -32,6 +35,13 @@
 //   test-server-security.cjs checks the LAN side).
 // * The stepped chip geometry (print-server/public/step-chip.js, the one copy
 //   shared by the dashboard and the status window) keeps its silhouette.
+// * The chip says what /health says: PRINTER / ONLINE while the server
+//   answers, PROBLEM when a warning means nothing is coming out of the printer
+//   (printerNotFound, spoolerBacklog: the rule that turns the traffic light
+//   red), OFFLINE when it does not answer, and back again when things
+//   recover. The dashboard draws it in loadHealth() (with and without
+//   step-chip.js) and the status window in StatusPanel.jsx, by the same rule,
+//   so both are run through the same scenes.
 //
 // Run: npm run test:dashboard
 
@@ -39,7 +49,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { JSDOM } = require('jsdom');
+const { JSDOM, VirtualConsole } = require('jsdom');
 
 let passed = 0;
 let failed = 0;
@@ -441,5 +451,189 @@ console.log('\ndashboard chrome: the stepped chip');
   check('chip text is escaped', !/<b>/.test(StepChip.svg('<b>', '"x"')) && /&lt;b&gt;/.test(StepChip.svg('<b>', 'x')));
 }
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+// ── The chip says what /health says ─────────────────────────────────────────
+// The header chip is the one status line at the top of both windows, and on
+// the dashboard nothing else draws it while the server answers (the old badge
+// was written at the top of loadHealth's .then; this call replaced it). A
+// chip that stays blank, or stays OFFLINE after the server comes back, would
+// pass every static check above, so both surfaces are RUN here.
+//
+// In order, on one dashboard: each scene follows the last, so a chip that
+// never leaves a state (PROBLEM after the printer is back, OFFLINE after the
+// server is) fails too. Only printerNotFound and spoolerBacklog mean nothing
+// is printing; any other warning is "attention", and the chip stays ONLINE.
+const HEALTHY = { status: 'ok', version: '6.16.0', printer: 'Zebra ZD421', uptime: 3600, warnings: [] };
+const answers = (body) => () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+const warns = (...warnings) => answers({ ...HEALTHY, warnings });
+const noAnswer = () => Promise.reject(new TypeError('Failed to fetch'));
+const CHIP_SCENES = [
+  ['a healthy server', answers(HEALTHY), 'online'],
+  ['a missing printer', warns({ type: 'printerNotFound', message: 'Printer "Zebra ZD421" not found' }), 'problem'],
+  ['a printer check that failed (still printing)',
+    warns({ type: 'printerCheckFailed', message: 'Could not check printer status' }), 'online'],
+  ['a jammed print queue beside a stale roster',
+    warns({ type: 'csvStale', message: 'Roster is 3 days old' }, { type: 'spoolerBacklog', message: '4 jobs waiting' }), 'problem'],
+  ['a bare-string warning from an older server', warns('Roster is stale'), 'online'],
+  ['no answer at all', noAnswer, 'offline'],
+  ['the server back again', answers(HEALTHY), 'online'],
+];
+const CHIP = {
+  online: { word: 'ONLINE', say: 'Printer online', plate: 'var(--c-plate)' },
+  problem: { word: 'PROBLEM', say: 'Printer problem, see the warnings', plate: 'var(--c-hot-deep)' },
+  offline: { word: 'OFFLINE', say: 'Print server offline', plate: 'var(--bad)' },
+};
+
+// A jsdom console that keeps the page's own errors (an uncaught throw in its
+// scripts) and drops "Not implemented" (jsdom has no canvas, so step-chip.js
+// measures by its rough table, which is what it is for).
+function pageConsole() {
+  const errors = [];
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', (e) => { if (!/^Not implemented:/.test(e.message)) errors.push(e.message); });
+  return { errors, virtualConsole };
+}
+
+// The dashboard with its own scripts running. fetch is stubbed: /health
+// answers the way the current scene says, and every other loader waits
+// forever so nothing else touches the page. With `stepChip`, step-chip.js is
+// run exactly where its <script> tag sits (jsdom loads no files by itself).
+function runDashboard(stepChip) {
+  let health = () => new Promise(() => {});
+  const { errors, virtualConsole } = pageConsole();
+  const tag = '<script src="/step-chip.js"></script>';
+  const html = stepChip
+    ? SURFACES.dashboard.replace(tag, () => `<script>${read('print-server', 'public', 'step-chip.js')}</script>`)
+    : SURFACES.dashboard;
+  const { window: win } = new JSDOM(html, {
+    runScripts: 'dangerously',
+    url: 'http://localhost:3456/',
+    virtualConsole,
+    beforeParse(w) { w.fetch = (url) => (/\/health$/.test(String(url)) ? health() : new Promise(() => {})); },
+  });
+  return { win, errors, answer(fn) { health = fn; } };
+}
+
+// The status window's own StatusPanel.jsx, bundled the way Vite builds it
+// (React, the kit's SVGs, `?raw` for the corner tab), as one script to run
+// inside a jsdom window. esbuild is Vite's own, found through Vite.
+async function statusWindowBundle() {
+  const esbuild = require(require.resolve('esbuild', { paths: [path.dirname(require.resolve('vite/package.json'))] }));
+  const raw = {
+    name: 'raw',
+    setup(build) {
+      build.onResolve({ filter: /\?raw$/ }, (a) => ({ path: path.resolve(a.resolveDir, a.path.replace(/\?raw$/, '')), namespace: 'raw' }));
+      build.onLoad({ filter: /.*/, namespace: 'raw' }, (a) => ({ contents: fs.readFileSync(a.path, 'utf8'), loader: 'text' }));
+    },
+  };
+  const out = await esbuild.build({
+    stdin: {
+      contents: "import React from 'react'; import { createRoot } from 'react-dom/client';"
+        + " import StatusPanel from './components/StatusPanel.jsx'; export { React, createRoot, StatusPanel };",
+      resolveDir: path.join(root, 'electron-app', 'renderer'),
+      loader: 'jsx',
+    },
+    bundle: true,
+    format: 'iife',
+    globalName: 'StatusHarness',
+    jsx: 'automatic',
+    define: { 'process.env.NODE_ENV': '"production"' },
+    loader: { '.svg': 'dataurl' },
+    plugins: [raw],
+    write: false,
+    logLevel: 'silent',
+  });
+  return out.outputFiles[0].text;
+}
+
+// One status window, rendered fresh (it polls every 5 s, so one scene per
+// window), read once its first /health poll has landed. The poll asks the
+// main process for its view straight after setting the health state, and
+// React renders on this window's own timers, so one timer after that call
+// reads the committed chip.
+async function statusWindowChip(bundle, health, serverState) {
+  const { errors, virtualConsole } = pageConsole();
+  const { window: win } = new JSDOM('<!doctype html><div id="root"></div>',
+    { runScripts: 'outside-only', url: 'file:///C:/app/dist/index.html', virtualConsole });
+  let polled;
+  const donePolling = new Promise((r) => { polled = r; });
+  win.fetch = () => health();
+  win.awana = {
+    getServerState: () => { polled(); return Promise.resolve(serverState); },
+    getLanAddress: () => Promise.resolve(null),
+  };
+  try {
+    win.eval(bundle);
+    const { React, createRoot, StatusPanel } = win.StatusHarness;
+    createRoot(win.document.getElementById('root')).render(React.createElement(StatusPanel,
+      { config: { printerName: 'Zebra ZD421', checkinUrl: 'https://example.twotimtwo.com/clubber/checkin' }, onReset() {} }));
+    let giveUp;
+    await Promise.race([donePolling, new Promise((r) => { giveUp = setTimeout(r, 5000); })]);
+    clearTimeout(giveUp);
+    await new Promise((r) => win.setTimeout(r, 20));
+    const chip = win.document.querySelector('.app-header .step-chip, .app-header .chip-fallback');
+    const plate = chip && chip.querySelector('path');
+    return { label: chip && chip.getAttribute('aria-label'), plate: plate && plate.getAttribute('style'), errors };
+  } catch (e) {
+    errors.push(e && e.message);
+    return { label: null, plate: null, errors };
+  } finally {
+    win.close();
+  }
+}
+
+async function chipSections() {
+  console.log('\ndashboard chrome: the header chip says what /health says (the dashboard)');
+  for (const stepChip of [true, false]) {
+    const page = runDashboard(stepChip);
+    const doc = page.win.document;
+    const how = stepChip ? 'as the stepped chip' : 'in plain words (no step-chip.js)';
+    check(`the dashboard’s own scripts run ${stepChip ? 'with' : 'without'} step-chip.js`,
+      typeof page.win.loadHealth === 'function' && page.errors.length === 0, page.errors.join('; '));
+    for (const [scene, health, state] of CHIP_SCENES) {
+      page.answer(health);
+      if (typeof page.win.loadHealth === 'function') page.win.loadHealth();
+      await new Promise((r) => setTimeout(r, 0));
+      const el = doc.getElementById('status-badge');
+      const want = CHIP[state];
+      const say = el.getAttribute('aria-label');
+      const drawn = stepChip
+        ? !!el.querySelector('svg') && el.innerHTML.includes(`>${want.word}</text>`) && el.innerHTML.includes(`style="fill:${want.plate}"`)
+        : el.textContent === `Printer \u00B7 ${want.word[0]}${want.word.slice(1).toLowerCase()}`;
+      check(`dashboard, ${scene}: the header chip reads PRINTER / ${want.word} ${how}`,
+        say === want.say && el.title === want.say && drawn,
+        `aria-label ${JSON.stringify(say)}: ${el.innerHTML.slice(0, 200) || '(blank)'}`);
+    }
+    check(`the dashboard’s scripts raised no error through the scenes (${stepChip ? 'with' : 'without'} step-chip.js)`,
+      page.errors.length === 0, page.errors.join('; '));
+    page.win.close();
+  }
+
+  console.log('\ndashboard chrome: the header chip says what /health says (the status window)');
+  let bundle = null;
+  try {
+    bundle = await statusWindowBundle();
+  } catch (e) {
+    check('StatusPanel.jsx bundles for the check', false, e && e.message);
+    return;
+  }
+  const scenes = [
+    ...CHIP_SCENES.map(([scene, health, state]) => [scene, health, state, { status: 'running', error: null }]),
+    ['the main process says the server failed to start', answers(HEALTHY), 'offline',
+      { status: 'failed', error: 'Error: listen EADDRINUSE: address already in use :::3456' }],
+  ];
+  for (const [scene, health, state, serverState] of scenes) {
+    const want = CHIP[state];
+    const got = await statusWindowChip(bundle, health, serverState);
+    check(`status window, ${scene}: the header chip reads PRINTER / ${want.word}`,
+      got.label === `PRINTER ${want.word}` && new RegExp(`fill:\\s*${want.plate.replace(/[()]/g, '\\$&')}`).test(got.plate || '')
+      && got.errors.length === 0,
+      `${JSON.stringify(got.label)} on ${JSON.stringify(got.plate)}${got.errors.length ? `; ${got.errors.join('; ')}` : ''}`);
+  }
+}
+
+chipSections()
+  .catch((e) => check('the header chip checks ran to the end', false, e && e.stack))
+  .then(() => {
+    console.log(`\n${passed} passed, ${failed} failed`);
+    process.exit(failed > 0 ? 1 : 0);
+  });
