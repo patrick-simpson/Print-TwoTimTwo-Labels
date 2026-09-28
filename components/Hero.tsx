@@ -1,85 +1,72 @@
 import React from 'react';
+import { Icon } from './family/Icons';
+import { Caption } from './family/Family';
+import { LabelOnLiner, LabelSpec } from './Mocks';
 
-/**
- * CSS mock of the real 4×2 in thermal label, matching the v4 canvas design:
- * icon panel on the left, big first name, group line, and the icon row in the
- * bottom-right corner (shares · birthday · allergy · no-photo).
- */
-const LabelMock: React.FC = () => (
-  <div className="relative">
-    <div className="absolute -inset-6 bg-gradient-to-tr from-brand-100 via-emerald-50 to-transparent rounded-[2rem] blur-2xl opacity-80" aria-hidden="true"></div>
-    <div className="relative bg-white rounded-2xl shadow-2xl shadow-slate-300/60 border border-slate-200 rotate-1 hover:rotate-0 transition-transform duration-300 w-full max-w-[420px] aspect-[2/1] flex overflow-hidden">
-      {/* icon panel */}
-      <div className="w-[28%] bg-slate-50 border-r border-slate-200 flex items-center justify-center">
-        <div className="w-16 h-16 rounded-full bg-slate-900 text-white flex items-center justify-center text-2xl font-black">M</div>
-      </div>
-      {/* text zone */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 relative">
-        <div className="text-4xl font-black text-slate-900 leading-none tracking-tight">Micah</div>
-        <div className="text-lg text-slate-800 mt-1">Mills</div>
-        <div className="w-3/4 border-t border-slate-700 mt-2 mb-1"></div>
-        <div className="text-xs font-bold italic text-slate-900">Sparks</div>
-        <div className="text-[10px] italic text-slate-500">Sparks Green</div>
-        {/* bottom-right icon row */}
-        <div className="absolute bottom-2 right-3 flex items-end gap-1.5 text-lg leading-none">
-          <span className="text-sm font-semibold text-slate-800">🪙 1</span>
-          <span className="text-xl">🍰</span>
-          <span>🥜</span>
-          <span className="relative inline-block">
-            📷
-            <span className="absolute inset-0 flex items-center justify-center" aria-hidden="true">
-              <span className="w-[120%] h-[2.5px] bg-slate-900 -rotate-[28deg] rounded-full"></span>
-            </span>
-          </span>
-        </div>
-      </div>
-    </div>
-    <p className="relative text-center text-xs text-slate-400 mt-4">
-      The actual 4×2 in label design — allergy, birthday, share &amp; no-photo icons included
-    </p>
-  </div>
-);
+// The everyday label, as generateLabel() draws it for a Sparks child with a
+// birthday this week, a nut allergy and a "no photos" answer. With a peanut
+// and a camera on the row, the age words take the renderer's short form
+// ("Turning 7!") so the safety icons keep their places.
+const HERO_LABEL: LabelSpec = {
+  name: 'Micah',
+  mono: 'S',
+  club: 'Sparks',
+  season: 'leaf',
+  glyphs: [
+    { k: 'icon', icon: 'star', size: 'collectible' },
+    { k: 'icon', icon: 'cake', size: 'cake' },
+    { k: 'words', text: 'Turning 7!' },
+    { k: 'icon', icon: 'peanut', size: 'allergy' },
+    { k: 'icon', icon: 'nocam', size: 'allergy' },
+  ],
+};
 
 export const Hero: React.FC = () => (
-  <header className="relative overflow-hidden">
-    <div className="absolute inset-0 bg-gradient-to-b from-brand-50/70 to-white" aria-hidden="true"></div>
-    <div className="relative max-w-6xl mx-auto px-4 pt-16 pb-20 grid lg:grid-cols-2 gap-12 items-center">
+  <section className="fam-hero" aria-labelledby="hero-title">
+    <div className="fam-wrap fam-hero__inner">
       <div>
-        <div className="inline-flex items-center gap-2 text-xs font-bold text-brand-700 bg-brand-50 border border-brand-200 rounded-full px-3 py-1 mb-5">
-          <i className="fa fa-bolt"></i> v4 — reprints, live dashboard, offline mode &amp; self-updates
-        </div>
-        <h1 className="text-4xl sm:text-5xl font-black text-slate-900 leading-[1.1] tracking-tight">
-          Check a kid in.<br />
-          <span className="text-brand-600">The label just prints.</span>
-        </h1>
-        <p className="mt-5 text-lg text-slate-600 max-w-xl">
-          A free companion for <strong>TwoTimTwo.com</strong> check-in: the moment a child is checked
-          in — on this computer or any other device — a 4×2 name label prints silently on your
-          thermal printer. Allergies, birthdays, handbook groups and photo permissions included.
+        <p className="fam-kicker">For the check-in table</p>
+        <h1 className="fam-hero__title" id="hero-title">Every child, <em>greeted by&nbsp;name.</em></h1>
+        <p className="fam-hero__lede">
+          The moment a child is checked in on TwoTimTwo.com, a name label prints by itself, carrying
+          the allergy, the birthday and the photo wishes a leader needs to see at a glance.
         </p>
-        <div className="mt-8 flex flex-wrap items-center gap-3">
-          <a href="#install" className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold px-6 py-3 rounded-xl shadow-lg shadow-brand-600/25 transition-colors">
-            <i className="fa fa-download"></i> Install in 5 minutes
-          </a>
-          <a href="#simulator" className="inline-flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 font-bold px-6 py-3 rounded-xl border border-slate-200 shadow-sm transition-colors">
-            <i className="fa fa-vial"></i> Test it live
-          </a>
+        <div className="fam-actions">
+          <a className="fam-btn" href="#features">See what it does <Icon name="arrow" /></a>
+          <a className="fam-btn fam-btn--ghost" href="#install"><Icon name="download" />Install it</a>
         </div>
-        <ul className="mt-8 space-y-2 text-sm text-slate-600">
-          {[
-            'Zero clicks per label — printing is fully automatic',
-            'Duplicate-proof: one check-in, exactly one label',
-            'Keeps working when the venue Wi-Fi doesn’t',
-          ].map(t => (
-            <li key={t} className="flex items-start gap-2.5">
-              <i className="fa fa-circle-check text-brand-600 mt-0.5"></i>{t}
-            </li>
-          ))}
+        <ul className="fam-hero__facts">
+          <li><Icon name="check" />Free for any church</li>
+          <li><Icon name="check" />Windows app + Chrome extension</li>
+          <li><Icon name="check" />Made at Kennebec Valley Baptist Church</li>
         </ul>
       </div>
-      <div className="flex justify-center lg:justify-end">
-        <LabelMock />
-      </div>
+
+      <figure className="fam-frame fam-frame--label">
+        <div className="fam-frame__stage">
+          <LabelOnLiner spec={HERO_LABEL}
+            label="Recreation of a 4 by 2 inch check-in label: a round S monogram for Sparks in a grey panel on the left; a small leaf at the top; the first name Micah in large bold type with Sparks beneath it; and along the bottom right, a star (this week’s collectible icon), a birthday cake with the words Turning 7, a peanut for a nut allergy, and a crossed-out camera meaning no photos." />
+        </div>
+        <Caption fig="Fig. 1" names>
+          The 4×2 label, as the printer draws it: a first name you can read across a room, and the
+          allergy, birthday and photo wishes in the corner where every leader knows to look. The
+          printed label also carries the last name, left off here. The club appears here as the
+          printer’s monogram badge; on the printed label it may carry the club’s own artwork.
+        </Caption>
+      </figure>
     </div>
-  </header>
+  </section>
+);
+
+export const Stats: React.FC = () => (
+  <section className="fam-stats" aria-label="At a glance">
+    <div className="fam-wrap">
+      <ul className="fam-stats__list">
+        <li className="fam-stat"><div className="fam-stat__num">0<span className="fam-stat__unit">clicks</span></div><p className="fam-stat__label">per label. Check a child in and the printer takes it from there.</p></li>
+        <li className="fam-stat"><div className="fam-stat__num">4×2<span className="fam-stat__unit">inches</span></div><p className="fam-stat__label">a thermal label drawn at 300 dots per inch.</p></li>
+        <li className="fam-stat"><div className="fam-stat__num">12<span className="fam-stat__unit">icons</span></div><p className="fam-stat__label">in the collectible series, a new one each week.</p></li>
+        <li className="fam-stat"><div className="fam-stat__num">1<span className="fam-stat__unit">passphrase</span></div><p className="fam-stat__label">logs in a new lobby screen, once display login is set up.</p></li>
+      </ul>
+    </div>
+  </section>
 );

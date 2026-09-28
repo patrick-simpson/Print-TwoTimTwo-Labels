@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { HEALTH_CHECK_ENDPOINT, HEALTH_CHECK_TIMEOUT } from '../src/constants';
+import { Icon } from './family/Icons';
 
 type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error';
 
@@ -7,11 +8,15 @@ const INSTALLER_URL = 'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels
 const LEGACY_INSTALL_CMD = "powershell -ExecutionPolicy Bypass -Command 'irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex'";
 
 const Step: React.FC<{ n: number; title: string; children: React.ReactNode }> = ({ n, title, children }) => (
-  <li className="relative pl-14">
-    <span className="absolute left-0 top-0 w-9 h-9 rounded-full bg-brand-600 text-white flex items-center justify-center font-black text-sm shadow">{n}</span>
-    <h3 className="font-bold text-slate-900 mb-2 pt-1.5">{title}</h3>
-    <div className="text-sm text-slate-600 space-y-3">{children}</div>
+  <li className="lbl-install__step">
+    <span className="lbl-install__num" aria-hidden="true">{n}</span>
+    <h3 className="lbl-install__title"><span className="fam-sr">Step {n}: </span>{title}</h3>
+    <div className="lbl-install__body">{children}</div>
   </li>
+);
+
+const Code: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <code className="lbl-code">{children}</code>
 );
 
 export const InstallGuide: React.FC = () => {
@@ -42,146 +47,146 @@ export const InstallGuide: React.FC = () => {
   };
 
   return (
-    <section id="install" className="max-w-4xl mx-auto px-4 py-20">
-      <h2 className="text-3xl font-black text-slate-900 text-center tracking-tight">Install in 5 minutes</h2>
-      <p className="text-slate-500 text-center mt-2 mb-4">
-        Windows PC + any thermal label printer with 4×2 in labels. One installer — no Node.js, no scripts.
-      </p>
-      <p className="text-xs text-center text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-12 max-w-2xl mx-auto">
-        <strong>Independent tool:</strong> not affiliated with or endorsed by TwoTimTwo.com — a
-        community-built companion that works alongside their check-in system.
-      </p>
+    <section id="install" className="lbl-part" aria-labelledby="install-title">
+      <div className="fam-wrap">
+        <div className="lbl-part__head">
+          <p className="fam-kicker">Install</p>
+          <h2 className="lbl-part__title" id="install-title">Set it up in a few minutes</h2>
+          <p className="lbl-part__lede">
+            A Windows PC and any thermal label printer that takes 4×2 inch labels. One installer, with no
+            Node.js and no scripts.
+          </p>
+          <p className="lbl-note">
+            <Icon name="shield" className="lbl-note__icon" />
+            <span><strong>An independent tool.</strong> Club Label Printer is not affiliated with or endorsed by
+            TwoTimTwo.com. It is a companion made by a church that works alongside their check-in system.</span>
+          </p>
+        </div>
 
-      <ol className="space-y-12">
-        <Step n={1} title="Install the app">
-          <p>
-            <a href={INSTALLER_URL} className="inline-flex items-center gap-2 bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm px-5 py-2.5 rounded-lg shadow transition-colors">
-              <i className="fa fa-download"></i> Download Club Label Printer for Windows
-            </a>
-            <span className="ml-3 text-xs text-slate-400">then run the downloaded file</span>
-          </p>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs space-y-1.5 text-amber-800">
-            <p className="font-bold mb-1"><i className="fa fa-shield-halved mr-1.5"></i>Windows may show a blue “Windows protected your PC” screen</p>
-            <p>
-              That's SmartScreen being cautious about a new community app. Click{' '}
-              <strong>More info</strong>, then <strong>Run anyway</strong>. It only happens on the first install.
+        <ol className="lbl-install">
+          <Step n={1} title="Install the app">
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <a href={INSTALLER_URL} className="fam-btn"><Icon name="download" />Download Club Label Printer for Windows</a>
+              <span className="text-step--1 text-ink-3">then run the downloaded file</span>
             </p>
-          </div>
-          <p>
-            The print server starts the moment the app opens — even before setup is finished. The
-            one-page setup asks you to pick your label printer, confirm your church's check-in URL,
-            and click <strong>Save &amp; Start</strong>. The app then lives in the system tray (near
-            the clock), starts automatically when the PC boots, prints a test label on demand, and{' '}
-            <strong>updates itself</strong> — no more re-running installers.
-          </p>
-          <p className="text-xs text-slate-500">
-            Server not running for any reason? Just launch <strong>Club Label Printer</strong> from
-            the desktop or Start menu again — every launch checks the server and starts it if it's
-            down. There's also a <strong>▶ Start print server</strong> button in the tray menu and in
-            Settings.
-          </p>
-          <p className="text-xs text-slate-500">
-            If Windows asks about network access after setup, click <strong>Allow</strong> — that's what
-            lets phones on your Wi-Fi use phone check-in.
-          </p>
-          <details className="text-xs text-slate-500">
-            <summary className="cursor-pointer font-semibold text-slate-600">Previous install method (PowerShell script — deprecated)</summary>
-            <div className="mt-2 space-y-2">
+            <div className="lbl-note lbl-note--block">
+              <p><strong>Windows may show a blue “Windows protected your PC” screen.</strong></p>
               <p>
-                Existing script installs at <code className="bg-slate-100 px-1 rounded">C:\output</code> keep
-                working and are imported automatically the first time you run the new app. To install the
-                old way anyway, paste this into PowerShell:
+                That’s SmartScreen being cautious about a new community app. Click{' '}
+                <strong>More info</strong>, then <strong>Run anyway</strong>. It only happens on the first install.
               </p>
-              <div className="flex items-stretch gap-2">
-                <code className="flex-1 block bg-slate-900 text-brand-200 rounded-lg px-4 py-3 font-mono text-xs leading-relaxed overflow-x-auto">
-                  {LEGACY_INSTALL_CMD}
-                </code>
-                <button
-                  onClick={copyCmd}
-                  className="shrink-0 px-4 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 text-sm font-semibold transition-colors"
-                  title="Copy command"
-                >
-                  <i className={`fa ${copied ? 'fa-check text-brand-600' : 'fa-copy'}`}></i>
-                </button>
-              </div>
             </div>
-          </details>
-        </Step>
-
-        <Step n={2} title="Load the browser extension">
-          <p>
-            The app already installed the extension's files for you. You just have to point your
-            browser at them <em>once</em>.
-          </p>
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs space-y-1.5">
-            <p className="font-bold text-slate-700 mb-1">In Edge or Chrome:</p>
-            <ol className="list-decimal list-inside space-y-1 text-slate-600">
-              <li>Open <code className="bg-white px-1 rounded border border-slate-200">edge://extensions</code> or <code className="bg-white px-1 rounded border border-slate-200">chrome://extensions</code></li>
-              <li>Turn on <strong>Developer Mode</strong> (top right)</li>
-              <li>Click <strong>Load unpacked</strong> and pick <code className="bg-white px-1 rounded border border-slate-200">%APPDATA%\awana-label-printer\chrome-extension</code></li>
-            </ol>
-            <p className="text-slate-500 pt-1">
-              Can't find it? The tray menu has <strong>Open Chrome extension folder</strong>, and the
-              dashboard's <strong>Diagnostics</strong> tab has a <strong>Copy folder path</strong> button.
-            </p>
-          </div>
-          <div className="bg-brand-50 border border-brand-200 rounded-lg p-4 text-xs space-y-1.5 text-slate-700">
-            <p className="font-bold mb-1"><i className="fa fa-rotate mr-1.5"></i>Why that folder and not a download</p>
             <p>
-              The app rewrites that folder every time it starts, so when the app updates itself the
-              extension updates with it — just <strong>restart Chrome</strong> to pick it up, and the
-              widget tells you when one is owed. A copy you download and unzip somewhere else never
-              updates, and quietly drifts behind the print server.
+              The print server starts the moment the app opens, even before setup is finished. The
+              one-page setup asks you to pick your label printer, confirm your church’s check-in address,
+              and click <strong>Save &amp; Start</strong>. The app then lives in the system tray (near
+              the clock), starts automatically when the PC boots, prints a test label on demand, and{' '}
+              <strong>updates itself</strong>, so there are no installers to re-run.
             </p>
-          </div>
-          <p className="text-xs text-slate-500">
-            The green <strong>Club Print</strong> widget appears on your check-in page once it's loaded.
-            (Old script installs have the folder at <code className="bg-slate-100 px-1 rounded">C:\output\Print-TwoTimTwo-Labels\chrome-extension</code>;{' '}
-            <a href="chrome-extension.zip" download className="text-brand-600 hover:underline">the zip</a> is
-            still there for anyone not using the Windows app.)
-          </p>
-        </Step>
+            <p className="lbl-small">
+              Server not running for any reason? Launch <strong>Club Label Printer</strong> from the desktop
+              or Start menu again: every launch checks the server and starts it if it’s down. There’s also a{' '}
+              <strong>Start print server</strong> button in the tray menu and in Settings.
+            </p>
+            <p className="lbl-small">
+              If Windows asks about network access after setup, click <strong>Allow</strong>. That’s what lets
+              phones on your Wi-Fi use phone check-in, once you turn it on and set a PIN.
+            </p>
+            <details className="fam-hood lbl-legacy">
+              <summary><svg className="fam-hood__chev" aria-hidden="true" focusable="false"><use href="#i-chev" /></svg>Previous install method (PowerShell script, deprecated)</summary>
+              <div className="fam-hood__body">
+                <p>
+                  Existing script installs at <Code>C:\output</Code> keep working and are imported
+                  automatically the first time you run the new app. To install the old way anyway, paste this
+                  into PowerShell:
+                </p>
+                <div className="lbl-cmd">
+                  <code className="lbl-cmd__text">{LEGACY_INSTALL_CMD}</code>
+                  <button type="button" onClick={copyCmd} className="lbl-cmd__copy" aria-label={copied ? 'Copied' : 'Copy command'}>
+                    <Icon name={copied ? 'check' : 'copy'} />
+                  </button>
+                </div>
+              </div>
+            </details>
+          </Step>
 
-        <Step n={3} title="Enrich labels from your roster (automatic)">
-          <p>
-            The extension syncs your TwoTimTwo roster to the server on every visit, which unlocks
-            allergy icons, birthday cakes, handbook groups and the no-photo flag. You can also drop a{' '}
-            <code className="bg-slate-100 px-1 rounded">clubbers.csv</code> next to the server with these columns:
-          </p>
-          <div className="overflow-x-auto">
-            <code className="block bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-xs whitespace-nowrap">
-              FirstName, LastName, Birthdate, Allergies, HandbookGroup, MedRelease
-            </code>
-          </div>
-          <p className="text-xs text-slate-500">
-            <strong>MedRelease</strong> is y/n — a “n” prints a crossed-out camera on that child’s label
-            so volunteers know not to photograph them. Unknown kids still get a basic label; nothing ever crashes.
-          </p>
-        </Step>
+          <Step n={2} title="Load the browser extension">
+            <p>
+              The app already installed the extension’s files for you. You just have to point your browser
+              at them <em>once</em>.
+            </p>
+            <div className="lbl-note lbl-note--block">
+              <p><strong>In Edge or Chrome:</strong></p>
+              <ol className="lbl-olist">
+                <li>Open <Code>edge://extensions</Code> or <Code>chrome://extensions</Code></li>
+                <li>Turn on <strong>Developer Mode</strong> (top right)</li>
+                <li>Click <strong>Load unpacked</strong> and pick <Code>%APPDATA%\awana-label-printer\chrome-extension</Code></li>
+              </ol>
+              <p className="lbl-small">
+                Can’t find it? The tray menu has <strong>Open Chrome extension folder</strong>, and the
+                dashboard’s <strong>Diagnostics</strong> tab has a <strong>Copy folder path</strong> button.
+              </p>
+            </div>
+            <div className="lbl-note lbl-note--block lbl-note--accent">
+              <p><strong>Why that folder and not a download</strong></p>
+              <p>
+                The app rewrites that folder every time it starts, so when the app updates itself the
+                extension updates with it. Just <strong>restart Chrome</strong> to pick it up, and the widget
+                tells you when one is owed. A copy you download and unzip somewhere else never updates, and
+                quietly drifts behind the print server.
+              </p>
+            </div>
+            <p className="lbl-small">
+              The green <strong>Club Print</strong> widget appears on your check-in page once it’s loaded.
+              (Old script installs have the folder at <Code>C:\output\Print-TwoTimTwo-Labels\chrome-extension</Code>;{' '}
+              <a href="chrome-extension.zip" download>the zip</a> is still there for anyone not using the
+              Windows app.)
+            </p>
+          </Step>
 
-        <Step n={4} title="Test the connection">
-          <p>With the server running on this computer, verify everything is wired up:</p>
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              onClick={testConnection}
-              disabled={connStatus === 'checking'}
-              className="bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors"
-            >
-              {connStatus === 'checking' ? 'Checking…' : 'Test Connection'}
-            </button>
-            {connStatus === 'connected' && (
-              <span className="text-brand-700 font-semibold text-sm"><i className="fa fa-circle-check mr-1.5"></i>Connected — {connDetail}</span>
-            )}
-            {connStatus === 'error' && (
-              <span className="text-red-600 text-xs max-w-sm">{connDetail}</span>
-            )}
-          </div>
-          <p className="text-xs text-slate-500">
-            Then scroll down to the <a href="#simulator" className="text-brand-700 font-semibold hover:underline">simulator</a> and
-            click a child — a real label should print.
-          </p>
-        </Step>
-      </ol>
+          <Step n={3} title="Enrich labels from your roster (automatic)">
+            <p>
+              The extension syncs your TwoTimTwo roster to the print server on every visit, which unlocks
+              allergy icons, birthday cakes, handbook groups and the no-photo flag. You can also drop a{' '}
+              <Code>clubbers.csv</Code> next to the server with these columns:
+            </p>
+            <div className="lbl-scroll" tabIndex={0} role="region" aria-label="CSV columns">
+              <Code>FirstName, LastName, Birthdate, Allergies, HandbookGroup, MedRelease</Code>
+            </div>
+            <p className="lbl-small">
+              A “no” in <strong>MedRelease</strong> (or TwoTimTwo’s photo-release column) prints a crossed-out
+              camera on that child’s label, so volunteers know not to photograph them. Unknown children still
+              get a basic label; nothing ever crashes.
+            </p>
+          </Step>
+
+          <Step n={4} title="Test the connection">
+            <p>With the app running on this computer, check that everything is wired up:</p>
+            <div className="flex items-center gap-x-4 gap-y-3 flex-wrap">
+              <button
+                type="button"
+                onClick={testConnection}
+                disabled={connStatus === 'checking'}
+                className="fam-btn fam-btn--ghost disabled:opacity-60 disabled:cursor-wait"
+              >
+                {connStatus === 'checking' ? 'Checking…' : 'Test Connection'}
+              </button>
+              <span role="status" className="min-w-0">
+                {connStatus === 'connected' && (
+                  <span className="lbl-conn lbl-conn--ok"><Icon name="check" />Connected: {connDetail}</span>
+                )}
+                {connStatus === 'error' && (
+                  <span className="lbl-conn lbl-conn--err"><Icon name="alarm" />{connDetail}</span>
+                )}
+              </span>
+            </div>
+            <p className="lbl-small">
+              Then open your church’s TwoTimTwo check-in page in Chrome and check a child in. A real label
+              should print. (The dashboard’s test label works too.)
+            </p>
+          </Step>
+        </ol>
+      </div>
     </section>
   );
 };

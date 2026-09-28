@@ -1,77 +1,104 @@
 import React from 'react';
+import { Icon, IconName } from './family/Icons';
+import { URLS } from './family/Family';
 
-const STEPS = [
-  {
-    icon: 'fa-server',
-    title: 'Run the print server',
-    body: 'One PowerShell command installs everything and puts an "Awana Check In" icon on the desktop. Double-click it on club night — it even updates itself.',
-  },
-  {
-    icon: 'fa-puzzle-piece',
-    title: 'Add the browser extension',
-    body: 'A small widget appears on your TwoTimTwo check-in page. It watches for check-ins — from this station and from phones or other laptops.',
-  },
-  {
-    icon: 'fa-print',
-    title: 'Labels print themselves',
-    body: 'Every check-in silently prints a 4×2 label with the child’s name, club, group and safety icons. No dialogs, no clicks, no missed kids.',
-  },
-];
-
-export const HowItWorks: React.FC = () => (
-  <section id="how-it-works" className="max-w-6xl mx-auto px-4 py-20">
-    <h2 className="text-3xl font-black text-slate-900 text-center tracking-tight">How it works</h2>
-    <p className="text-slate-500 text-center mt-2 mb-12">Three pieces, five minutes of setup, then it runs itself.</p>
-    <div className="grid md:grid-cols-3 gap-6">
-      {STEPS.map((s, i) => (
-        <div key={s.title} className="relative bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
-          <div className="absolute -top-3 left-6 bg-brand-600 text-white text-xs font-black w-7 h-7 rounded-full flex items-center justify-center shadow">{i + 1}</div>
-          <div className="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center text-lg mb-4">
-            <i className={`fa ${s.icon}`}></i>
+/* ── The whole club night: the family band (FAMILY.md §4.8) ─────────────── */
+export const FamilyBand: React.FC = () => (
+  <section className="fam-band" aria-labelledby="band-title">
+    <div className="fam-wrap">
+      <div className="fam-band__head">
+        <p className="fam-kicker">A family of three</p>
+        <h2 className="fam-band__title" id="band-title">The whole <em>club night</em></h2>
+        <p className="fam-band__lede">
+          Three small tools, one evening. Each hands the child along to the next, so the welcome at the door
+          carries all the way to the lesson.
+        </p>
+      </div>
+      <ol className="fam-route">
+        <li className="fam-route__stop" data-accent="labels"><span className="fam-route__pin" aria-hidden="true"></span><div className="fam-route__step">Checked in</div><div className="fam-route__when">on TwoTimTwo.com</div></li>
+        <li className="fam-route__stop" data-accent="labels"><span className="fam-route__pin" aria-hidden="true"></span><div className="fam-route__step">Label prints</div><div className="fam-route__when">at the door</div></li>
+        <li className="fam-route__stop" data-accent="checkin"><span className="fam-route__pin" aria-hidden="true"></span><div className="fam-route__step">Lobby says hello</div><div className="fam-route__when">by first name</div></li>
+        <li className="fam-route__stop" data-accent="journey"><span className="fam-route__pin" aria-hidden="true"></span><div className="fam-route__step">Lesson begins</div><div className="fam-route__when">6:30, large group</div></li>
+      </ol>
+      <ul className="fam-products">
+        <li className="fam-product" data-accent="labels">
+          <div className="fam-product__head">
+            <div className="fam-product__meta"><span>At the door</span><span className="fam-product__here">You are here</span></div>
+            <h3 className="fam-product__name">Club Label Printer</h3>
           </div>
-          <h3 className="font-bold text-slate-900 mb-1.5">{s.title}</h3>
-          <p className="text-sm text-slate-600 leading-relaxed">{s.body}</p>
-        </div>
-      ))}
+          <div className="fam-product__body">
+            <p>Prints a name label for every child the moment they are checked in, with the safety details a leader needs.</p>
+            <ul className="fam-product__points"><li>Allergy, birthday and photo wishes</li><li>A phone page for the night-of team</li></ul>
+            <p className="fam-product__note">You are reading this one.</p>
+          </div>
+        </li>
+        <li className="fam-product" data-accent="checkin">
+          <div className="fam-product__head">
+            <div className="fam-product__meta"><span>In the lobby</span></div>
+            <h3 className="fam-product__name">Check-in Display</h3>
+          </div>
+          <div className="fam-product__body">
+            <p>The lobby TV welcomes each child by first name, and the projector keeps the evening on schedule.</p>
+            <ul className="fam-product__points"><li>Birthdays and celebrations</li><li>A countdown and game timers</li></ul>
+            <a className="fam-product__link" href={URLS.checkin}><span>About Check-in Display</span><Icon name="arrow" /></a>
+          </div>
+        </li>
+        <li className="fam-product" data-accent="journey">
+          <div className="fam-product__head">
+            <div className="fam-product__meta"><span>At large group</span></div>
+            <h3 className="fam-product__name">Journey Display</h3>
+          </div>
+          <div className="fam-product__body">
+            <p>A small kiosk shows the Check-in Display by day and, at 6:30, has tonight’s lesson ready for a leader to start, with captions and teaching slides.</p>
+            <ul className="fam-product__points"><li>Runs on a tiny, older computer</li><li>Tonight’s lesson is saved ahead of time</li></ul>
+            <a className="fam-product__link" href={URLS.journey}><span>About Journey Display</span><Icon name="arrow" /></a>
+          </div>
+        </li>
+      </ul>
     </div>
   </section>
 );
 
-const FEATURES: { icon: string; title: string; body: string; isNew?: boolean }[] = [
-  { icon: '⚡', title: 'Zero-click printing', body: 'Check-ins are detected automatically — including ones made on other devices — and the label prints silently.' },
-  { icon: '🛡️', title: 'Duplicate-proof', body: 'The server refuses to print the same child twice within seconds, so retries and double-taps never waste labels.' },
-  { icon: '🥜', title: 'Allergy icons', body: 'Nut, dairy, gluten, egg and dye allergies from your roster print as bold icons in the label corner.' },
-  { icon: '📷', title: 'No-photo flag', body: 'Kids whose family didn’t sign the media release get a crossed-out camera on their label.' },
-  { icon: '🍰', title: 'Birthday week', body: 'A cake icon appears on labels all week when a birthday is coming — volunteers never miss one.' },
-  { icon: '📖', title: 'Handbook groups', body: 'Each child’s handbook group prints under their name so they get sorted to the right table fast.' },
-  { icon: '🪙', title: 'Store Night shares', body: 'On Awana Store nights the label shows each kid’s share balance, pulled straight from TwoTimTwo.' },
-  { icon: '🎓', title: 'Step Up Night', body: 'Graduating kids get a special inverted label announcing the club they’re stepping up to.' },
-  { icon: '👋', title: 'Walk-ins & visitors', body: 'Type any name in the widget to print a guest label — with a VISITOR badge if you want one. A whole visiting family goes in one form: a label per child, one connect card.' },
-  { icon: '🔁', title: 'One-tap reprints', body: 'Tonight’s check-ins are listed right in the widget — tap Reprint when a label tears or wanders off.' },
-  { icon: '📊', title: 'Live dashboard', body: 'Tonight at a glance: per-club counts, visitors, and every allergy or no-photo kid in the building.' },
-  { icon: '📴', title: 'Offline-ready', body: 'The roster is cached locally, prints queue while the server is unreachable, and search keeps working if the Wi-Fi drops.' },
-  { icon: '✍️', title: 'Label footer', body: 'One configurable line — church name, a verse, service times — printed along the bottom of every label.', isNew: true },
-  { icon: '💌', title: 'Connect cards', body: 'First-time visitors automatically get a second welcome label pointing their family to the club’s time and place.', isNew: true },
-  { icon: '🎨', title: 'Per-club templates', body: 'Switch label parts on or off per club and cap the name size, with a live preview in the dashboard.', isNew: true },
+/* ── How it works: the three pieces, for the team that sets it up ───────── */
+const STEPS: { icon: IconName; title: string; body: string }[] = [
+  {
+    icon: 'printer',
+    title: 'Install the Windows app',
+    body: 'One installer puts Club Label Printer in the system tray. It starts with the PC, runs the print server on that laptop, and updates itself.',
+  },
+  {
+    icon: 'puzzle',
+    title: 'Load the Chrome extension once',
+    body: 'A small Club Print widget appears on your TwoTimTwo check-in page. It notices check-ins made at this station and on other devices.',
+  },
+  {
+    icon: 'tag',
+    title: 'Labels print themselves',
+    body: "Every check-in prints a 4×2 label with the child’s name, club and safety icons. No dialogs and no clicks.",
+  },
 ];
 
-export const Features: React.FC = () => (
-  <section id="features" className="bg-slate-50 border-y border-slate-100">
-    <div className="max-w-6xl mx-auto px-4 py-20">
-      <h2 className="text-3xl font-black text-slate-900 text-center tracking-tight">Everything a check-in table needs</h2>
-      <p className="text-slate-500 text-center mt-2 mb-12">Built from real club nights — every feature exists because a volunteer needed it.</p>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {FEATURES.map(f => (
-          <div key={f.title} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xl" aria-hidden="true">{f.icon}</span>
-              <h3 className="font-bold text-slate-900 text-sm">{f.title}</h3>
-              {f.isNew && <span className="text-[9px] font-black uppercase tracking-wide bg-brand-600 text-white px-1.5 py-0.5 rounded-full">New in v4</span>}
-            </div>
-            <p className="text-[13px] text-slate-600 leading-relaxed">{f.body}</p>
-          </div>
-        ))}
+export const HowItWorks: React.FC = () => (
+  <section id="how-it-works" className="lbl-part" aria-labelledby="how-title">
+    <div className="fam-wrap">
+      <div className="lbl-part__head">
+        <p className="fam-kicker">For volunteers and other churches</p>
+        <h2 className="lbl-part__title" id="how-title">How it works</h2>
+        <p className="lbl-part__lede">
+          Three pieces and a few minutes of setup. Everything below is for the people who will run it:
+          try the check-in page, install it on a Windows laptop, and read the questions volunteers ask.
+        </p>
       </div>
+      <ol className="lbl-steps">
+        {STEPS.map((s, i) => (
+          <li key={s.title} className="lbl-steps__item">
+            <span className="lbl-steps__num" aria-hidden="true">{i + 1}</span>
+            <span className="fam-card__icon"><Icon name={s.icon} /></span>
+            <h3 className="lbl-steps__title">{s.title}</h3>
+            <p className="lbl-steps__body">{s.body}</p>
+          </li>
+        ))}
+      </ol>
     </div>
   </section>
 );

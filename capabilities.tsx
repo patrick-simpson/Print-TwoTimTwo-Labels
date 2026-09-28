@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Capabilities } from './components/Capabilities';
+import './styles/site.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
