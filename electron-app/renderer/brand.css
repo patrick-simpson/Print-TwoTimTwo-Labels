@@ -1,0 +1,140 @@
+/*
+ * The Windows status window and setup wizard, in the brand kit.
+ *
+ * The kit is imported straight from the print server's mirror
+ * (print-server/public/brand/, byte-identical to the signage repo's
+ * shared/brand/). Vite inlines the two stylesheets and copies every font and
+ * shape they name into electron-app/dist/assets/, which is what the packaged
+ * window loads from file:// — its own copy, built from the one mirror, so
+ * there is no third copy to drift. The hex after each var() is the kit's own
+ * value, a fallback pinned to tokens.css by scripts/test-dashboard-chrome.cjs.
+ */
+@import '../../print-server/public/brand/fonts.css';
+@import '../../print-server/public/brand/tokens.css';
+
+:root {
+  --c-blue: var(--brand-blue, #4C72B8);
+  --c-blue-deep: var(--brand-blue-deep, #34569A);
+  --c-plate: var(--brand-cubbies-deep, #2F4F8A);
+  --c-ink: var(--brand-ink, #231F20);
+  --c-hot: var(--brand-hot, #F15A28);
+  --c-hot-deep: var(--brand-hot-deep, #9E3512);
+  --c-sun: var(--brand-sun, #FCB614);
+  --c-orange: var(--brand-orange, #FAA41D);
+  --c-orange-deep: var(--brand-orange-deep, #C97A08);
+  --c-cream: var(--brand-cream, #FFE8C2);
+  --c-cloud: var(--brand-cloud, #D6EFF8);
+  --c-tnt: var(--brand-tnt, #58BD79);
+  --c-tnt-deep: var(--brand-tnt-deep, #2F8A4E);
+  --c-tnt-tint: var(--brand-tnt-tint, #D0E9D5);
+  --c-sparks: var(--brand-sparks, #F04A4B);
+  --c-sparks-deep: var(--brand-sparks-deep, #B82B32);
+  --c-sparks-tint: var(--brand-sparks-tint, #FDDACF);
+  --c-journey: var(--brand-journey, #8A649D);
+  --c-journey-deep: var(--brand-journey-deep, #56467F);
+  --ok: var(--c-tnt-deep);
+  --bad: var(--c-sparks-deep);
+  --page: #F6F8FB;
+  --line: #E1E7EF;
+  --line-strong: #CFD8E3;
+  --ink-soft: #4A5160;
+  --ink-faint: #6B7280;
+  --f-shout: var(--brand-font-display, 'Galindo', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif);
+  --f-label: var(--brand-font-label, 'Londrina Solid', 'Arial Narrow', 'Helvetica Neue', sans-serif);
+  --f-read: var(--brand-font-body, 'Figtree', 'Segoe UI', system-ui, sans-serif);
+  --quick: var(--brand-dur-quick, 200ms);
+  --ease-pop: var(--brand-ease-pop, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--f-read); font-size: 13px; line-height: 1.4; color: var(--c-ink); background: var(--page); }
+:focus-visible { outline: 3px solid var(--c-sun); outline-offset: 2px; }
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* ── Header: the Awana Clubs mark, the product name, the stepped chip ── */
+.app-header { background: var(--c-blue); color: #fff; padding: 12px 18px; display: flex; align-items: center; gap: 12px; }
+.app-header .brand-mark { display: block; height: 38px; width: auto; flex: none; }
+.app-header .titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.app-header h1 { margin: 0; font-family: var(--f-shout); font-weight: 400; font-size: 22px; line-height: 1.05; }
+.app-header .sub { font-family: var(--f-label); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c-cloud); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-header .sub.bad { color: #fff; }
+.step-chip { display: inline-block; flex: none; line-height: 0; font-size: 19px; }
+.step-chip svg { display: block; overflow: visible; }
+.chip-fallback { font-family: var(--f-label); font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+.app-body { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ── Cards and their corner tabs ── */
+.card { background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 2px 0 var(--line); }
+.card-pad { padding: 4px 16px 14px; }
+/* Without the shape (a stripped build) the tab keeps a plain blue field, so
+   its white type never lands on the white card. */
+.corner-tab {
+  --tab: var(--c-blue); --tab-deep: var(--c-blue-deep);
+  position: relative; display: inline-block; padding: 8px 44px 16px 16px; isolation: isolate;
+  font-family: var(--f-label); font-weight: 900; font-size: 13px; line-height: 1.15; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fff; text-shadow: 0.07em 0.07em 0 var(--tab-deep);
+}
+.corner-tab:not(:has(.corner-tab__shape)) { background: var(--tab); border-bottom-right-radius: 14px; }
+.corner-tab__shape { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; fill: var(--tab); overflow: visible; }
+.t-sun { --tab: var(--c-sun); --tab-deep: transparent; color: var(--c-ink); }
+.t-journey { --tab: var(--c-journey); --tab-deep: var(--c-journey-deep); }
+
+/* ── Status rows (the status window's "This PC" card) ── */
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: none; }
+.row-label { font-family: var(--f-label); font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); min-width: 70px; }
+.row-value { font-size: 13px; color: var(--c-ink); text-align: right; overflow: hidden; text-overflow: ellipsis; max-width: 330px; white-space: nowrap; }
+.row-value.mono { font-family: Consolas, ui-monospace, monospace; font-size: 12px; }
+.row-value.small { font-size: 12px; }
+
+/* ── Notices ── */
+.notice { border-radius: 12px; padding: 10px 14px; font-size: 13px; }
+.notice.bad { background: var(--c-sparks-tint); border-left: 5px solid var(--c-sparks); }
+.notice.bad b { font-weight: 800; }
+.notice.bad pre { white-space: pre-wrap; margin: 8px 0; font-size: 11px; font-family: Consolas, ui-monospace, monospace; }
+.notice .notice-hint { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
+.notice.update { background: #fff; box-shadow: 0 2px 0 var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.warn-row { font-size: 13px; padding: 8px 12px; margin-top: 6px; background: var(--c-cream); border-left: 5px solid var(--c-orange); border-radius: 10px; }
+.warn-row:first-child { margin-top: 0; }
+
+/* ── Buttons: Londrina caps on flat fields with a hard offset ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 16px; border: 2px solid var(--line-strong); border-radius: 999px; cursor: pointer;
+  font-family: var(--f-label); font-weight: 400; font-size: 15px; line-height: 1.1; letter-spacing: 0.06em; text-transform: uppercase;
+  background: #fff; color: var(--c-ink); box-shadow: 0 3px 0 var(--line-strong);
+  transition: transform var(--quick) var(--ease-pop);
+}
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--line-strong); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-primary { background: var(--c-blue); border-color: var(--c-blue); color: #fff; box-shadow: 0 3px 0 var(--c-blue-deep); }
+.btn-hot { background: var(--c-hot); border-color: var(--c-hot); color: #fff; font-weight: 900; font-size: 16px; box-shadow: 3px 3px 0 var(--c-hot-deep); }
+.btn-hot:active { box-shadow: 1px 1px 0 var(--c-hot-deep); }
+.btn-go { background: var(--ok); border-color: var(--ok); color: #fff; box-shadow: 0 3px 0 var(--c-ink); }
+.btn-sm { padding: 5px 12px; font-size: 13px; box-shadow: 0 2px 0 var(--line-strong); white-space: nowrap; }
+.btn-primary.btn-sm { box-shadow: 0 2px 0 var(--c-blue-deep); }
+.btn-block { width: 100%; }
+.btn-ghost { background: transparent; border: none; box-shadow: none; color: var(--ink-soft); font-family: var(--f-read); font-size: 13px; letter-spacing: 0; text-transform: none; text-decoration: underline; padding: 6px; }
+.btn-ghost:hover, .btn-ghost:active { transform: none; box-shadow: none; }
+.actions { display: flex; flex-direction: column; gap: 9px; }
+.hint { font-size: 12px; color: var(--ink-faint); text-align: center; margin: 0; }
+
+/* ── Setup wizard form: Figtree, because it is read ── */
+.field-label { display: block; font-weight: 700; font-size: 13px; color: var(--ink-soft); margin: 10px 0 5px; }
+.field-label:first-of-type { margin-top: 6px; }
+.field { width: 100%; padding: 8px 12px; border: 2px solid var(--line-strong); border-radius: 10px; font-family: var(--f-read); font-size: 13px; color: var(--c-ink); background: #fff; }
+.field:focus { border-color: var(--c-blue); outline: 3px solid var(--c-cloud); outline-offset: 0; }
+.field-hint { margin: 4px 0 0; font-size: 12px; color: var(--ink-faint); }
+.check-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; cursor: pointer; font-weight: 700; font-size: 13px; }
+.check-row input { width: 16px; height: 16px; accent-color: var(--c-blue); margin: 0; }
+.form-error { font-size: 13px; font-weight: 700; color: var(--bad); margin: 10px 0 0; }
+.wizard-go { margin-top: 14px; }
+.footer-note { font-size: 12px; color: var(--ink-faint); text-align: center; margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
