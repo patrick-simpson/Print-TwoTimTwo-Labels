@@ -1272,9 +1272,13 @@ function getClubFontFamily(clubName) {
 //
 // `whole: true` voices never mix faces inside one string: a name the brand font
 // cannot fully draw ("Thảo" in Galindo) prints entirely in the old font, as it
-// did before, instead of as a name with one letter in another typeface. Other
-// voices split into runs, so "⭐ 10th club night tonight!" keeps Figtree for the
-// words and the star comes from the old stack, as it always did.
+// did before, instead of as a name with one letter in another typeface. A
+// custom label is the same big line, and as often as not a person's or a
+// room's name in the congregation's own language, so it is whole too. Other
+// voices split into runs at WORD boundaries (brand.splitRuns), so
+// "⭐ 10th club night tonight!" keeps Figtree for the words and the star comes
+// from the old stack, as it always did, and a word the kit font lacks a letter
+// of prints whole in the old stack rather than changing face mid-word.
 //
 // `wght` is Figtree's weight axis. Figtree ships as one variable font and the
 // canvas ignores a CSS weight for it (it draws the default Light instance and
@@ -1283,7 +1287,7 @@ const LEGACY_SANS = 'Helvetica, Arial, sans-serif';
 const LABEL_VOICES = Object.freeze({
   name:      { family: 'Galindo',              legacy: 'bold', whole: true },
   monogram:  { family: 'Galindo',              legacy: 'bold', whole: true },
-  custom:    { family: 'Galindo',              legacy: 'bold', legacyFamily: LEGACY_SANS },
+  custom:    { family: 'Galindo',              legacy: 'bold', legacyFamily: LEGACY_SANS, whole: true },
   last:      { family: 'Figtree', wght: 500,   legacy: '',     whole: true },
   hint:      { family: 'Figtree', wght: 500,   legacy: 'italic' },
   group:     { family: 'Figtree', wght: 600,   legacy: 'italic' },
@@ -7579,6 +7583,10 @@ module.exports = {
   // through HTTP would also make every baseline depend on the route's defaults
   // rather than on the renderer itself.
   generateLabel,
+  // The label's type helpers (the kit voices over the old fonts), so the golden
+  // suite can pin how a line of mixed faces is laid out on a canvas of its own,
+  // in checks that do not depend on the host's fonts.
+  labelType,
   // The thermal-logo pipeline and the group-line policy, exported so tests can
   // exercise them directly: prepareLogoForThermal against synthetic light-ink /
   // padded / blank images, effectiveHandbookGroup against TwoTimTwo's real

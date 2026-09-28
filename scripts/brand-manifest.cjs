@@ -32,6 +32,32 @@ function hashTree(dir) {
   return out.sort((x, y) => (x.file < y.file ? -1 : x.file > y.file ? 1 : 0));
 }
 
+// The kit's text files (SVG, CSS, JSON, Markdown, the licence texts) are LF
+// only, in the canonical repo and here. A CR in one means a line-ending
+// conversion got to it: Git for Windows' default (core.autocrlf=true) checks
+// the canonical kit out as CRLF, and copying that checkout in would pin CRLF
+// hashes that agree with the copy and with nothing upstream, silently ending
+// "byte-identical". So any file under `dir` that is not a font or an image and
+// holds a '\r' is listed here, and both the regenerate script and the test
+// refuse them. (.gitattributes also keeps these types LF on checkout and
+// normalises them on commit.)
+const BINARY_EXTENSIONS = new Set(['.ttf', '.otf', '.woff', '.woff2', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf']);
+function filesWithCarriageReturns(dir) {
+  const out = [];
+  const walk = (abs, rel) => {
+    for (const name of fs.readdirSync(abs).sort()) {
+      const a = path.join(abs, name);
+      const r = rel ? `${rel}/${name}` : name;
+      const st = fs.lstatSync(a);
+      if (st.isDirectory()) walk(a, r);
+      else if (st.isFile() && !BINARY_EXTENSIONS.has(path.extname(name).toLowerCase())
+        && fs.readFileSync(a).includes(0x0D)) out.push(r);
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
 function formatManifest(entries) {
   return entries.map((e) => `${e.sha256}  ${e.file}`).join('\n') + '\n';
 }
@@ -45,4 +71,4 @@ function parseManifest(text) {
   return map;
 }
 
-module.exports = { REPO, MIRROR_DIR, MANIFEST_FILE, hashTree, formatManifest, parseManifest };
+module.exports = { REPO, MIRROR_DIR, MANIFEST_FILE, hashTree, formatManifest, parseManifest, filesWithCarriageReturns };

@@ -27,15 +27,46 @@
 // To check the mirror against a canonical checkout without changing anything:
 //
 //   BRAND_KIT_CANONICAL=../Awana-Check-in-Display/shared/brand npm run test:brand
+//
+// Line endings: the kit's text files are LF, and a CR in one is refused (from
+// --from before anything is copied, and in the mirror before anything is
+// pinned). On Windows, Git's default core.autocrlf=true checks the canonical
+// kit out as CRLF; take the kit from a clone made with
+// `git clone -c core.autocrlf=false`, or run
+// `git -c core.autocrlf=false checkout -- shared/brand` there first.
+//
+// --mirror <dir> and --manifest <file> point the script somewhere other than
+// print-server/public/brand and scripts/brand-kit.sha256 (the test suite uses
+// them to run it against a scratch folder).
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { MIRROR_DIR, MANIFEST_FILE, hashTree, formatManifest } = require('./brand-manifest.cjs');
+const brandManifest = require('./brand-manifest.cjs');
+const { hashTree, formatManifest, filesWithCarriageReturns } = brandManifest;
 
 function main() {
   const args = process.argv.slice(2);
+  const option = (flag, fallback) => {
+    const at = args.indexOf(flag);
+    if (at < 0) return fallback;
+    if (!args[at + 1]) {
+      console.error(`${flag} needs a value`);
+      process.exit(2);
+    }
+    return path.resolve(args[at + 1]);
+  };
+  const MIRROR_DIR = option('--mirror', brandManifest.MIRROR_DIR);
+  const MANIFEST_FILE = option('--manifest', brandManifest.MANIFEST_FILE);
+  const refuseCarriageReturns = (dir, what) => {
+    const bad = filesWithCarriageReturns(dir);
+    if (!bad.length) return;
+    console.error(`${what} has CR (Windows) line endings in ${bad.length} text file(s), e.g. ${bad.slice(0, 3).join(', ')}.`);
+    console.error('The kit is LF only, and pinning these would end "byte-identical". On Windows, re-check it out');
+    console.error('with `git -c core.autocrlf=false checkout -- shared/brand` (or clone with -c core.autocrlf=false).');
+    process.exit(2);
+  };
   const fromAt = args.indexOf('--from');
   if (fromAt >= 0) {
     const from = args[fromAt + 1];
@@ -48,6 +79,8 @@ function main() {
       console.error(`${src} does not look like the brand kit (no tokens.json / fonts/)`);
       process.exit(2);
     }
+    // Before the mirror is touched: a refused import leaves it as it was.
+    refuseCarriageReturns(src, src);
     fs.rmSync(MIRROR_DIR, { recursive: true, force: true });
     fs.mkdirSync(MIRROR_DIR, { recursive: true });
     fs.cpSync(src, MIRROR_DIR, { recursive: true });
@@ -57,6 +90,7 @@ function main() {
     console.error(`No mirror at ${MIRROR_DIR}`);
     process.exit(2);
   }
+  refuseCarriageReturns(MIRROR_DIR, path.relative(process.cwd(), MIRROR_DIR) || MIRROR_DIR);
   const entries = hashTree(MIRROR_DIR);
   fs.writeFileSync(MANIFEST_FILE, formatManifest(entries));
   console.log(`Wrote ${path.relative(process.cwd(), MANIFEST_FILE)} (${entries.length} files)`);

@@ -19,7 +19,9 @@
 //     canvas does not fall back glyph by glyph to the system fonts the way a
 //     browser does, so "Thảo" set in Galindo (which has no Vietnamese) prints
 //     "Th o" with a hole in it. The character map of each TTF is read here, and
-//     fontCovers()/splitRuns() are how the renderer asks.
+//     fontCovers()/splitRuns() are how the renderer asks. A file cut short or
+//     corrupted is refused before it reaches the canvas (fontFileProblem):
+//     the canvas would register it and then draw every glyph empty.
 //
 //   * CLUB MARKS. The official one-colour marks (logos/*-black.svg) are the
 //     icon column's fallback when TwoTimTwo's own club image cannot be fetched.
@@ -85,6 +87,72 @@ const MARK_RASTER_LONG_SIDE = 768;
 // A kit font file or mark bigger than this is not the kit (the real files are
 // under 100 KB); refuse it rather than parse or decode it.
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
+
+// ── Is this font file whole? ──────────────────────────────────────────────────
+// The canvas accepts far less than a whole font. A TTF cut short anywhere past
+// its first few tables (an interrupted update half-copies files, and the kit
+// lives beside the app under resources/) still registers, still reports the
+// family as present, and still has the character map read below, so it looks
+// loaded, and then every glyph draws EMPTY: the child's first name, a custom
+// label, the TEST band, all blank on paper while /health says the fonts are
+// fine. Measured with the kit's Galindo cut to anywhere from ~10% to ~60% of
+// its length. The canvas cannot fall back from a face it thinks it has, so the
+// only safe place to catch it is here, before registration.
+//
+// So check the file the way the format lets you: a real sfnt header, a table
+// directory that fits, every table inside the file, the tables a TrueType or
+// CFF face cannot draw without, every table's own checksum (the head table's
+// computed with its checkSumAdjustment field zeroed, as the spec defines it)
+// and the whole-file checkSumAdjustment. The kit's fonts carry correct
+// checksums (any single changed byte fails one of them), and a font that did
+// not would fail loudly in scripts/test-brand-kit.cjs at import time, never
+// silently at the door. Returns null for a whole font, else the reason.
+const SFNT_VERSIONS = new Set([0x00010000, 0x74727565 /* 'true' */, 0x4F54544F /* 'OTTO' */]);
+const REQUIRED_TABLES = ['head', 'hhea', 'maxp', 'cmap', 'hmtx'];
+function tableChecksum(buf, offset, length, skipFrom = -1) {
+  let sum = 0;
+  const end = offset + length;
+  for (let i = offset; i < end; i += 4) {
+    let word = 0;
+    for (let k = 0; k < 4; k++) {
+      const at = i + k;
+      // Past the end counts as zero padding; so does the field the head
+      // table's checksum excludes.
+      const byte = at < end && !(at >= skipFrom && at < skipFrom + 4) ? buf[at] : 0;
+      word = word * 256 + byte;
+    }
+    sum = (sum + word) >>> 0;
+  }
+  return sum;
+}
+function fontFileProblem(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return 'not a font file';
+  if (!SFNT_VERSIONS.has(buf.readUInt32BE(0))) return 'not a font file';
+  const numTables = buf.readUInt16BE(4);
+  if (numTables === 0 || 12 + numTables * 16 > buf.length) return 'damaged font file';
+  const tables = new Map();
+  for (let i = 0; i < numTables; i++) {
+    const rec = 12 + i * 16;
+    const tag = buf.toString('latin1', rec, rec + 4);
+    const checksum = buf.readUInt32BE(rec + 4);
+    const offset = buf.readUInt32BE(rec + 8);
+    const length = buf.readUInt32BE(rec + 12);
+    if (offset + length > buf.length) return 'damaged font file';
+    const skip = tag === 'head' ? offset + 8 : -1;   // head.checkSumAdjustment
+    if (tag === 'head' && length < 12) return 'damaged font file';
+    if (tableChecksum(buf, offset, length, skip) !== checksum) return 'damaged font file';
+    tables.set(tag, { offset, length });
+  }
+  if (!REQUIRED_TABLES.every((t) => tables.has(t))) return 'damaged font file';
+  const outlines = (tables.has('glyf') && tables.has('loca')) || tables.has('CFF ') || tables.has('CFF2');
+  if (!outlines) return 'damaged font file';
+  // And the whole file, which covers what no table checksum does: the table
+  // directory itself (a renamed table) and the padding between tables.
+  const adjustAt = tables.get('head').offset + 8;
+  const whole = tableChecksum(buf, 0, buf.length, adjustAt);
+  if (((0xB1B0AFBA - whole) >>> 0) !== buf.readUInt32BE(adjustAt)) return 'damaged font file';
+  return null;
+}
 
 // ── TrueType character maps ───────────────────────────────────────────────────
 // Just enough of the 'cmap' table to answer "does this font draw this
@@ -243,6 +311,10 @@ function readAsset(file) {
 function loadFont(dir, { family, file }) {
   const got = readAsset(path.join(dir, 'fonts', file));
   if (got.error) return { ok: false, reason: got.error, ranges: null };
+  // Before anything reaches the canvas: a damaged file registered is a face
+  // that draws nothing, and it cannot be taken back.
+  const problem = fontFileProblem(got.buf);
+  if (problem) return { ok: false, reason: problem, ranges: null };
   const ranges = readCmapRanges(got.buf);
   if (!ranges) return { ok: false, reason: 'no readable character map', ranges: null };
   const hash = crypto.createHash('sha256').update(got.buf).digest('hex');
@@ -324,26 +396,53 @@ function graphemes(s) {
   return out;
 }
 
+// Words, for the run split below: a face never changes in the middle of a
+// word. A word is a run of graphemes that each start with a letter, mark or
+// digit (an apostrophe between two of them stays inside: "O’Brien",
+// "We're"). A space, a punctuation mark, a symbol or an emoji (anything drawn
+// with an emoji selector or a keycap) is a unit of its own, so the milestone
+// line's star still comes apart from the words beside it.
+const WORD_GRAPHEME = /^[\p{L}\p{M}\p{N}]/u;
+const EMOJI_PRESENTATION = /[\uFE0F\u20E3]/u;
+const IN_WORD_APOSTROPHE = /^['\u2019]$/u;
+function wordUnits(s) {
+  const gs = graphemes(s);
+  const wordy = (g) => g !== undefined && WORD_GRAPHEME.test(g) && !EMOJI_PRESENTATION.test(g);
+  const units = [];
+  let word = '';
+  for (let i = 0; i < gs.length; i++) {
+    const g = gs[i];
+    if (wordy(g) || (word && IN_WORD_APOSTROPHE.test(g) && wordy(gs[i + 1]))) { word += g; continue; }
+    if (word) { units.push(word); word = ''; }
+    units.push(g);
+  }
+  if (word) units.push(word);
+  return units;
+}
+
 // `text` cut into runs the brand font draws ({brand: true}) and runs it does
-// not ({brand: false}), in order, adjacent runs of a kind merged. A character
-// counts as drawable only when every code point in it is in the font's own
-// character map: the shaper can sometimes build a missing accented letter out
-// of a base and a combining mark, but that is not something to rely on for a
-// child's name. One run of the whole string when the font is not ready, so a
-// caller can always just iterate.
+// not ({brand: false}), in order, adjacent runs of a kind merged. The unit of
+// the decision is the WORD (wordUnits): a word with any character the font
+// cannot draw goes to the old face whole, because "Nguyễn" printed as a
+// kit-font word with one Arial letter inside it reads as a misprint, not as a
+// name. A character counts as drawable only when every code point in it is in
+// the font's own character map: the shaper can sometimes build a missing
+// accented letter out of a base and a combining mark, but that is not
+// something to rely on for a child's name. One run of the whole string when
+// the font is not ready, so a caller can always just iterate.
 function splitRuns(family, text) {
   const s = String(text == null ? '' : text);
   const f = kit.fonts.get(family);
   if (!f || !f.ok) return [{ text: s, brand: false }];
   const runs = [];
-  for (const g of graphemes(s)) {
+  for (const unit of wordUnits(s)) {
     let brand = true;
-    for (const ch of g) {
+    for (const ch of unit) {
       if (!rangesHave(f.ranges, ch.codePointAt(0))) { brand = false; break; }
     }
     const last = runs[runs.length - 1];
-    if (last && last.brand === brand) last.text += g;
-    else runs.push({ text: g, brand });
+    if (last && last.brand === brand) last.text += unit;
+    else runs.push({ text: unit, brand });
   }
   return runs.length ? runs : [{ text: s, brand: true }];
 }
@@ -425,5 +524,5 @@ module.exports = {
   loadBrandKit, status, warnings,
   fontReady, fontCovers, splitRuns, clubMarkSvg, markFailed, kitGeneration,
   // Pure helpers, exported for unit tests.
-  readCmapRanges, svgAtSize,
+  readCmapRanges, svgAtSize, fontFileProblem,
 };
