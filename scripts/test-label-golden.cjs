@@ -42,6 +42,14 @@
 // To police pixels on a given machine, regenerate the baselines there with
 // `npm run test:golden:update` — which rewrites the fingerprint too.
 //
+// Since the 2026-27 rebrand the label's TEXT is set in fonts that ship with the
+// app (print-server/public/brand/fonts: Galindo, Londrina Solid, Figtree), so
+// most of each label rasterises the same everywhere. What still comes from the
+// host is the emoji row and the old Windows fonts the renderer falls back to
+// (the fail-open cases below render them on purpose), which is why the
+// fingerprint probe keeps drawing system fonts and not the bundled ones: a
+// change to a bundled font must fail as a pixel diff, never skip the check.
+//
 // A consequence worth knowing: a glyph missing from the LINUX font stack appears
 // as a tofu box in these baselines without necessarily being wrong in
 // production. The attendance-milestone line's star (U+2B50) is exactly that case
@@ -117,6 +125,26 @@ const { generateLabel, prepareLogoForThermal } = (() => {
 })();
 const { createCanvas, loadImage } = require(
   path.join(__dirname, '..', 'print-server', 'node_modules', '@napi-rs', 'canvas'));
+// The SAME module instance server.js loaded (require cache keys on the path),
+// so pointing it at another folder changes what the renderer sees.
+const brand = require(path.join(__dirname, '..', 'print-server', 'brand.js'));
+
+// ── Brand-kit variants for the fail-open cases ───────────────────────────────
+// A case with `kit: '<name>'` renders with the kit reloaded from a copy that is
+// missing a piece — exactly what a broken or partial install looks like — and
+// the shipped kit is restored straight after. Every one of them must still be
+// a complete, printable label: that is the fail-open promise, pinned in pixels.
+const KIT_DIR = brand.DEFAULT_BRAND_DIR;
+const kitCopy = (name, keep) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), `awana-golden-kit-${name}-`));
+  for (const sub of keep) fs.cpSync(path.join(KIT_DIR, sub), path.join(d, sub), { recursive: true });
+  return d;
+};
+const KITS = {
+  'no-marks': kitCopy('no-marks', ['fonts']),   // fonts load, every club mark is missing
+  'no-fonts': kitCopy('no-fonts', ['logos']),   // marks load, every font is missing
+  none:       kitCopy('none', []),              // nothing at all
+};
 
 // ── Synthetic club logos ─────────────────────────────────────────────────────
 // Deterministic geometry, no text — a logo drawn with fonts would tie these
@@ -191,21 +219,6 @@ const CASES = [
   // middle-initial variant riding the first-name line.
   { name: 'twin-hint',        model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', nameHint: 'b. Mar' } },
   { name: 'twin-initial',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', middleInitial: 'G' } },
-  // Collectibles (#20): two of the twelve — the distinctness check proves
-  // they differ from each other and from the plain label.
-  { name: 'collectible-star',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 0 } },
-  { name: 'collectible-rocket', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', collectibleIndex: 1 } },
-  // Seasonal art (#16): all eight, short name so the motif headroom exists.
-  // The pairwise-distinctness check below is what proves each season's art
-  // actually differs from every other's.
-  { name: 'season-back-to-school', model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'back-to-school' } },
-  { name: 'season-fall',           model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'fall' } },
-  { name: 'season-thanksgiving',   model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'thanksgiving' } },
-  { name: 'season-christmas',      model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'christmas' } },
-  { name: 'season-winter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'winter' } },
-  { name: 'season-spring',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'spring' } },
-  { name: 'season-easter',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'easter' } },
-  { name: 'season-vbs-summer',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks', season: 'vbs-summer' } },
   { name: 'no-photo',         model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', noPhoto: true } },
   { name: 'go-to-line',       model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', extras: { goToLine: 'Go to: Music, Rm 4' } } },
   { name: 'milestone-line',   model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', extras: { milestoneLine: '⭐ 10th club night tonight!' } } },
@@ -223,7 +236,31 @@ const CASES = [
   { name: 'leader',           model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', isLeader: true, greeting: 'Sparks Leader', template: { showClubLine: false } } },
   { name: 'leader-no-club',   model: { firstName: 'Pat', lastName: 'Sample', clubName: '', isLeader: true, greeting: 'Leader' } },
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
-  { name: 'club-monogram',    model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  // The official one-colour club mark (brand kit) in the icon column when no
+  // TwoTimTwo logo was supplied: one case per club, a short name so the
+  // Galindo name is as big as it gets (the approved mockup's "Ivy"). The mark
+  // replaces the club line, as a real logo always has. `plain` above is
+  // Cubbies with a longer name.
+  { name: 'club-puggles',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Puggles' } },
+  { name: 'club-cubbies',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Cubbies' } },
+  { name: 'club-sparks',      model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'club-tnt',         model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'T&T' } },
+  { name: 'club-trek',        model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Trek' } },
+  { name: 'club-journey',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Journey' } },
+  // The mark on an inverted (first-timer) label: re-inked WHITE by the thermal
+  // converter, or it would vanish into the near-black panel.
+  { name: 'mark-inverted',    model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Trek', isVisitor: true, extras: { inverted: true } } },
+  // Fail-open, in pixels. The marks are missing: the letter monogram comes
+  // back, and with it the club line. The fonts are missing: every line prints
+  // in the old Windows fonts and the mark stays. Nothing loads: the label the
+  // printer made before the kit existed, wave edge aside.
+  { name: 'monogram-fallback', kit: 'no-marks', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
+  { name: 'fonts-fallback',    kit: 'no-fonts', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', allergyTokens: ['NUTS'], isVisitor: true } },
+  { name: 'kit-missing',       kit: 'none',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', handbookGroup: 'Flight 3:16', isVisitor: true, footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm' } },
+  // A name the brand face cannot fully draw (Galindo has no Vietnamese): the
+  // whole first name prints in the old font rather than with a hole in it;
+  // Figtree does have the last name's letters, so that line stays in the kit.
+  { name: 'name-outside-galindo', model: { firstName: 'Thảo', lastName: 'Nguyễn', clubName: 'Sparks' } },
   // Per-club templates: switches OFF what the stock label shows. no-icon pins
   // the full-width text reflow; minimal pins that every templatable slot can
   // go dark (name + allergy safety icons survive — those are not templatable).
@@ -315,8 +352,14 @@ function callLabel(model) {
   return generateLabel({ ...model });
 }
 
-async function render(model) {
-  const result = await callLabel(model);
+async function render(model, kit) {
+  if (kit) brand.loadBrandKit(KITS[kit]);
+  let result;
+  try {
+    result = await callLabel(model);
+  } finally {
+    if (kit) brand.loadBrandKit(KIT_DIR);
+  }
   // generateLabel writes a temp PNG and also returns the buffer; use the buffer
   // and clean up the file so a test run leaves nothing behind.
   const buf = result.buffer || fs.readFileSync(result.pngPath);
@@ -407,7 +450,7 @@ async function main() {
     const file = path.join(BASELINE_DIR, `${c.name}.png`);
     let actual;
     try {
-      actual = await render(c.model);
+      actual = await render(c.model, c.kit);
     } catch (e) {
       check(`render ${c.name}`, false, e.message);
       continue;
@@ -491,7 +534,15 @@ async function main() {
   //
   // The floor of 3% separates cleanly: a binarized logo or monogram covers
   // 10–23% of the zone; the unbinarized cyan wordmark left 0.09% (two eyes).
+  // The official club marks are outline wordmarks — mostly holes, and the wide
+  // ones (Cubbies, Trek, Journey) only ~20 pt tall at full column width — so
+  // they cover 2.5–5% (T&T's solid hexagon, 19%), and their floor is 1.5%:
+  // still more than 15x the speck that failure mode leaves.
   {
+    const MARK_CASES = new Set(['club-puggles', 'club-cubbies', 'club-sparks', 'club-tnt',
+      'club-trek', 'club-journey', 'leader', 'logo-ghost', 'fonts-fallback',
+      'visitor-inverted', 'mark-inverted']);
+    const floorFor = (name) => (MARK_CASES.has(name) ? 0.015 : 0.03);
     const ICON_ZONE_X = Math.round((6 + 84) * (300 / 72));   // 375
     const iconInkRatio = async (buf) => {
       const px = await pixels(buf);
@@ -507,12 +558,17 @@ async function main() {
       return ink / zone;
     };
     const byName = new Map(rendered.map((r) => [r.name, r.buf]));
-    for (const name of ['logo-light-cyan', 'logo-padded', 'logo-ghost', 'logo-white-on-dark', 'club-monogram']) {
+    // logo-ghost's logo is rejected, so it now carries the Sparks MARK; the
+    // club-* cases and the leader tag carry marks; monogram-fallback and
+    // kit-missing are the letter badge with the marks gone.
+    for (const name of ['logo-light-cyan', 'logo-padded', 'logo-ghost', 'logo-white-on-dark',
+      'club-puggles', 'club-cubbies', 'club-sparks', 'club-tnt', 'club-trek', 'club-journey',
+      'leader', 'monogram-fallback', 'kit-missing', 'fonts-fallback']) {
       const buf = byName.get(name);
       if (!buf) { check(`${name}: rendered (needed for icon-zone check)`, false); continue; }
       const ratio = await iconInkRatio(buf);
       check(`${name}: icon zone carries ink a thermal printer can actually print`,
-        ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
+        ratio > floorFor(name), `only ${(ratio * 100).toFixed(2)}% of the icon zone is dark`);
     }
 
     // The inverted label is the mirror image: its icon panel prints BLACK, so
@@ -520,10 +576,10 @@ async function main() {
     // pass trivially (the panel itself is dark) and prove nothing — which is
     // exactly how the black-on-black regression slipped past the first five
     // logo checks and had to be caught by review instead.
-    {
-      const buf = byName.get('logo-inverted-visitor');
+    for (const name of ['logo-inverted-visitor', 'visitor-inverted', 'mark-inverted']) {
+      const buf = byName.get(name);
       if (!buf) {
-        check('logo-inverted-visitor: rendered (needed for icon-zone check)', false);
+        check(`${name}: rendered (needed for icon-zone check)`, false);
       } else {
         const px = await pixels(buf);
         let light = 0, zone = 0;
@@ -536,10 +592,39 @@ async function main() {
           }
         }
         const ratio = light / zone;
-        check('logo-inverted-visitor: the logo is WHITE on the dark panel, not black-on-black',
-          ratio > 0.03, `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
+        check(`${name}: the logo/mark is WHITE on the dark panel, not black-on-black`,
+          ratio > floorFor(name), `only ${(ratio * 100).toFixed(2)}% of the icon zone is light`);
       }
     }
+  }
+
+  // ── The official club marks, at unit level ────────────────────────────────
+  // Font-independent (vector art through the thermal converter), so CI
+  // enforces all of it.
+  {
+    const clubs = ['puggle', 'cubbie', 'spark', 't&t', 'trek', 'journey'];
+    for (const key of clubs) {
+      const svg = brand.clubMarkSvg(key);
+      check(`mark ${key}: ships in the kit`, Buffer.isBuffer(svg));
+      if (!svg) continue;
+      const black = await prepareLogoForThermal(svg);
+      check(`mark ${key}: survives the thermal converter as ink`, black !== null);
+      check(`mark ${key}: rasterised well above the renderer's too-small gate`,
+        black !== null && Math.max(black.sourceWidth, black.sourceHeight) >= 317,
+        black ? `${black.sourceWidth}x${black.sourceHeight}` : 'null');
+      const white = await prepareLogoForThermal(svg, { ink: [255, 255, 255] });
+      check(`mark ${key}: re-inks white for an inverted label`, white !== null);
+    }
+    check('no mark for an unknown club', brand.clubMarkSvg('choir') === null);
+    check('no mark for a null club', brand.clubMarkSvg(null) === null);
+
+    // Fail-open, cheaply: with the marks gone, a label still renders, and it
+    // is the monogram label, not a blank icon zone (the ink check above).
+    brand.loadBrandKit(KITS['no-marks']);
+    check('with the marks missing, clubMarkSvg answers null rather than throwing',
+      clubs.every((k) => brand.clubMarkSvg(k) === null));
+    brand.loadBrandKit(KIT_DIR);
+    check('...and the shipped kit comes back', clubs.every((k) => Buffer.isBuffer(brand.clubMarkSvg(k))));
   }
 
   // ── prepareLogoForThermal, at unit level ──────────────────────────────────
@@ -705,6 +790,9 @@ async function main() {
   }
 
   try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  for (const d of Object.values(KITS)) {
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
 
   console.log('');
   console.log(`${passed} passed, ${failed} failed`);

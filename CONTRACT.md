@@ -61,7 +61,7 @@ system reports them; each consumer normalizes through its own alias map.
 | `counts` | object `{ "<club name>": int ≥ 0 }` (≤30 clubs) |
 | `total` | int ≥ 0 |
 | `at` | string (ISO 8601) |
-| `season` | OPTIONAL string, lowercase slug (e.g. `christmas`) — the printer's unified-theming broadcast (#18); absent when seasonal art is off. Zero PII. |
+| `season` | OPTIONAL string, lowercase slug (e.g. `christmas`) — the printer's unified-theming broadcast (#18), set by the dashboard's **Screen season** setting (config key `seasonTheme`); absent when that setting is Off. Labels no longer print seasonal art (2026-27 rebrand); this field is now only for the screens. Zero PII. |
 | `rehearsal` | OPTIONAL literal `true` — present only while rehearsal mode (#19) is armed, so displays watermark themselves. Absent otherwise. |
 
 Both optional fields stay optional forever: consumers drop unknown fields, so

@@ -1239,7 +1239,7 @@ console.log('twin-safe labels (#13) — disambiguate same-name kids');
   })());
 }
 
-console.log('seasonal art (#16) — the calendar tiling and the computus');
+console.log('screen season (#16/#18) — the calendar tiling and the computus');
 {
   const { easterSunday, seasonForDate, SEASON_KEYS } =
     require(path.join(__dirname, '..', 'print-server', 'server.js'));
@@ -1274,30 +1274,6 @@ console.log('seasonal art (#16) — the calendar tiling and the computus');
   check('the calendar tiling has no holes across 2026', holes === 0, `${holes} uncovered days`);
 }
 
-console.log('collectible of the week (#20) — rotation math');
-{
-  const { collectibleIndexForDate, COLLECTIBLE_SERIES } =
-    require(path.join(__dirname, '..', 'print-server', 'server.js'));
-  check('the series has twelve icons', COLLECTIBLE_SERIES.length === 12);
-  const idx = collectibleIndexForDate(new Date());
-  check('the index is a valid series position', Number.isInteger(idx) && idx >= 0 && idx < 12);
-  // Stable across one day, advances by one across one week, wraps after twelve.
-  const at = (ms) => collectibleIndexForDate(new Date(Date.now() + ms));
-  const DAY = 86400000;
-  check('same week, same icon (a reprint matches the original)',
-    collectibleIndexForDate(new Date()) === idx);
-  check('one week on, the next icon', at(7 * DAY) === (idx + 1) % 12);
-  check('twelve weeks on, the series wraps', at(12 * 7 * DAY) === idx);
-  // The week may only roll at LOCAL midnight (Monday anchor) — the old raw-ms
-  // version rolled at Thursday 00:00 UTC, mid-club-night in US timezones.
-  const wedEarly = collectibleIndexForDate(new Date(2026, 0, 14, 17, 30)); // Wed Jan 14 2026
-  const wedLate  = collectibleIndexForDate(new Date(2026, 0, 14, 23, 59));
-  const thu      = collectibleIndexForDate(new Date(2026, 0, 15, 0, 1));   // Thu — same week
-  const nextMon  = collectibleIndexForDate(new Date(2026, 0, 19, 0, 1));   // Mon — next week
-  check('the icon never flips within one local day', wedEarly === wedLate);
-  check('Wednesday and Thursday share a week (no mid-club-night roll)', wedLate === thu);
-  check('the week rolls on Monday', nextMon === (thu + 1) % 12);
-}
 
 console.log('musical printer (#11/#12) — the TSPL compiler');
 {

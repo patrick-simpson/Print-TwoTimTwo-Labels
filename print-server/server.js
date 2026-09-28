@@ -21,6 +21,9 @@ const security = require('./security');
 // works under plain Node AND inside a packaged Electron app — the old `canvas`
 // package needed an ABI-matched native build and silently broke when embedded.
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
+// The catalog brand kit (fonts + official one-colour club marks) the label is
+// set in. Loaded on require; every piece of it fails open — see brand.js.
+const brand = require('./brand');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
@@ -244,6 +247,39 @@ const ICON_COL_W  = 84;                // left icon zone width
 const DIVIDER_X   = BX + ICON_COL_W;
 const TEXT_X      = DIVIDER_X + 8;    // right text zone start
 const TEXT_W      = BX + BW - TEXT_X; // right text zone width
+
+// The first name's line box in Galindo, as a multiple of its size (see the
+// name block in generateLabel): Galindo's descenders hang ~15% below the em
+// box, where the old Windows faces kept theirs inside it.
+const NAME_LINE_H_BRAND = 1.15;
+
+// The icon column's right edge: the catalog's wave instead of a ruled line. A
+// slow, slightly irregular S sampled from the approved mockup — [fraction of
+// the badge height, offset in pt from DIVIDER_X] — drawn as one smooth curve
+// through the points (Catmull-Rom as cubic Béziers). The mockup's swing is
+// about ±1.3 pt; it is drawn half as deep again so it still reads as a wave on
+// a 300 dpi thermal print, and it never comes within 6 pt of the text column.
+const ICON_WAVE = Object.freeze([
+  [0, -1.5], [0.13, 0.3], [0.30, -1.35], [0.48, 1.65], [0.70, -0.3], [0.86, 1.95], [1, -0.9],
+]);
+const ICON_WAVE_MAX_DX = Math.max(...ICON_WAVE.map(([, dx]) => Math.abs(dx)));
+// Adds the edge from the top of the badge to the bottom to the current path;
+// `start` begins a new subpath there, otherwise the edge continues the path.
+function traceIconWave(ctx, top, height, start) {
+  const pts = ICON_WAVE.map(([t, dx]) => [DIVIDER_X + dx, top + t * height]);
+  if (start) ctx.moveTo(pts[0][0], pts[0][1]);
+  else ctx.lineTo(pts[0][0], pts[0][1]);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(pts.length - 1, i + 2)];
+    ctx.bezierCurveTo(
+      p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+      p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
+      p2[0], p2[1]);
+  }
+}
 
 // ── In-memory CSV snapshot ────────────────────────────────────────────────────
 // Populated at startup and refreshed on every POST /print so changes to
@@ -648,12 +684,15 @@ function isSteppingUp(record, clubName) {
   return grade === STEP_UP_GRADUATING_GRADE[k];
 }
 
-// ── Seasonal border art (#16) ─────────────────────────────────────────────────
+// ── Screen season (#16/#18) ───────────────────────────────────────────────────
 // Eight seasons, resolved automatically from the calendar with a dashboard
-// override (config.seasonTheme: 'auto' | 'off' | a season key). The art is
-// pure 1-bit-safe LINE WORK — a dash-patterned stroke of the badge outline
-// plus a small top-center motif — because the v3.7.x per-club themes proved
-// that color and gray fills dither to mush on thermal output.
+// override (config.seasonTheme: 'auto' | 'off' | a season key). Labels used to
+// wear it as a small top-centre line-art motif; that art is gone (2026-27
+// rebrand: the label is the catalog's type and the official club mark, nothing
+// seasonal). What stays is the broadcast: every `tally` carries the season so
+// the lobby screens know which skin to wear, and the dashboard calls the
+// setting "Screen season". The config key and the payload are unchanged — the
+// signage app (skinForPrinterSeason) reads both.
 const SEASON_KEYS = [
   'back-to-school', 'fall', 'thanksgiving', 'christmas',
   'winter', 'spring', 'easter', 'vbs-summer',
@@ -690,230 +729,19 @@ function seasonForDate(now = new Date()) {
   return 'vbs-summer';   // 06-01 .. 08-14
 }
 
-// What the label should wear tonight: '' (no art) when off, the operator's
-// pinned season, or the calendar's. Resolved by CALLERS and passed into
-// generateLabel as input.season — the renderer never reads config.
-function currentLabelSeason(now = new Date()) {
+// What the screens should wear tonight: '' when the operator turned it off
+// (the tally then carries no season and each screen follows its own skin
+// setting), the operator's pinned season, or the calendar's.
+function currentScreenSeason(now = new Date()) {
   const cfg = String(config.seasonTheme || 'auto');
   if (cfg === 'off') return '';
   if (SEASON_KEYS.includes(cfg)) return cfg;
   return seasonForDate(now);
 }
 
-// (The per-season dashed border that traced the whole label was removed by
-// operator request — the seasonal art is now the top-center motif alone.)
-
-// A small top-center motif, pure path work at ~12pt. Drawn only when the
-// centered name block leaves headroom — a crowded label keeps its ink for
-// the name. (cx, top) is the motif box's top-center.
-function drawSeasonMotif(ctx, season, cx, top, color) {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = 1.2;
-  ctx.lineCap = 'round';
-  const cy = top + 6;   // motif center line
-  switch (season) {
-    case 'back-to-school': {   // pencil
-      ctx.strokeRect(cx - 8, cy - 2.5, 12, 5);
-      ctx.beginPath(); ctx.moveTo(cx + 4, cy - 2.5); ctx.lineTo(cx + 8, cy); ctx.lineTo(cx + 4, cy + 2.5); ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 2.5); ctx.lineTo(cx - 4, cy + 2.5); ctx.stroke();
-      break;
-    }
-    case 'fall': {             // leaf
-      ctx.beginPath(); ctx.moveTo(cx - 7, cy); ctx.quadraticCurveTo(cx, cy - 6, cx + 7, cy);
-      ctx.quadraticCurveTo(cx, cy + 6, cx - 7, cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy); ctx.stroke();
-      break;
-    }
-    case 'thanksgiving': {     // wheat sprig
-      ctx.beginPath(); ctx.moveTo(cx, cy + 5); ctx.lineTo(cx, cy - 5); ctx.stroke();
-      for (let j = 0; j < 3; j++) {
-        const yy = cy - 4 + j * 3;
-        ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx - 3.5, yy + 2); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx + 3.5, yy + 2); ctx.stroke();
-      }
-      break;
-    }
-    case 'christmas': {        // holly: two leaves + berries
-      ctx.beginPath(); ctx.moveTo(cx - 1, cy); ctx.quadraticCurveTo(cx - 5, cy - 5, cx - 9, cy - 1);
-      ctx.quadraticCurveTo(cx - 5, cy + 2, cx - 1, cy); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + 1, cy); ctx.quadraticCurveTo(cx + 5, cy - 5, cx + 9, cy - 1);
-      ctx.quadraticCurveTo(cx + 5, cy + 2, cx + 1, cy); ctx.stroke();
-      for (const dx of [-2, 0, 2]) {
-        ctx.beginPath(); ctx.arc(cx + dx, cy + 3, 1.2, 0, Math.PI * 2); ctx.fill();
-      }
-      break;
-    }
-    case 'winter': {           // snowflake asterisk
-      for (let j = 0; j < 3; j++) {
-        const a = (Math.PI / 3) * j;
-        ctx.beginPath();
-        ctx.moveTo(cx - Math.cos(a) * 6, cy - Math.sin(a) * 6);
-        ctx.lineTo(cx + Math.cos(a) * 6, cy + Math.sin(a) * 6);
-        ctx.stroke();
-      }
-      break;
-    }
-    case 'spring': {           // tulip
-      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 4); ctx.quadraticCurveTo(cx - 4, cy + 1, cx, cy + 1);
-      ctx.quadraticCurveTo(cx + 4, cy + 1, cx + 4, cy - 4); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx - 2, cy - 1.5); ctx.lineTo(cx, cy - 4);
-      ctx.lineTo(cx + 2, cy - 1.5); ctx.lineTo(cx + 4, cy - 4); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy + 1); ctx.lineTo(cx, cy + 6); ctx.stroke();
-      break;
-    }
-    case 'easter': {           // egg with a zigzag band
-      ctx.beginPath(); ctx.ellipse(cx, cy, 4.5, 6, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 4, cy);
-      ctx.lineTo(cx - 2, cy - 2); ctx.lineTo(cx, cy); ctx.lineTo(cx + 2, cy - 2); ctx.lineTo(cx + 4, cy);
-      ctx.stroke();
-      break;
-    }
-    case 'vbs-summer': {       // sun
-      ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.stroke();
-      for (let j = 0; j < 8; j++) {
-        const a = (Math.PI / 4) * j;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5);
-        ctx.lineTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
-        ctx.stroke();
-      }
-      break;
-    }
-  }
-  ctx.restore();
-}
-
-// ── Collectible label icons (#20) ─────────────────────────────────────────────
-// A tiny path-drawn icon that changes every calendar week — same icon for
-// every kid that night, twelve in the series, so a season's worth of labels
-// becomes a collection. Pure line work (thermal-safe), leftmost in the
-// bottom-right icon row. On by default; config.collectibleIcons === false
-// turns it off.
-const COLLECTIBLE_SERIES = [
-  'star', 'rocket', 'crown', 'butterfly', 'kite', 'acorn',
-  'music', 'lightning', 'fish', 'sailboat', 'balloon', 'snail',
-];
-
-// Which icon this week: whole weeks since the epoch, mod the series length.
-// Stable for the whole calendar week (UTC), so a reprint later the same
-// night — or the same week — matches the original label.
-function collectibleIndexForDate(now = new Date()) {
-  // Local-calendar days since epoch, so the week can only roll at LOCAL
-  // midnight — the old raw-ms version rolled at Thursday 00:00 UTC, i.e.
-  // Wednesday evening in US timezones, flipping the icon MID-CLUB-NIGHT and
-  // breaking both stated guarantees (same icon all night, reprint matches).
-  // Epoch day 0 was a Thursday; +3 moves the boundary to Monday, safely far
-  // from any club night.
-  const days = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000);
-  return Math.floor((days + 3) / 7) % COLLECTIBLE_SERIES.length;
-}
-
-function currentCollectibleIndex(now = new Date()) {
-  if (config.collectibleIcons === false) return null;
-  return collectibleIndexForDate(now);
-}
-
-// Draw collectible `idx` with its center-bottom at (cx, baselineY). ~13pt of
-// stroke paths, no fills except dots — nothing to dither.
-function drawCollectible(ctx, idx, cx, baselineY, color) {
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = 1.2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  const cy = baselineY - 6.5;   // icon center
-  switch (COLLECTIBLE_SERIES[idx]) {
-    case 'star': {
-      ctx.beginPath();
-      for (let j = 0; j < 10; j++) {
-        const r = j % 2 === 0 ? 6 : 2.6;
-        const a = -Math.PI / 2 + (Math.PI / 5) * j;
-        const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
-        j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-      }
-      ctx.closePath(); ctx.stroke();
-      break;
-    }
-    case 'rocket': {
-      ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.quadraticCurveTo(cx + 3.5, cy - 1, cx + 2.2, cy + 4);
-      ctx.lineTo(cx - 2.2, cy + 4); ctx.quadraticCurveTo(cx - 3.5, cy - 1, cx, cy - 6);
-      ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 2.2, cy + 2); ctx.lineTo(cx - 4.5, cy + 5); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + 2.2, cy + 2); ctx.lineTo(cx + 4.5, cy + 5); ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx, cy - 1.5, 1.1, 0, Math.PI * 2); ctx.stroke();
-      break;
-    }
-    case 'crown': {
-      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy + 3.5); ctx.lineTo(cx - 5.5, cy - 3);
-      ctx.lineTo(cx - 2.5, cy); ctx.lineTo(cx, cy - 5); ctx.lineTo(cx + 2.5, cy);
-      ctx.lineTo(cx + 5.5, cy - 3); ctx.lineTo(cx + 5.5, cy + 3.5); ctx.closePath(); ctx.stroke();
-      break;
-    }
-    case 'butterfly': {
-      ctx.beginPath(); ctx.moveTo(cx, cy - 4); ctx.lineTo(cx, cy + 4); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx - 3.2, cy - 1.8, 2.8, 2.2, -0.5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx + 3.2, cy - 1.8, 2.8, 2.2, 0.5, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx - 2.6, cy + 2.2, 2, 1.7, 0.4, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx + 2.6, cy + 2.2, 2, 1.7, -0.4, 0, Math.PI * 2); ctx.stroke();
-      break;
-    }
-    case 'kite': {
-      ctx.beginPath(); ctx.moveTo(cx, cy - 6); ctx.lineTo(cx + 3.5, cy - 1.5); ctx.lineTo(cx, cy + 3);
-      ctx.lineTo(cx - 3.5, cy - 1.5); ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.quadraticCurveTo(cx - 2, cy + 5, cx - 1, cy + 6.5); ctx.stroke();
-      break;
-    }
-    case 'acorn': {
-      ctx.beginPath(); ctx.arc(cx, cy - 1.5, 3.6, Math.PI, 0); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 3.6, cy - 1.5); ctx.quadraticCurveTo(cx, cy + 6, cx + 3.6, cy - 1.5); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy - 6.5); ctx.stroke();
-      break;
-    }
-    case 'music': {
-      ctx.beginPath(); ctx.moveTo(cx + 3, cy - 5.5); ctx.lineTo(cx + 3, cy + 2.5); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(cx + 1.2, cy + 3, 2.2, 1.6, -0.3, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(cx + 3, cy - 5.5); ctx.quadraticCurveTo(cx + 6, cy - 4.5, cx + 6, cy - 2); ctx.stroke();
-      break;
-    }
-    case 'lightning': {
-      ctx.beginPath(); ctx.moveTo(cx + 1.5, cy - 6); ctx.lineTo(cx - 3, cy + 0.5); ctx.lineTo(cx - 0.5, cy + 0.5);
-      ctx.lineTo(cx - 1.5, cy + 6); ctx.lineTo(cx + 3, cy - 0.5); ctx.lineTo(cx + 0.5, cy - 0.5);
-      ctx.closePath(); ctx.stroke();
-      break;
-    }
-    case 'fish': {
-      ctx.beginPath(); ctx.ellipse(cx - 0.5, cy, 4, 2.6, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + 3.5, cy); ctx.lineTo(cx + 6, cy - 2.5); ctx.lineTo(cx + 6, cy + 2.5);
-      ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx - 2.5, cy - 0.6, 0.6, 0, Math.PI * 2); ctx.fill();
-      break;
-    }
-    case 'sailboat': {
-      ctx.beginPath(); ctx.moveTo(cx - 5, cy + 3); ctx.lineTo(cx + 5, cy + 3); ctx.lineTo(cx + 3.2, cy + 5.5);
-      ctx.lineTo(cx - 3.2, cy + 5.5); ctx.closePath(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy + 3); ctx.lineTo(cx, cy - 6); ctx.lineTo(cx + 4.5, cy + 1.5); ctx.closePath(); ctx.stroke();
-      break;
-    }
-    case 'balloon': {
-      ctx.beginPath(); ctx.ellipse(cx, cy - 2, 3.2, 4, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx, cy + 2); ctx.quadraticCurveTo(cx - 1.5, cy + 4.5, cx + 0.5, cy + 6.5); ctx.stroke();
-      break;
-    }
-    case 'snail': {
-      ctx.beginPath(); ctx.arc(cx + 1, cy, 3.4, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx + 1, cy, 1.6, 0.5, Math.PI * 1.6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 2.4, cy + 2.4); ctx.quadraticCurveTo(cx - 5.5, cy + 3, cx - 5.5, cy - 1);
-      ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy - 1); ctx.lineTo(cx - 6.3, cy - 3); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx - 5.5, cy - 1); ctx.lineTo(cx - 4.5, cy - 3); ctx.stroke();
-      break;
-    }
-  }
-  ctx.restore();
-}
+// (The collectible icon of the week, #20, came off the label with the
+// seasonal motif in the same rebrand. A config.json saved by an older version
+// may still carry `collectibleIcons`; nothing reads it any more.)
 
 // ── Twin-safe labels (#13) ────────────────────────────────────────────────────
 // When two ACTIVE roster kids share a normalized first+last name, their labels
@@ -1375,10 +1203,11 @@ async function resolveImageBuffer(clubImageData) {
   return null;
 }
 
-// Monogram fallback for the icon panel: when the client doesn't supply a
-// club logo (page layout changed, image failed to scrape), the label still
-// gets a club emblem — a solid badge with the club's monogram, drawn in the
-// club's font. TR (not T) for Trek so it can't be confused with T&T.
+// Monogram, the icon panel's LAST resort: when the client doesn't supply a
+// club logo (page layout changed, image failed to scrape) the panel shows the
+// official club mark from the brand kit, and only when that is missing too
+// does the label fall back to a solid badge with the club's monogram. TR (not
+// T) for Trek so it can't be confused with T&T.
 const CLUB_MONOGRAM = {
   puggle:  'P',
   cubbie:  'C',
@@ -1408,11 +1237,12 @@ const CLUB_DISPLAY_NAMES = {
 };
 const CLUB_LIST = Object.keys(CLUB_MONOGRAM).map((k) => CLUB_DISPLAY_NAMES[k]);
 
-// ── Club-specific font selection ──────────────────────────────────────────────
-// Each Awana club gets a distinct font personality on the label.
-// Fonts are standard Windows system fonts available on the target machine.
-// Falls back through safe generic stacks so labels always render even if
-// a specific face is missing.
+// ── The fonts labels printed in before the brand kit ─────────────────────────
+// Each club used to get its own Windows system font. They are no longer what a
+// label is set in (the kit's fonts are, below), but they are what it FALLS
+// BACK to, text by text, whenever a kit font did not load or cannot draw the
+// characters in front of it, so a broken install prints exactly the label it
+// printed before the kit existed. Keep them as they were.
 function getClubFontFamily(clubName) {
   const n = (clubName || '').toLowerCase();
   if (n.includes('puggle'))                          return "'Comic Sans MS', cursive, sans-serif";
@@ -1425,32 +1255,140 @@ function getClubFontFamily(clubName) {
   return "Helvetica, Arial, sans-serif";
 }
 
-// ── Auto-size a font to fit within maxWidth (canvas version) ─────────────────
-function fitFontSize(ctx, text, fontStyle, maxWidth, maxSize = 32, minSize = 18, fontFamily = 'Helvetica, Arial, sans-serif') {
-  for (let size = maxSize; size >= minSize; size -= 2) {
-    ctx.font = `${fontStyle} ${size}px ${fontFamily}`;
-    if (ctx.measureText(text).width <= maxWidth) return size;
-  }
-  return minSize;
-}
+// ── Label type: the kit's three voices, with the old fonts behind them ───────
+// Every piece of text on a label is set in one voice. Galindo shouts (the first
+// name, the monogram, a custom label), Londrina Solid labels (the club line,
+// the VISITOR/LEADER pill, the trophy chip, the step-up callout, the TEST band)
+// and Figtree is read (the last name and every small line). The same files are
+// on every PC because they ship in the installer, so a label looks the same at
+// every church; they used to be whichever Windows font each club happened to
+// map to.
+//
+// `legacy` is the exact CSS font style the pre-kit code asked for, in the old
+// family (getClubFontFamily, or `legacyFamily`). It is what prints when the kit
+// font did not load (brand.fontReady) and, text by text, for characters the kit
+// font does not have: the canvas does not borrow missing glyphs from the system
+// fonts the way a browser does, it leaves a hole.
+//
+// `whole: true` voices never mix faces inside one string: a name the brand font
+// cannot fully draw ("Thảo" in Galindo) prints entirely in the old font, as it
+// did before, instead of as a name with one letter in another typeface. Other
+// voices split into runs, so "⭐ 10th club night tonight!" keeps Figtree for the
+// words and the star comes from the old stack, as it always did.
+//
+// `wght` is Figtree's weight axis. Figtree ships as one variable font and the
+// canvas ignores a CSS weight for it (it draws the default Light instance and
+// fakes anything heavier), so the weight goes through fontVariationSettings.
+const LEGACY_SANS = 'Helvetica, Arial, sans-serif';
+const LABEL_VOICES = Object.freeze({
+  name:      { family: 'Galindo',              legacy: 'bold', whole: true },
+  monogram:  { family: 'Galindo',              legacy: 'bold', whole: true },
+  custom:    { family: 'Galindo',              legacy: 'bold', legacyFamily: LEGACY_SANS },
+  last:      { family: 'Figtree', wght: 500,   legacy: '',     whole: true },
+  hint:      { family: 'Figtree', wght: 500,   legacy: 'italic' },
+  group:     { family: 'Figtree', wght: 600,   legacy: 'italic' },
+  goTo:      { family: 'Figtree', wght: 700,   legacy: 'bold' },
+  milestone: { family: 'Figtree', wght: 500,   legacy: '' },
+  footer:    { family: 'Figtree', wght: 400,   legacy: 'italic' },
+  age:       { family: 'Figtree', wght: 600,   legacy: '' },
+  club:      { family: 'Londrina Solid',       legacy: 'italic bold' },
+  stepUp:    { family: 'Londrina Solid Black', legacy: 'bold' },
+  pill:      { family: 'Londrina Solid Black', legacy: 'bold' },
+  band:      { family: 'Londrina Solid Black', legacy: 'bold' },
+  test:      { family: 'Londrina Solid Black', legacy: 'bold', legacyFamily: LEGACY_SANS },
+});
 
-function truncateTextCanvas(ctx, text, font, maxWidth) {
-  ctx.font = font;
-  if (ctx.measureText(text).width <= maxWidth) return text;
-  let t = text;
-  while (t.length > 0 && ctx.measureText(t + '…').width > maxWidth) {
-    t = t.slice(0, -1);
-  }
-  return t + '…';
+// The type helpers for one label, bound to its club's old family. Every helper
+// takes (ctx, role, size, text): measure, fill (honouring ctx.textAlign and
+// ctx.textBaseline like fillText), truncate (with an ellipsis) and fit (the
+// largest even size from max down to min that fits, else min — the same ladder
+// the pre-kit fitFontSize used).
+function labelType(clubName) {
+  const clubFamily = getClubFontFamily(clubName);
+  const voice = (role) => LABEL_VOICES[role] || LABEL_VOICES.last;
+  const runsOf = (role, text) => {
+    const v = voice(role);
+    const s = String(text == null ? '' : text);
+    if (!brand.fontReady(v.family)) return [{ text: s, brand: false }];
+    if (v.whole) return [{ text: s, brand: brand.fontCovers(v.family, s) }];
+    return brand.splitRuns(v.family, s);
+  };
+  const use = (ctx, role, size, inBrand) => {
+    const v = voice(role);
+    const fallback = v.legacyFamily || clubFamily;
+    ctx.font = inBrand
+      ? `${size}px "${v.family}", ${fallback}`
+      : `${v.legacy ? v.legacy + ' ' : ''}${size}px ${fallback}`;
+    // Always set, so no weight leaks from one run into the next face.
+    ctx.fontVariationSettings = inBrand && v.wght ? `"wght" ${v.wght}` : 'normal';
+  };
+  const measure = (ctx, role, size, text) => {
+    let w = 0;
+    for (const r of runsOf(role, text)) { use(ctx, role, size, r.brand); w += ctx.measureText(r.text).width; }
+    return w;
+  };
+  const fill = (ctx, role, size, text, x, y) => {
+    const runs = runsOf(role, text);
+    if (runs.length === 1) {
+      use(ctx, role, size, runs[0].brand);
+      ctx.fillText(runs[0].text, x, y);
+      return;
+    }
+    // Mixed faces: lay the runs out left to right on ONE alphabetic baseline,
+    // the one the brand face would sit on at (x, y) — each face's own 'top' or
+    // 'middle' sits at a different height, so anchoring runs separately would
+    // step the line.
+    const align = ctx.textAlign;
+    const baseline = ctx.textBaseline;
+    const widths = runs.map((r) => { use(ctx, role, size, r.brand); return ctx.measureText(r.text).width; });
+    const total = widths.reduce((a, b) => a + b, 0);
+    let left = align === 'center' ? x - total / 2
+      : (align === 'right' || align === 'end') ? x - total : x;
+    const lead = runs.find((r) => r.brand) || runs[0];
+    use(ctx, role, size, lead.brand);
+    let yAlpha = y;
+    if (baseline !== 'alphabetic') {
+      const below = ctx.measureText(lead.text).actualBoundingBoxDescent;
+      ctx.textBaseline = 'alphabetic';
+      yAlpha = y + (below - ctx.measureText(lead.text).actualBoundingBoxDescent);
+    }
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    runs.forEach((r, i) => {
+      use(ctx, role, size, r.brand);
+      ctx.fillText(r.text, left, yAlpha);
+      left += widths[i];
+    });
+    ctx.textAlign = align;
+    ctx.textBaseline = baseline;
+  };
+  const truncate = (ctx, role, size, text, maxWidth) => {
+    const s = String(text == null ? '' : text);
+    if (measure(ctx, role, size, s) <= maxWidth) return s;
+    // By code point, so an emoji in a name is dropped whole, never halved.
+    const chars = Array.from(s);
+    while (chars.length > 0 && measure(ctx, role, size, chars.join('') + '…') > maxWidth) chars.pop();
+    return chars.join('') + '…';
+  };
+  const fit = (ctx, role, text, maxWidth, maxSize, minSize) => {
+    for (let size = maxSize; size >= minSize; size -= 2) {
+      if (measure(ctx, role, size, text) <= maxWidth) return size;
+    }
+    return minSize;
+  };
+  // True when this text would print in the kit face (for layout decisions
+  // that depend on the face's shape, like the name's descender room).
+  const inBrand = (role, text) => runsOf(role, text).some((r) => r.brand);
+  return { measure, fill, truncate, fit, inBrand };
 }
 
 // ── Free-text label sizing (POST /print-custom) ──────────────────────────────
 // A custom label is ONE line of operator text on an otherwise empty 4x2 label.
 // It has no roster row behind it and no fixed vocabulary, so it cannot use the
 // name block's ceilings: "VOLUNTEER" wants to be huge and "Wednesday Kitchen
-// Team, Room 4" wants to be small, and both have to look deliberate.
+// Team, Room 4" wants to be small, and both have to look deliberate. It is set
+// in the name's voice (Galindo, falling back to bold Helvetica/Arial).
 const CUSTOM_TEXT_MAX_CHARS = 60;
-const CUSTOM_TEXT_FONT      = 'Helvetica, Arial, sans-serif';
 const CUSTOM_TEXT_MAX_PT    = 56;
 const CUSTOM_TEXT_MIN_PT    = 14;
 const CUSTOM_TEXT_LINE_H    = 1.15;
@@ -1474,13 +1412,12 @@ function splitCustomTextInTwo(text) {
 // Start large and shrink. Only once the floor is reached does it wrap to two
 // lines, because one big line reads across a room and two small ones do not.
 // Returns { lines, size } in points.
-function fitCustomLabelText(ctx, text) {
+function fitCustomLabelText(ctx, text, type = labelType('')) {
   const maxW = PAGE_W - CUSTOM_TEXT_MARGIN_X * 2;
   const maxH = PAGE_H - CUSTOM_TEXT_MARGIN_Y * 2;
   const fits = (lines, size) => {
     if (lines.length * size * CUSTOM_TEXT_LINE_H > maxH) return false;
-    ctx.font = `bold ${size}px ${CUSTOM_TEXT_FONT}`;
-    return lines.every((l) => ctx.measureText(l).width <= maxW);
+    return lines.every((l) => type.measure(ctx, 'custom', size, l) <= maxW);
   };
   for (let size = CUSTOM_TEXT_MAX_PT; size >= CUSTOM_TEXT_MIN_PT; size--) {
     if (fits([text], size)) return { lines: [text], size };
@@ -1492,9 +1429,8 @@ function fitCustomLabelText(ctx, text) {
   // Pathological input (60 characters with no space in them). Clip rather than
   // bleed off the die-cut edge: a label that runs off the paper is unreadable,
   // an ellipsis is merely shortened.
-  const font = `bold ${CUSTOM_TEXT_MIN_PT}px ${CUSTOM_TEXT_FONT}`;
   return {
-    lines: two.map((l) => truncateTextCanvas(ctx, l, font, maxW)),
+    lines: two.map((l) => type.truncate(ctx, 'custom', CUSTOM_TEXT_MIN_PT, l, maxW)),
     size: CUSTOM_TEXT_MIN_PT,
   };
 }
@@ -1553,12 +1489,13 @@ const SCALE = DPI / 72;            // convert pt → px
 //
 // White-on-dark logos survive: the dark field is ink, the white lettering
 // stays white. A logo with NO ink at all (all-white, all-transparent, or
-// undecodable) returns null and the caller falls back to the monogram badge —
-// the icon zone never silently disappears.
+// undecodable) returns null and the caller falls back to the club mark (and
+// past that the monogram badge) — the icon zone never silently disappears.
+// The kit's official club marks go through this same converter.
 //
 // POST /label (the extension's Print Dialog mode) is the surface that shows
 // this output before paper. GET /preview takes no image parameter, so the
-// dashboard preview always renders the monogram badge.
+// dashboard preview always renders the club mark.
 const LOGO_INK_ALPHA = 64;        // out of 255 — below this a pixel is "air"
 const LOGO_INK_WHITE_DIST = 64;   // max(255-r,255-g,255-b) at or above this is ink
 const LOGO_MAX_DECODE_SIDE = 2048; // bound on the scan canvas (see sniff below for decode)
@@ -1676,10 +1613,13 @@ async function generateLabel(input) {
     isVisitor = false,
     stepUp = false, stepUpNextClub = '', awanaShares = null, noPhoto = false,
     testBanner = false, footerText = '', greeting = '', template = null,
-    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '', season = '',
-    collectibleIndex = null, extras = {}, isLeader = false,
+    streakCount = null, isNewKid = false, middleInitial = '', nameHint = '',
+    extras = {}, isLeader = false,
     customText = '',
   } = input;
+  // (`season` and `collectibleIndex` were inputs until the 2026-27 rebrand took
+  // the seasonal motif and the collectible icon off the label. A stale caller
+  // that still passes them is simply not read.)
   // Coerce the text inputs before anything calls .trim() on them. A client
   // that posts `clubName: null` (explicit null defeats the default parameter)
   // would otherwise throw deep inside layout and turn a printable label into
@@ -1740,13 +1680,6 @@ async function generateLabel(input) {
   // here so a malformed caller can't reshape the name block.
   middleInitial = String(middleInitial == null ? '' : middleInitial).trim().slice(0, 1).toUpperCase();
   nameHint      = String(nameHint == null ? '' : nameHint).trim().slice(0, 16);
-  // Season art (#16): unknown values render as no art at all - fail open.
-  season        = SEASON_KEYS.includes(season) ? season : '';
-  // Collectible (#20): a valid series index or nothing.
-  if (collectibleIndex !== null && collectibleIndex !== undefined) {
-    const n = Number(collectibleIndex);
-    collectibleIndex = (Number.isInteger(n) && n >= 0 && n < COLLECTIBLE_SERIES.length) ? n : null;
-  }
 
   // Step-up labels are inverted (black bg, light text) and replace the
   // handbook-group line with "Stepping up to <next club>" so volunteers
@@ -1804,14 +1737,15 @@ async function generateLabel(input) {
     cctx.scale(SCALE, SCALE);
     cctx.fillStyle = '#ffffff';
     cctx.fillRect(0, 0, PAGE_W, PAGE_H);
-    const layout = fitCustomLabelText(cctx, customText);
+    const customType = labelType('');
+    const layout = fitCustomLabelText(cctx, customText, customType);
     cctx.fillStyle = '#000000';
     cctx.textAlign = 'center';
     cctx.textBaseline = 'middle';
-    cctx.font = `bold ${layout.size}px ${CUSTOM_TEXT_FONT}`;
     const lineH = layout.size * CUSTOM_TEXT_LINE_H;
     const firstY = PAGE_H / 2 - ((layout.lines.length - 1) * lineH) / 2;
-    layout.lines.forEach((line, i) => cctx.fillText(line, PAGE_W / 2, firstY + i * lineH));
+    layout.lines.forEach((line, i) =>
+      customType.fill(cctx, 'custom', layout.size, line, PAGE_W / 2, firstY + i * lineH));
     const customBuffer = cvs.toBuffer('image/png');
     fs.writeFileSync(pngPath, customBuffer);
     return { pngPath, buffer: customBuffer };
@@ -1819,6 +1753,8 @@ async function generateLabel(input) {
 
   const canvas = createCanvas(PX_W, PX_H);
   const ctx = canvas.getContext('2d');
+  // The kit's voices for this label, each with the club's old font behind it.
+  const type = labelType(clubName);
 
   // Scale all drawing from points to pixels
   ctx.scale(SCALE, SCALE);
@@ -1829,12 +1765,14 @@ async function generateLabel(input) {
 
   // On step-up labels, drop the club icon entirely — the kid is leaving
   // that club, and the wider text area makes the message more obvious.
-  // The icon panel shows the real club logo when the client supplied one,
-  // and falls back to a monogram badge for any recognized club so the icon
-  // zone never silently disappears.
+  // Otherwise the icon panel exists for any recognized club: it shows the
+  // real TwoTimTwo club logo when the client supplied one, the official
+  // one-colour club mark from the brand kit when it did not (or the logo was
+  // unusable), and the letter monogram as the last resort, so the icon zone
+  // never silently disappears.
   const hasLogo     = !stepUp && !!clubImageBuffer && tplOn('showIconPanel');
-  const hasMonogram = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)] && tplOn('showIconPanel');
-  const hasIcon     = hasLogo || hasMonogram;
+  const hasEmblem   = !stepUp && !hasLogo && !!CLUB_MONOGRAM[clubKey(clubName)] && tplOn('showIconPanel');
+  const hasIcon     = hasLogo || hasEmblem;
   const textX   = hasIcon ? TEXT_X : BX + 10;
   const textW   = hasIcon ? TEXT_W : BW - 20;
 
@@ -1843,38 +1781,67 @@ async function generateLabel(input) {
 
   // ── Left icon panel ───────────────────────────────────────────────────────
   // Tracked OUTSIDE the panel block: the text area below prints the club name
-  // only when no real logo made it onto the label, and a supplied-but-rejected
-  // logo (too small, undecodable) must count as "no logo" there too.
+  // only when neither a real logo nor the official mark made it onto the
+  // label, and a supplied-but-rejected logo (too small, undecodable) must count
+  // as "no logo" there too.
   let logoDrawn = false;
+  let markDrawn = false;
   if (hasIcon) {
+    // The column's right edge is the catalog's wave, not a ruled line: filled
+    // in the panel tone, and traced once more in the old divider's hairline so
+    // the edge still exists on paper (the pale fill all but vanishes on a
+    // thermal head).
     ctx.save();
     roundedRect(ctx, BX, BY, BW, BH, CORNER);
     ctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(BX, BY);
+    traceIconWave(ctx, BY, BH, false);
+    ctx.lineTo(BX, BY + BH);
+    ctx.closePath();
     ctx.fillStyle = COLOR.iconBg;
-    ctx.fillRect(BX, BY, ICON_COL_W, BH);
+    ctx.fill();
     ctx.restore();
 
-    // Subtle vertical divider
+    ctx.save();
     ctx.beginPath();
-    ctx.moveTo(DIVIDER_X, BY + 12);
-    ctx.lineTo(DIVIDER_X, BY + BH - 12);
+    ctx.rect(BX, BY + 12, ICON_COL_W + ICON_WAVE_MAX_DX + 2, BH - 24);
+    ctx.clip();
+    ctx.beginPath();
+    traceIconWave(ctx, BY, BH, true);
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = COLOR.iconDivider;
     ctx.stroke();
+    ctx.restore();
 
     // Club icon image (76×76 pt max, centred in the icon zone)
     const iconSize = 76;
     const iconX = BX + (ICON_COL_W - iconSize) / 2;
     const iconY = BY + (BH - iconSize) / 2;
+    // Ink follows the palette: on an inverted label the icon panel prints
+    // black, so the art must be white there or it vanishes into its own
+    // background.
+    const inkWhite = Boolean(extras && extras.inverted);
+    const ink = inkWhite ? [255, 255, 255] : [0, 0, 0];
+    // Preserve aspect ratio within the 76pt square. Post-crop this is the
+    // aspect of the ARTWORK — a wordmark on a padded square canvas used to fit
+    // by its padding and shrink the art; now it fits by the art itself.
+    const drawArt = (art) => {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const aspect = art.width / art.height;
+      let drawW = iconSize, drawH = iconSize;
+      if (aspect > 1) { drawH = iconSize / aspect; }
+      else { drawW = iconSize * aspect; }
+      const dx = iconX + (iconSize - drawW) / 2;
+      const dy = iconY + (iconSize - drawH) / 2;
+      ctx.drawImage(art.canvas, dx, dy, drawW, drawH);
+    };
     if (hasLogo) {
       // Crop to the artwork and binarize for thermal — see
       // prepareLogoForThermal. A null result (undecodable, or no ink at all)
-      // falls through to the monogram badge below. Ink follows the palette:
-      // on an inverted label the icon panel prints black, so the logo must be
-      // white there or it vanishes into its own background.
-      const inkWhite = Boolean(extras && extras.inverted);
-      const logo = await prepareLogoForThermal(clubImageBuffer,
-        { ink: inkWhite ? [255, 255, 255] : [0, 0, 0] });
+      // falls through to the official mark below.
+      const logo = await prepareLogoForThermal(clubImageBuffer, { ink });
       if (logo) {
         // The icon zone is 76pt ≈ 317 device px at 300 DPI. A logo whose
         // ARTWORK (post-crop — a small graphic on a big padded canvas no
@@ -1883,33 +1850,39 @@ async function generateLabel(input) {
         // upscaled 4–5×, and the thermal printer then dithers the blurry
         // antialiased edges into speckle — the printed result is
         // recognisably worse than no logo at all. Below half the target
-        // resolution, the solid-ink monogram badge is the better label:
-        // skip the image and fall through to it.
+        // resolution, the vector mark (or the solid-ink monogram) is the
+        // better label: skip the image and fall through to it.
         const targetPx = iconSize * SCALE;
         if (Math.max(logo.sourceWidth, logo.sourceHeight) >= targetPx / 2) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          // Preserve aspect ratio within the 76pt square. Post-crop this is
-          // the aspect of the ARTWORK — a wordmark on a padded square canvas
-          // used to fit by its padding and shrink the art; now it fits by
-          // the art itself.
-          const aspect = logo.width / logo.height;
-          let drawW = iconSize, drawH = iconSize;
-          if (aspect > 1) { drawH = iconSize / aspect; }
-          else { drawW = iconSize * aspect; }
-          const dx = iconX + (iconSize - drawW) / 2;
-          const dy = iconY + (iconSize - drawH) / 2;
-          ctx.drawImage(logo.canvas, dx, dy, drawW, drawH);
+          drawArt(logo);
           logoDrawn = true;
         } else {
-          console.log(`[icon] Club artwork is ${logo.sourceWidth}x${logo.sourceHeight}px after cropping — too small for a ${Math.round(targetPx)}px icon zone, using the monogram badge instead`);
+          console.log(`[icon] Club artwork is ${logo.sourceWidth}x${logo.sourceHeight}px after cropping — too small for a ${Math.round(targetPx)}px icon zone, using the club mark instead`);
         }
       }
     }
     if (!logoDrawn) {
-      // Monogram badge: solid disc + club initials in the club's own font.
-      // Solid ink stays crisp on thermal output where a grayscale logo
-      // placeholder would just dither away.
+      // The official one-colour club mark (brand kit, logos/*-black.svg):
+      // vector, so it rasterises crisply at icon size, and put through the
+      // SAME thermal converter as a downloaded logo (cropped to its ink, one
+      // solid ink colour, re-inked white on an inverted label). Fails open: a
+      // missing or undecodable mark falls through to the monogram.
+      const key = clubKey(clubName);
+      const markSvg = brand.clubMarkSvg(key);
+      if (markSvg) {
+        const mark = await prepareLogoForThermal(markSvg, { ink });
+        if (mark) {
+          drawArt(mark);
+          markDrawn = true;
+        } else {
+          brand.markFailed(key, 'decoded to no printable ink');
+        }
+      }
+    }
+    if (!logoDrawn && !markDrawn) {
+      // Monogram badge, the last resort: solid disc + club initials in the
+      // shout voice. Solid ink stays crisp on thermal output where a
+      // grayscale logo placeholder would just dither away.
       const monogram = CLUB_MONOGRAM[clubKey(clubName)] || '?';
       const cx = BX + ICON_COL_W / 2;
       const cy = BY + BH / 2;
@@ -1918,13 +1891,11 @@ async function generateLabel(input) {
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fillStyle = COLOR.name;
       ctx.fill();
-      const mFont = getClubFontFamily(clubName);
-      const mSize = fitFontSize(ctx, monogram, 'bold', radius * 1.5, 30, 12, mFont);
-      ctx.font = `bold ${mSize}px ${mFont}`;
+      const mSize = type.fit(ctx, 'monogram', monogram, radius * 1.5, 30, 12);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = COLOR.bg;
-      ctx.fillText(monogram, cx, cy + 1);
+      type.fill(ctx, 'monogram', mSize, monogram, cx, cy + 1);
       ctx.textBaseline = 'top';  // restore default used by the text area
     }
   }
@@ -1934,12 +1905,13 @@ async function generateLabel(input) {
   // "Stepping up to <next club>" callout — always show that line.
   const stepUpGroupText = stepUp ? ('Stepping up to ' + (stepUpNextClub || 'next club')) : '';
   const hasLast  = lastName.trim().length > 0 && tplOn('showLastName');
-  // A real logo self-identifies the club, so the text line is redundant;
-  // a monogram badge is only initials, so keep the club name printed too.
-  // logoDrawn, not hasLogo: a supplied logo that was rejected (too small to
-  // print cleanly, failed to decode) fell back to the monogram badge, and the
-  // label must then carry the club name in text like any other monogram label.
-  const hasClub  = clubName.trim().length > 0 && !logoDrawn && tplOn('showClubLine');
+  // A real logo or the official mark self-identifies the club, so the text
+  // line is redundant; a monogram badge is only initials, so keep the club
+  // name printed too. logoDrawn/markDrawn, not hasLogo: a supplied logo that
+  // was rejected (too small to print cleanly, failed to decode) fell back to
+  // the mark, or to the monogram, and the label must then carry the club name
+  // in text like any other monogram label.
+  const hasClub  = clubName.trim().length > 0 && !logoDrawn && !markDrawn && tplOn('showClubLine');
   // The step-up callout and a connect-card greeting always show — a template
   // only suppresses the roster-derived handbook-group line.
   const hasGroup = stepUp ? !!stepUpGroupText
@@ -1956,7 +1928,7 @@ async function generateLabel(input) {
   // goTo/milestone lines used to skip this reservation as "rare and short", but
   // the moment two bottom lines coexist (a connect card's schedule line over a
   // footer) the centered block sat right on top of them.
-  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid || collectibleIndex != null;
+  const hasIconRowGlyphs = hasAllergy || isBirthday || awanaShares != null || noPhoto || streakCount != null || isNewKid;
   const bottomLineCount = ((extras && extras.trophyBand) ? 1 : 0)
     + ((extras && extras.goToLine) ? 1 : 0)
     + ((extras && extras.milestoneLine) ? 1 : 0)
@@ -1965,9 +1937,6 @@ async function generateLabel(input) {
     hasIconRowGlyphs ? 20 : 0,
     bottomLineCount > 0 ? 7 + bottomLineCount * 13 : 0
   );
-
-  // Pick a font personality based on the child's Awana club
-  const fontFamily = getClubFontFamily(clubName);
 
   // Birthday age line (#291): a few words beside the cake, so the icon becomes
   // a conversation instead of a silent glyph. Gated on isBirthday a SECOND time
@@ -1989,15 +1958,20 @@ async function generateLabel(input) {
   const hasHint = nameHint.length > 0;
 
   // Font sizes (in pt)
-  let fs1 = fitFontSize(ctx, displayFirst, 'bold', textW, tplNameMax, 18, fontFamily);
+  let fs1 = type.fit(ctx, 'name', displayFirst, textW, tplNameMax, 18);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
   const fs5 = 9;
   const GAP = 4;
   const SEP = 9;
+  // The first name's line box, as a multiple of its size. The old Windows
+  // faces keep their descenders inside the em box, so the box was the size
+  // itself (1.0); Galindo's descenders hang about 15% below it and would sit
+  // on the last name, so a Galindo name gets that much more room.
+  const nameLineH = type.inBrand('name', displayFirst) ? NAME_LINE_H_BRAND : 1;
 
-  let blockH = fs1;
+  let blockH = fs1 * nameLineH;
   if (hasLast)     blockH += GAP + fs2;
   if (hasHint)     blockH += 2 + fs5;
   if (hasClub)     blockH += SEP + fs3;
@@ -2008,44 +1982,35 @@ async function generateLabel(input) {
   const usableH = BH - ALLERGY_STRIP_H;
   // Height-fit: a crowded label (name + last + club + group over a stacked
   // bottom band) shrinks the FIRST NAME rather than descending into the band —
-  // blockH is linear in fs1, so the overflow maps 1:1 onto the size reduction.
-  // Floor of 18 matches fitFontSize's width floor; past that, the clamp on y
-  // below keeps the block on the badge and any residual crowding lands at the
-  // bottom, where it degrades legibility instead of clipping the name.
+  // blockH is linear in fs1 (slope nameLineH), so the overflow maps straight
+  // onto the size reduction. Floor of 18 matches the width fit's floor; past
+  // that, the clamp on y below keeps the block on the badge and any residual
+  // crowding lands at the bottom, where it degrades legibility instead of
+  // clipping the name.
   if (blockH > usableH) {
-    const reduce = Math.min(blockH - usableH, fs1 - 18);
-    if (reduce > 0) { fs1 -= reduce; blockH -= reduce; }
+    const reduce = Math.min((blockH - usableH) / nameLineH, fs1 - 18);
+    if (reduce > 0) { fs1 -= reduce; blockH -= reduce * nameLineH; }
   }
 
   const centerY = BY + usableH / 2;
   let y = Math.max(BY + 2, centerY - blockH / 2);
-
-  // Seasonal motif (#16): a small top-center flourish, only when the name
-  // block leaves real headroom - a crowded label keeps its ink for the name.
-  if (season && y >= BY + 17) {
-    drawSeasonMotif(ctx, season, textX + textW / 2, BY + 3, COLOR.club);
-  }
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   const textCenterX = textX + textW / 2;
 
   // ── First name ────────────────────────────────────────────────────────────
-  const firstFont = `bold ${fs1}px ${fontFamily}`;
-  ctx.font = firstFont;
-  const safeFirst = truncateTextCanvas(ctx, displayFirst, firstFont, textW);
+  const safeFirst = type.truncate(ctx, 'name', fs1, displayFirst, textW);
   ctx.fillStyle = COLOR.name;
-  ctx.fillText(safeFirst, textCenterX, y);
-  y += fs1;
+  type.fill(ctx, 'name', fs1, safeFirst, textCenterX, y);
+  y += fs1 * nameLineH;
 
   // ── Last name ─────────────────────────────────────────────────────────────
   if (hasLast) {
     y += GAP;
-    const lastFont = `${fs2}px ${fontFamily}`;
-    ctx.font = lastFont;
-    const safeLast = truncateTextCanvas(ctx, lastName, lastFont, textW);
+    const safeLast = type.truncate(ctx, 'last', fs2, lastName, textW);
     ctx.fillStyle = COLOR.last;
-    ctx.fillText(safeLast, textCenterX, y);
+    type.fill(ctx, 'last', fs2, safeLast, textCenterX, y);
     y += fs2;
   }
 
@@ -2054,10 +2019,8 @@ async function generateLabel(input) {
   // kids share this exact name and no middle initial could split them.
   if (hasHint) {
     y += 2;
-    const hintFont = `italic ${fs5}px ${fontFamily}`;
-    ctx.font = hintFont;
     ctx.fillStyle = COLOR.club;
-    ctx.fillText(truncateTextCanvas(ctx, nameHint, hintFont, textW), textCenterX, y);
+    type.fill(ctx, 'hint', fs5, type.truncate(ctx, 'hint', fs5, nameHint, textW), textCenterX, y);
     y += fs5;
   }
 
@@ -2073,11 +2036,9 @@ async function generateLabel(input) {
     ctx.strokeStyle = COLOR.sep;
     ctx.stroke();
     y += 5;
-    const clubFont = `italic bold ${fs3}px ${fontFamily}`;
-    ctx.font = clubFont;
-    const safeClub = truncateTextCanvas(ctx, clubName, clubFont, textW);
+    const safeClub = type.truncate(ctx, 'club', fs3, clubName, textW);
     ctx.fillStyle = COLOR.club;
-    ctx.fillText(safeClub, textCenterX, y);
+    type.fill(ctx, 'club', fs3, safeClub, textCenterX, y);
     y += fs3;
   }
 
@@ -2087,19 +2048,16 @@ async function generateLabel(input) {
     let groupStr = stepUp
       ? stepUpGroupText
       : greeting
-        ? greeting   // width-fitted by truncateTextCanvas below, no 30-char cap
+        ? greeting   // width-fitted by type.truncate below, no 30-char cap
         : (handbookGroup.length > 30 ? handbookGroup.slice(0, 29) + '…' : handbookGroup);
-    const groupFont = stepUp
-      ? `bold ${fs4}px ${fontFamily}`
-      : `italic ${fs4}px ${fontFamily}`;
-    ctx.font = groupFont;
+    const groupRole = stepUp ? 'stepUp' : 'group';
     // The bottom-right icon row is right-anchored on the same band this line
     // occupies, so a centered group ran straight under the icons — the handbook
     // group is what sends a child to the right table, so it must stay readable.
     // Reserve the icon row's width on the right and centre what's left.
     const iconCount = allergyTokens.length + (isBirthday ? 1 : 0) +
       (noPhoto ? 1 : 0) + (awanaShares != null ? 1 : 0) + (streakCount != null ? 1 : 0) +
-      (isNewKid ? 1 : 0) + (collectibleIndex != null ? 1 : 0);
+      (isNewKid ? 1 : 0);
     // The age words (#291) sit in that same right-anchored row and are much
     // wider than an icon slot (~89pt, roughly 3.5 slots), so they have to be
     // measured rather than estimated — otherwise the handbook group runs
@@ -2107,19 +2065,18 @@ async function generateLabel(input) {
     const iconReserve = iconCount > 0 ? iconCount * 25 + 10 : 0;
     let ageReserve = 0;
     if (ageFull) {
-      ctx.font = `${AGE_TEXT_SIZE}px ${fontFamily}`;
       // Bounded by what is actually LEFT of the band: when the icons alone
       // already fill it, the ladder below will drop the words, and reserving
       // for text that never gets drawn would truncate this line for nothing.
       ageReserve = Math.max(0, Math.min(
-        ctx.measureText(ageFull).width + 3, ICON_ROW_MAX_W - iconReserve));
+        type.measure(ctx, 'age', AGE_TEXT_SIZE, ageFull) + 3, ICON_ROW_MAX_W - iconReserve));
     }
     const reservedRight = iconReserve + ageReserve;
     const groupMaxW = Math.max(40, textW - reservedRight);
     const groupCenterX = textCenterX - reservedRight / 2;
-    groupStr = truncateTextCanvas(ctx, groupStr, groupFont, groupMaxW);
+    groupStr = type.truncate(ctx, groupRole, fs4, groupStr, groupMaxW);
     ctx.fillStyle = COLOR.group;
-    ctx.fillText(groupStr, groupCenterX, y);
+    type.fill(ctx, groupRole, fs4, groupStr, groupCenterX, y);
     y += fs4;
   }
 
@@ -2129,10 +2086,8 @@ async function generateLabel(input) {
   // template's showVisitorPill switch.
   const pillText = isLeader ? 'LEADER' : ((isVisitor && tplOn('showVisitorPill')) ? 'VISITOR' : '');
   if (pillText) {
-    const visitorFont = `bold ${fs5}px ${fontFamily}`;
-    ctx.font = visitorFont;
     const vText = pillText;
-    const vWidth = ctx.measureText(vText).width;
+    const vWidth = type.measure(ctx, 'pill', fs5, vText);
     const vPad = 4;
     const vX = BX + BW - vPad - vWidth - 8;
     const vY = BY + vPad;
@@ -2143,7 +2098,7 @@ async function generateLabel(input) {
     ctx.fillStyle = COLOR.visitorText;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    ctx.fillText(vText, vX, vY + 1);
+    type.fill(ctx, 'pill', fs5, vText, vX, vY + 1);
     // Reset alignment
     ctx.textAlign = 'center';
   }
@@ -2163,48 +2118,48 @@ async function generateLabel(input) {
     const EMOJI_FONT_STACK = '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
     const PAD     = 6;
     const SPACING = 3;
+    // The icons are emoji in the system's emoji font, exactly as before the
+    // kit; no kit font weight may leak into them.
+    const useEmoji = (size) => {
+      ctx.font = `${size}px ${EMOJI_FONT_STACK}`;
+      ctx.fontVariationSettings = 'normal';
+    };
 
     // Build ordered glyph list, leftmost first:
     //   coin-emoji + N (shares)  ->  cake (birthday)  ->  allergy icons
     const glyphs = [];
-    if (collectibleIndex != null) {
-      // Collectible of the week (#20): path-drawn, leftmost so the safety
-      // icons keep their familiar right-edge positions.
-      const ci = collectibleIndex;
-      glyphs.push({ w: 15, draw: (x, baseY) => drawCollectible(ctx, ci, x + 7.5, baseY, COLOR.name) });
-    }
     if (awanaShares != null) {
       // Coin emoji (U+1FA99) + space + ASCII digits. The font stack
       // falls back to sans-serif for the digits, no extra font wiring.
-      glyphs.push({ ch: '\uD83E\uDE99 ' + awanaShares, size: EMOJI_SIZE });
+      glyphs.push({ ch: '🪙 ' + awanaShares, size: EMOJI_SIZE });
     }
     if (streakCount != null) {
       // Flame + attendance streak (#14) - same coin-badge pattern.
-      glyphs.push({ ch: '\uD83D\uDD25 ' + streakCount, size: EMOJI_SIZE });
+      glyphs.push({ ch: '🔥 ' + streakCount, size: EMOJI_SIZE });
     }
     if (isNewKid) {
       // Sparkle (#15): the kid's first two club weeks, so leaders learn the
       // new names fast. Subtle by design - no text, small glyph.
-      glyphs.push({ ch: '\u2728', size: EMOJI_SIZE });
+      glyphs.push({ ch: '✨', size: EMOJI_SIZE });
     }
     let ageGlyph = null;
     if (isBirthday) {
-      glyphs.push({ ch: '\uD83C\uDF70', size: BDAY_EMOJI_SIZE });
+      glyphs.push({ ch: '🍰', size: BDAY_EMOJI_SIZE });
       if (ageFull) {
         // Right of the cake (#291), so the allergy/no-photo safety icons keep
-        // their familiar right-edge positions and the row reads "\uD83C\uDF70 Turning 7
-        // this week!". Carries its own text font \u2014 the emoji stack would
-        // rasterise the words with whatever fallback it happens to reach.
-        ageGlyph = { ch: ageFull, size: AGE_TEXT_SIZE, font: fontFamily };
+        // their familiar right-edge positions and the row reads "🍰 Turning 7
+        // this week!". Set in the label's read voice, not the emoji stack —
+        // that would rasterise the words with whatever fallback it reaches.
+        ageGlyph = { ch: ageFull, size: AGE_TEXT_SIZE, words: true };
         glyphs.push(ageGlyph);
       }
     }
     allergyTokens.forEach(function(t) {
-      glyphs.push({ ch: ALLERGY_EMOJI[t] || '\u26A0', size: ALLERGY_EMOJI_SIZE });
+      glyphs.push({ ch: ALLERGY_EMOJI[t] || '⚠', size: ALLERGY_EMOJI_SIZE });
     });
     if (noPhoto) {
       // Camera emoji with a slash drawn over it — "do not photograph".
-      glyphs.push({ ch: '\uD83D\uDCF7', size: ALLERGY_EMOJI_SIZE, slash: true });
+      glyphs.push({ ch: '📷', size: ALLERGY_EMOJI_SIZE, slash: true });
     }
 
     // Measure each glyph under its own font so we can right-anchor the row.
@@ -2212,8 +2167,10 @@ async function generateLabel(input) {
     ctx.textBaseline = 'alphabetic';
     let totalW = 0;
     glyphs.forEach(function(g, i) {
-      if (!g.draw) {
-        ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
+      if (g.words) {
+        g.w = type.measure(ctx, 'age', g.size, g.ch);
+      } else {
+        useEmoji(g.size);
         g.w = ctx.measureText(g.ch).width;
       }
       totalW += g.w;
@@ -2225,8 +2182,7 @@ async function generateLabel(input) {
     // no-photo glyph — those are safety content. Only the words yield, so a
     // crowded label degrades to exactly today's icon row.
     if (ageGlyph && totalW > ICON_ROW_MAX_W) {
-      ctx.font = `${ageGlyph.size}px ${ageGlyph.font}`;
-      const shortW = ctx.measureText(ageShort).width;
+      const shortW = type.measure(ctx, 'age', ageGlyph.size, ageShort);
       if (totalW - ageGlyph.w + shortW <= ICON_ROW_MAX_W) {
         totalW += shortW - ageGlyph.w;
         ageGlyph.ch = ageShort;
@@ -2244,14 +2200,13 @@ async function generateLabel(input) {
     iconRowLeftX = ex;
     const ey = BY + BH - PAD;  // shared baseline along the bottom padding line
     glyphs.forEach(function(g) {
-      if (g.draw) {
-        g.draw(ex, ey);
-        ex += g.w + SPACING;
-        return;
-      }
-      ctx.font = `${g.size}px ${g.font || EMOJI_FONT_STACK}`;
       ctx.fillStyle = COLOR.name;  // share digits must stay light on step-up
-      ctx.fillText(g.ch, ex, ey);
+      if (g.words) {
+        type.fill(ctx, 'age', g.size, g.ch, ex, ey);
+      } else {
+        useEmoji(g.size);
+        ctx.fillText(g.ch, ex, ey);
+      }
       if (g.slash) {
         // Diagonal bar corner-to-corner across the glyph box
         ctx.save();
@@ -2280,13 +2235,14 @@ async function generateLabel(input) {
   // trophyBand (#293): "Finished Sparks Wingrunner", drawn as an inverse chip
   // so the room notices it from across the lobby. Pushed FIRST so the reversed
   // draw below puts it highest in the stack, closest to the name.
-  if (extras && extras.trophyBand) extraLines.push({ text: String(extras.trophyBand).slice(0, 48), bold: true, band: true });
-  if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), bold: true });
-  if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), bold: false });
+  if (extras && extras.trophyBand) extraLines.push({ text: String(extras.trophyBand).slice(0, 48), role: 'band', band: true });
+  if (extras && extras.goToLine) extraLines.push({ text: String(extras.goToLine).slice(0, 48), role: 'goTo' });
+  if (extras && extras.milestoneLine) extraLines.push({ text: String(extras.milestoneLine).slice(0, 48), role: 'milestone' });
   // Operator-configured footer (#8: church name, a verse, service times) —
   // pushed last so the reversed draw below puts it at the very bottom, under
-  // any routing/milestone lines. Italic so it reads as branding, not routing.
-  if (hasFooter) extraLines.push({ text: footerText.slice(0, 48), bold: false, italic: true });
+  // any routing/milestone lines. Its own lighter weight so it reads as
+  // branding, not routing (it was italic in the old fonts).
+  if (hasFooter) extraLines.push({ text: footerText.slice(0, 48), role: 'footer' });
   if (extraLines.length) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
@@ -2299,12 +2255,11 @@ async function generateLabel(input) {
     const maxW = Math.max(40, iconRowLeftX - lineX - 4);
     let ly = BY + BH - 6;
     for (const line of extraLines.reverse()) {
-      ctx.font = `${line.italic ? 'italic ' : ''}${line.bold ? 'bold ' : ''}10px ${getClubFontFamily(clubName)}`;
       // The band reuses the visitor pill's inverse pair, so it stays readable
       // on an inverted (first-timer / award) label as well as a white one.
-      const drawn = truncateTextCanvas(ctx, line.text, ctx.font, line.band ? maxW - 8 : maxW);
+      const drawn = type.truncate(ctx, line.role, 10, line.text, line.band ? maxW - 8 : maxW);
       if (line.band) {
-        const bandW = ctx.measureText(drawn).width;
+        const bandW = type.measure(ctx, line.role, 10, drawn);
         ctx.fillStyle = COLOR.visitorBg;
         roundedRect(ctx, lineX - 3, ly - 9, bandW + 6, 12, 3);
         ctx.fill();
@@ -2312,7 +2267,7 @@ async function generateLabel(input) {
       } else {
         ctx.fillStyle = COLOR.group;
       }
-      ctx.fillText(drawn, lineX, ly);
+      type.fill(ctx, line.role, 10, drawn, lineX, ly);
       ly -= 13;
     }
     ctx.textAlign = 'center';
@@ -2331,11 +2286,10 @@ async function generateLabel(input) {
     const bandH = 30;
     ctx.fillStyle = COLOR.name;
     ctx.fillRect(-bandW / 2, -bandH / 2, bandW, bandH);
-    ctx.font = 'bold 20px Helvetica, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = COLOR.bg;
-    ctx.fillText('TEST — NOT A CHECK-IN', 0, 1);
+    type.fill(ctx, 'test', 20, 'TEST — NOT A CHECK-IN', 0, 1);
     ctx.restore();
     ctx.textBaseline = 'top';
   }
@@ -3123,8 +3077,6 @@ app.post('/label', async (req, res) => {
       stepUp, stepUpNextClub, awanaShares, noPhoto,
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       footerText: labelFooterText(),
-      season: currentLabelSeason(),
-      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(effectiveClubName),
       extras: labelExtras,
     });
@@ -3219,7 +3171,7 @@ async function performCheckinPrint(input) {
     noPhoto       = noPhotoFor(record);
     // Detection paths that never saw the kid's page row (checkin-report
     // polling on a freshly loaded station) send no club — fill it from the
-    // roster so the label isn't club-less. Icon falls back to the monogram.
+    // roster so the label isn't club-less. Icon falls back to the club mark.
     if (!effectiveClubName && record.Club) effectiveClubName = String(record.Club).trim();
     // After the roster fill, so the group is judged against the club that
     // actually prints — a club-less POST for a Puggles kid must still drop
@@ -3337,8 +3289,6 @@ async function performCheckinPrint(input) {
       middleInitial: twin.middleInitial, nameHint: twin.nameHint,
       testBanner: isDemo,   // a demo label is visibly marked
       footerText: labelFooterText(),
-      season: currentLabelSeason(),
-      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(effectiveClubName),
       extras,
     });
@@ -3391,8 +3341,6 @@ async function performCheckinPrint(input) {
           isVisitor: true,
           testBanner: isDemo,   // a demo card must be as visibly fake as its label
           footerText: labelFooterText(),
-          season: currentLabelSeason(),
-          collectibleIndex: currentCollectibleIndex(),
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
@@ -4571,8 +4519,6 @@ app.get('/preview', async (req, res) => {
       isVisitor: previewVisitor,
       middleInitial: twinP.middleInitial, nameHint: twinP.nameHint,
       footerText: labelFooterText(),
-      season: currentLabelSeason(),
-      collectibleIndex: currentCollectibleIndex(),
       template,
     });
     res.set('Content-Type', 'image/png');
@@ -4668,8 +4614,6 @@ async function reprintRow(entry, printerName, opts = {}) {
       clubImageBuffer, allergyTokens, handbookGroup, isBirthday: birthday, birthdayAge, noPhoto,
       middleInitial: twinR.middleInitial, nameHint: twinR.nameHint,
       footerText: labelFooterText(),
-      season: currentLabelSeason(),
-      collectibleIndex: currentCollectibleIndex(),
       template: labelTemplateFor(entry.clubName),
     });
     pngPath = result.pngPath;
@@ -4886,7 +4830,6 @@ app.post('/print-award', async (req, res) => {
       allergyTokens, handbookGroup: medalLine, isBirthday: birthday, birthdayAge, noPhoto,
       middleInitial: twinA.middleInitial, nameHint: twinA.nameHint,
       footerText: labelFooterText(),
-      season: currentLabelSeason(),
       extras: { inverted: true },
     });
     pngPath = result.pngPath;
@@ -4919,9 +4862,9 @@ app.post('/print-award', async (req, res) => {
 
 // ── Leader name tags ──────────────────────────────────────────────────────────
 // A name tag for an adult volunteer: name, a LEADER pill in the visitor-pill
-// slot, "<Club> Leader" on the greeting line, the club monogram in the icon
-// panel. Same renderer and printer as every other label. Deliberately plain:
-// no allergy/birthday/streak/season art (those are a child's), no inverted
+// slot, "<Club> Leader" on the greeting line, the official club mark in the
+// icon panel. Same renderer and printer as every other label. Deliberately
+// plain: no allergy/birthday/streak icons (those are a child's), no inverted
 // palette (black already means step-up, first-timer or award).
 //
 // A leader tag is a PRINT, never a CHECK-IN. It carries `isLeader` on its
@@ -5705,12 +5648,12 @@ app.post('/reset-tonight', (req, res) => {
 function publishTally() {
   try {
     const st = computeTonightStats();
-    // Unified theming (#18): every tally carries the printer's current season
-    // (already resolved: pinned, calendar, or '' when art is off), so screens
-    // follow the labels within a minute of any change - and a display that
-    // boots mid-night picks it up on the next tally without any handshake.
+    // Unified theming (#18): every tally carries the Screen season (already
+    // resolved: pinned, calendar, or '' when the operator turned it off), so
+    // the screens follow a change within a minute - and a display that boots
+    // mid-night picks it up on the next tally without any handshake.
     events.publish(pusher, EVENT_CHANNEL, 'tally', events.buildTally(st.byClub, st.checkedIn, {
-      season: currentLabelSeason(),
+      season: currentScreenSeason(),
       rehearsal: isRehearsalActive(),
     }));
   } catch (e) { console.warn('[events] tally publish skipped:', e.message); }
@@ -6494,6 +6437,12 @@ app.get('/health', async (req, res) => {
       message: `${unverified.length} check-in${unverified.length > 1 ? 's' : ''} may not have stuck on TwoTimTwo: ${names}. Labels printed, but the site never confirmed - re-check these kids on the check-in page.`,
     });
   }
+  // The label's brand kit (fonts + official club marks). A failed piece never
+  // stops a print — the renderer falls back to the old font or the letter
+  // monogram — but it must not be invisible either: a broken install would
+  // otherwise just print plainer labels and nobody would know why.
+  const brandKit = brand.status();
+  warnings.push(...brand.warnings());
   let csvUpdatedAt = null;
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
@@ -6548,6 +6497,11 @@ app.get('/health', async (req, res) => {
     lastCanary,
     printFailures: printFailures.length,
     csv: { count: clubbers.length, updatedAt: csvUpdatedAt },
+    // Which label fonts and club marks loaded: family names / club keys and a
+    // short reason for each failure, never a file path (the packaged kit sits
+    // under the operator's Windows profile and /health is CORS-readable).
+    fonts: brandKit.fonts,
+    clubMarks: brandKit.marks,
     // Freshness per POST /feed/* so the dashboard can show whether the
     // extension's tonight/points/schedule/notice scrapes are still landing.
     feeds: feeds.getFeedsHealth(),
@@ -6737,7 +6691,7 @@ app.post('/config', (req, res) => {
     pusherAppId, pusherKey, pusherSecret, pusherCluster,
     phonePin, firstTimerInverted, connectCard, enableDrivenCheckin, lateGraceMin,
     worksheetPrinter, lanAccess, allowedOrigins, historyRetentionDays, displayKey,
-    labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme, collectibleIcons,
+    labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme,
     musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
     trophyBand, fleetConfigUrl,
   } = req.body || {};
@@ -6880,17 +6834,19 @@ app.post('/config', (req, res) => {
       if (cg === '') delete next.connectCardGreeting;
       else next.connectCardGreeting = cg;
     }
-    // Season theme (#16): 'auto' is the default (and deletes the key), 'off'
-    // disables the art, a known season pins it. Anything else is refused so a
-    // typo can't silently mean 'auto'.
+    // Screen season (#16/#18; the key keeps its old name, seasonTheme): 'auto'
+    // is the default (and deletes the key), 'off' stops the broadcast so each
+    // screen follows its own skin setting, a known season pins it. Anything
+    // else is refused so a typo can't silently mean 'auto'.
     if (seasonTheme !== undefined) {
       const st = String(seasonTheme || 'auto');
       if (st === 'auto') delete next.seasonTheme;
       else if (st === 'off' || SEASON_KEYS.includes(st)) next.seasonTheme = st;
       else return res.status(400).json({ error: 'unknown seasonTheme' });
     }
-    // Collectible of the week (#20): on by default; false turns it off.
-    if (collectibleIcons !== undefined) next.collectibleIcons = !!collectibleIcons;
+    // `collectibleIcons` (the retired collectible of the week) is no longer
+    // read from the body: a dashboard page cached from an older version that
+    // still posts it saves fine, and the value goes nowhere.
     // Musical printer (#11/#12): OFF by default - raw TSPL bytes at an unknown
     // printer model are a party trick, not a guarantee.
     if (musicalPrinter !== undefined) next.musicalPrinter = !!musicalPrinter;
@@ -7584,11 +7540,9 @@ module.exports = {
   parseBirthdate, isBirthdayWeek, isHalfBirthdayWeek, isCakeWeek, birthdayAgeThisWeek,
   // Twin-safe labels (#13) — collision detection + hint preference order.
   twinDisambiguation,
-  // Seasonal art (#16) — the computus and the calendar tiling are date math
-  // worth pinning; SEASON_KEYS doubles as the dashboard's option list.
-  easterSunday, seasonForDate, SEASON_KEYS,
-  // Collectible of the week (#20) — the rotation math.
-  collectibleIndexForDate, COLLECTIBLE_SERIES,
+  // Screen season (#16/#18) — the computus and the calendar tiling are date
+  // math worth pinning; SEASON_KEYS doubles as the dashboard's option list.
+  easterSunday, seasonForDate, SEASON_KEYS, currentScreenSeason,
   // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
   buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION,
   // Spooler backlog (#256). The verdict and both parsers are PURE so the one

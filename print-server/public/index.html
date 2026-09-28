@@ -356,7 +356,7 @@
                   <option value="default">Default (all clubs)</option>
                 </select>
                 <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
-                  <input type="checkbox" id="tpl-showIconPanel" checked> Club logo / monogram panel
+                  <input type="checkbox" id="tpl-showIconPanel" checked> Club logo / club mark panel
                 </label>
                 <label style="font-weight:400; font-size:12px; color:#475569; display:flex; align-items:center; gap:6px">
                   <input type="checkbox" id="tpl-showLastName" checked> Last name
@@ -495,10 +495,10 @@
                 </div>
               </div>
               <div style="margin-top:8px">
-                <label>Season theme</label>
+                <label>Screen season</label>
                 <select id="settings-season-theme">
                   <option value="auto">Auto (follow the calendar)</option>
-                  <option value="off">Off — no seasonal art</option>
+                  <option value="off">Off — each screen uses its own skin</option>
                   <option value="back-to-school">Back to school</option>
                   <option value="fall">Fall</option>
                   <option value="thanksgiving">Thanksgiving</option>
@@ -508,7 +508,7 @@
                   <option value="easter">Easter</option>
                   <option value="vbs-summer">VBS / Summer</option>
                 </select>
-                <p style="font-size:10px;color:#94a3b8">Seasonal border + motif on labels (thermal-safe line art). Auto follows the calendar, Easter included; pick a season to pin it. Check the Label Preview tab.</p>
+                <p style="font-size:10px;color:#94a3b8">Tells the lobby welcome screens which seasonal skin to wear (labels no longer print seasonal art). Auto follows the calendar, Easter included; pick a season to pin it.</p>
               </div>
               <div style="margin-top:8px">
                 <label>Label footer</label>
@@ -536,9 +536,6 @@
                   <label style="font-size:11px">Connect card greeting</label>
                   <input type="text" id="settings-connect-greeting" maxlength="60" placeholder="We're so glad you're here!">
                 </div>
-                <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
-                  <input type="checkbox" id="settings-collectible" checked> Collectible icon of the week on labels (12-icon series)
-                </label>
                 <label style="display:flex;align-items:center;gap:6px;color:#475569;font-weight:400">
                   <input type="checkbox" id="settings-musical"> Musical printer: a tune with every label — cycling three songs, Happy Birthday for birthday kids (TSPL printers, e.g. D450)
                 </label>
@@ -1460,7 +1457,7 @@ function tplPreview() {
   var first = document.getElementById('preview-first').value.trim() || 'Preview';
   var last = document.getElementById('preview-last').value.trim();
   // For 'default', preview with whatever club the top form names (may be none);
-  // for a club entry, preview that club so the font/monogram match.
+  // for a club entry, preview that club so its mark matches.
   var club = key === 'default' ? document.getElementById('preview-club').value.trim() : key;
   var t = TPL_STATE[key] || {};
   var url = BASE + '/preview?firstName=' + encodeURIComponent(first)
@@ -1590,7 +1587,6 @@ function loadSettings() {
     document.getElementById('settings-late-grace').value = config.lateGraceMin != null ? config.lateGraceMin : 10;
     document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-season-theme').value = config.seasonTheme || 'auto';
-    document.getElementById('settings-collectible').checked = config.collectibleIcons !== false;
     document.getElementById('settings-musical').checked = config.musicalPrinter === true;
     document.getElementById('settings-update-beacon').checked = config.updateBeacon === true;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
@@ -1928,7 +1924,6 @@ function saveSettings() {
       lateGraceMin: Number(document.getElementById('settings-late-grace').value) || 10,
       labelFooter: document.getElementById('settings-label-footer').value.trim(),
       seasonTheme: document.getElementById('settings-season-theme').value,
-      collectibleIcons: document.getElementById('settings-collectible').checked,
       musicalPrinter: document.getElementById('settings-musical').checked,
       updateBeacon: document.getElementById('settings-update-beacon').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,

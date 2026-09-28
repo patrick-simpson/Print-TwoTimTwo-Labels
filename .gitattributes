@@ -1,0 +1,6 @@
+# The brand kit mirror must stay byte-identical to the canonical kit
+# (Awana-Check-in-Display/shared/brand/) and to its sha256 pin
+# (scripts/brand-kit.sha256, checked by scripts/test-brand-kit.cjs). Never let
+# a Windows checkout's line-ending conversion rewrite its SVG/CSS/JSON/text.
+print-server/public/brand/** -text
+scripts/brand-kit.sha256 -text
