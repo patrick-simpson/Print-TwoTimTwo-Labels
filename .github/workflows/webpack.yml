@@ -49,7 +49,12 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x, 22.x]
+        # Node 20+ only: the site's compiled Tailwind v4 (@tailwindcss/oxide)
+        # requires node >= 20, and npm skips its native binding on 18, so
+        # `vite build` cannot even load its config there. Node 18 has been
+        # end-of-life since 2025-04-30, deploy.yml builds on 20, and
+        # @vitejs/plugin-react 5 already required ^20.19 || >=22.12.
+        node-version: [20.x, 22.x]
 
     steps:
     - uses: actions/checkout@v4
