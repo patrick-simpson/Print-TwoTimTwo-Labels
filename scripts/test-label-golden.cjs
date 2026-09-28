@@ -863,6 +863,49 @@ async function main() {
           got.length >= 1 && got.every((g) => asks(g.font, 'bold', OLD_SANS))
           && got.map((g) => g.text).join(' ') === text, JSON.stringify(got));
       }
+
+      // ...and that is one decision for the WHOLE text, not one per wrapped
+      // line. A custom text long enough to wrap used to ask each line on its
+      // own whether Galindo draws it, so a letter Galindo lacks in only one
+      // half printed the other half in Galindo and this one in Helvetica.
+      // Each case wraps (asserted: two lines) and puts the missing letter in
+      // only one half (asserted: the halves really do differ in coverage).
+      const wrapped = [
+        // [text, does Galindo draw all of it?]
+        ["Welcome to Parents' Night, with our special guest Ștefan", false],   // Ș in the second half
+        ["Ștefan is our special guest at Parents' Night. Welcome!", false],     // Ș in the first half
+        ['Sunday School Room 12 — please see Mrs. Nguyễn Thị Thảo', false],     // ễ, ị, ả in the second half
+        ["Welcome to Parents' Night, with our special guest Stefan", true],     // every letter drawable
+      ];
+      for (const [text, galindoDrawsAll] of wrapped) {
+        const got = await fontsDrawn({ customText: text });
+        const twoLines = got.length === 2 && got.map((g) => g.text).join(' ') === text;
+        check(`custom label "${text}": wraps onto two lines`, twoLines, JSON.stringify(got));
+        const halfDraws = got.map((g) => brand.fontCovers('Galindo', g.text));
+        check(`custom label "${text}": ${galindoDrawsAll ? 'Galindo draws both halves' : 'Galindo lacks a letter in one half only'}`,
+          galindoDrawsAll ? halfDraws.every(Boolean) : halfDraws.filter(Boolean).length === 1, JSON.stringify(halfDraws));
+        const face = galindoDrawsAll
+          ? (g) => inKit(g.font, 'Galindo', OLD_SANS)
+          : (g) => asks(g.font, 'bold', OLD_SANS);
+        check(`custom label "${text}": every line asks for ${galindoDrawsAll ? 'Galindo' : `bold ${OLD_SANS}`}, none for the other`,
+          got.length >= 2 && got.every(face), JSON.stringify(got));
+        // Same size too: the lines are measured and drawn as one block.
+        const sizes = new Set(got.map((g) => (g.font.match(/([0-9.]+)px/) || [])[1]));
+        check(`custom label "${text}": both lines are one size`, sizes.size === 1, JSON.stringify([...sizes]));
+      }
+      // With no kit at all the same wrapped text is old-sans on both lines.
+      {
+        const got = await fontsDrawn({ customText: wrapped[3][0] }, 'none');
+        check('custom label, no kit: a wrapped text asks for bold old sans on every line',
+          got.length === 2 && got.every((g) => asks(g.font, 'bold', OLD_SANS)), JSON.stringify(got));
+      }
+      // The clip path (60 characters, no space) is one face as well.
+      {
+        const clipped = 'Ș' + 'W'.repeat(59);
+        const got = await fontsDrawn({ customText: clipped });
+        check('custom label with no space, clipped: both pieces ask for bold old sans',
+          got.length === 2 && got.every((g) => asks(g.font, 'bold', OLD_SANS)), JSON.stringify(got));
+      }
     }
 
     // A small line that mixes faces changes face only BETWEEN words: a word

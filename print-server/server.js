@@ -1274,7 +1274,10 @@ function getClubFontFamily(clubName) {
 // cannot fully draw ("Thảo" in Galindo) prints entirely in the old font, as it
 // did before, instead of as a name with one letter in another typeface. A
 // custom label is the same big line, and as often as not a person's or a
-// room's name in the congregation's own language, so it is whole too. Other
+// room's name in the congregation's own language, so it is whole too. A custom
+// label that wraps is still ONE piece of text, so its face is decided once from
+// all of it (labelType's `pinned`), never per wrapped line: Galindo's missing
+// letter in one half must not print the other half in a different typeface. Other
 // voices split into runs at WORD boundaries (brand.splitRuns), so
 // "⭐ 10th club night tonight!" keeps Figtree for the words and the star comes
 // from the old stack, as it always did, and a word the kit font lacks a letter
@@ -1307,12 +1310,26 @@ const LABEL_VOICES = Object.freeze({
 // ctx.textBaseline like fillText), truncate (with an ellipsis) and fit (the
 // largest even size from max down to min that fits, else min — the same ladder
 // the pre-kit fitFontSize used).
-function labelType(clubName) {
+//
+// `pinned` is { role: wholeText } for text that reaches the canvas in PIECES
+// but is one thing to read (a custom label wrapped onto two lines). For a
+// pinned role the face is decided once, here, from the whole text (the kit face
+// only if it loaded and draws every character of all of it), and every measure,
+// fit, truncate and fill of that role then uses that one face whatever piece it
+// is handed. Deciding per piece is how one half of a wrapped label came out in
+// Galindo and the other in Helvetica.
+function labelType(clubName, pinned = {}) {
   const clubFamily = getClubFontFamily(clubName);
   const voice = (role) => LABEL_VOICES[role] || LABEL_VOICES.last;
+  const pinnedFace = new Map();
+  for (const [role, whole] of Object.entries(pinned || {})) {
+    const v = voice(role);
+    pinnedFace.set(role, brand.fontReady(v.family) && brand.fontCovers(v.family, whole));
+  }
   const runsOf = (role, text) => {
     const v = voice(role);
     const s = String(text == null ? '' : text);
+    if (pinnedFace.has(role)) return [{ text: s, brand: pinnedFace.get(role) }];
     if (!brand.fontReady(v.family)) return [{ text: s, brand: false }];
     if (v.whole) return [{ text: s, brand: brand.fontCovers(v.family, s) }];
     return brand.splitRuns(v.family, s);
@@ -1416,7 +1433,11 @@ function splitCustomTextInTwo(text) {
 // Start large and shrink. Only once the floor is reached does it wrap to two
 // lines, because one big line reads across a room and two small ones do not.
 // Returns { lines, size } in points.
-function fitCustomLabelText(ctx, text, type = labelType('')) {
+//
+// `type` must have the label's text pinned (labelType('', { custom: text })),
+// so both lines, the fit and the clip measure in the one face the whole text
+// gets; the default does exactly that.
+function fitCustomLabelText(ctx, text, type = labelType('', { custom: text })) {
   const maxW = PAGE_W - CUSTOM_TEXT_MARGIN_X * 2;
   const maxH = PAGE_H - CUSTOM_TEXT_MARGIN_Y * 2;
   const fits = (lines, size) => {
@@ -1769,7 +1790,9 @@ async function generateLabel(input) {
     cctx.scale(SCALE, SCALE);
     cctx.fillStyle = '#ffffff';
     cctx.fillRect(0, 0, PAGE_W, PAGE_H);
-    const customType = labelType('');
+    // Pinned to the WHOLE text: one face for every line, decided before the
+    // text is wrapped (see labelType).
+    const customType = labelType('', { custom: customText });
     const layout = fitCustomLabelText(cctx, customText, customType);
     cctx.fillStyle = '#000000';
     cctx.textAlign = 'center';
