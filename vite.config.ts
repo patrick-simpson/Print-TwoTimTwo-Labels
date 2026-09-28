@@ -1,6 +1,7 @@
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -13,6 +14,9 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [
         react(),
+        // Compiled Tailwind v4 (was the runtime cdn.tailwindcss.com script).
+        // Scanning is pinned to the site's own files in styles/site.css.
+        tailwindcss(),
       ],
       build: {
         rollupOptions: {

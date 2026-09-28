@@ -1,65 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-accent="labels">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Club Label Printer — silent check-in labels for TwoTimTwo</title>
-    <meta name="description" content="Free tool that silently prints 4×2 check-in labels the moment a child checks in on TwoTimTwo.com — allergy icons, birthday flags, reprints, and a live dashboard. Not affiliated with, endorsed by, or approved by Awana Clubs International or TwoTimTwo.com." />
+    <title>Club Label Printer</title>
+    <meta name="description" content="Club Label Printer prints a 4×2 name label the moment a child is checked in on TwoTimTwo.com, with the allergy, birthday and photo details a leader needs. Free, made at Kennebec Valley Baptist Church. Not affiliated with or endorsed by Awana® Clubs International." />
+    <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/png" href="/icon128.png">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-            },
-            colors: {
-              brand: {
-                50:  '#f0fdf4',
-                100: '#dcfce7',
-                200: '#bbf7d0',
-                500: '#22c55e',
-                600: '#16a34a',
-                700: '#15803d',
-                900: '#14532d',
-              },
-              club: {
-                girl: '#FDCCCE',
-                girlBorder: '#FD8388',
-                boy: '#D6DCFF',
-                boyBorder: '#8295FF',
-              }
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      html { scroll-behavior: smooth; }
-      @media print {
-        .no-print { display: none !important; }
-        body { margin: 0; padding: 0; }
-        @page { size: 4in 2in; margin: 0; }
-      }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
-  <body class="bg-white text-slate-800 antialiased font-sans">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,100,0;1,9..144,300..700,100,1&family=Source+Sans+3:ital,wght@0,400..900;1,400..700&family=IBM+Plex+Mono:wght@400;500&family=Galindo&family=Londrina+Solid:wght@400&display=swap">
+  </head>
+  <body class="fam-page">
     <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>

@@ -62,6 +62,39 @@ That workflow creates and pushes the `vX.Y.Z` tag using its own `GITHUB_TOKEN` (
 | Electron | `npm run dev` \| `npm run dist` (NSIS .exe) |
 | Print Server | `PRINTER_NAME="Printer" node server.js` (port 3456) |
 
+## Public website (root React app → GitHub Pages)
+
+The home page is a capability showcase written for church leadership first
+(then other churches and volunteers: the Simulator, Install Guide and FAQ
+sit lower down, and the `#install`, `#simulator`, `#faq`, `#features` and
+`#how-it-works` anchors must keep resolving). It is one of three "family"
+pages with the Check-in Display's and Journey Display's `about.html`.
+
+- **This repo holds the family design system.** `styles/family.css` is the
+  canonical stylesheet and `docs/FAMILY-DESIGN.md` its spec
+  (`docs/family-reference.html` renders every component). Byte-identical
+  copies live at `Awana-Check-in-Display/public/family.css` and
+  `Journey-Display/public/family.css`: change the canonical file, copy it
+  over both, and bump the `family.css?v=N` token on both about pages.
+  Page-only styling goes in `styles/page.css` (`lbl-` prefix).
+- **Tailwind v4 is compiled** (`@tailwindcss/vite`, `styles/site.css` with
+  `source(none)` + explicit `@source` lines limited to the site's own files).
+  No runtime CDN, no import map; icons are the inline SVG sprite in
+  `components/family/Icons.tsx`.
+- **The Simulator's DOM is a contract.** `#lastCheckin`, `.clubber`,
+  `.name` and `.club img` (see `src/constants.ts` DOM_SELECTORS) mirror
+  TwoTimTwo's real page, so keep that structure whenever it is restyled.
+  Its roster (`data.ts`) is obviously fictional full names on purpose.
+- **Claims track the code.** Every sentence must be true of the current
+  release; a feature change that the page describes updates the page in the
+  same PR. Opt-in features carry a `.fam-card__tag`, the phone's "Not here"
+  list is always shown with its safeguards, and the label mocks follow
+  `generateLabel()`. Screens are CSS recreations with generic first names
+  and no Awana logos or club art; the disclaimer bar, meta description and
+  footer carry the not-affiliated line. Links out go only to the two sibling
+  about pages, the three repos and this app's own downloads, never to the
+  live signage or kiosk roots.
+
 ## Architecture
 
 **Label Generation:**
