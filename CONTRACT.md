@@ -134,6 +134,19 @@ A deck whose every slide has expired is still a published deck; what a screen
 does with an empty visible set is the consumer's business (this repo's display
 falls back to its calendar slides).
 
+A slide may also carry the operator's **"Hold check-ins"** mark:
+
+| Field | Type | Notes |
+|---|---|---|
+| `holdCheckIns` | OPTIONAL, literal `true` | While this slide is on screen the display holds its check-in banners; the arrivals wait and play afterwards at full length. |
+
+The publisher writes it **only** as `true`, and only when the incoming slide
+has exactly `true`; anything else (`false`, `"true"`, `1`, missing) is
+**omitted, never written as `false`**, so an unmarked deck is byte-identical
+to one published before the field existed. It costs 20 bytes a slide: the
+worst deck the caps admit (50 slides at full text and eyebrow, both dates and
+the mark, 35 251 bytes) still needs only 10 of the 12 chunks.
+
 The publisher refuses — at publish time, before committing anything — any
 deck that cannot be broadcast within the 12-chunk ceiling (greedy packing
 can strand slack per chunk, so a raw byte cap alone is not a guarantee),

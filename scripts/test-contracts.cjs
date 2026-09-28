@@ -351,6 +351,39 @@ console.log('buildSlidesDeck');
   check('a deck with no dates is byte-identical to before the field existed',
     JSON.stringify(events.buildSlidesDeck([{ text: 'plain' }]))
       === JSON.stringify([{ eyebrow: '', text: 'plain', theme: 'auto', textSize: 'auto', durationSec: 0 }]));
+
+  // The optional "Hold check-ins" mark. Literal true rides through; anything
+  // else is OMITTED (the key absent, never false), so an unmarked deck is
+  // byte-identical to before the field existed.
+  const held = vectors.events.slides.valid[4];
+  const heldDeck = events.buildSlidesDeck(held.slides);
+  check('holdCheckIns: true rides through verbatim (valid vector)',
+    heldDeck[0].holdCheckIns === true && !('holdCheckIns' in heldDeck[1]));
+  check('a held slide keeps its show window beside the mark',
+    heldDeck[0].showUntil === '2026-11-04' && !('showFrom' in heldDeck[0]));
+  check('a held entry still has an allowlisted key set',
+    heldDeck.every((s) => keysOf(s).every((k) => [...spec.entryFields, ...spec.entryOptionalFields].includes(k))),
+    keysOf(heldDeck[0]).join(','));
+  check('the vector round-trips byte-identically through the builder',
+    JSON.stringify(heldDeck) === JSON.stringify(held.slides), JSON.stringify(heldDeck));
+  check('the mark sits after the show window and before the id',
+    Object.keys(events.buildSlidesDeck([{ id: 's_h', text: 'x', showFrom: '2026-09-01', showUntil: '2026-09-30', holdCheckIns: true }])[0])
+      .slice(-4).join(',') === 'showFrom,showUntil,holdCheckIns,id');
+  const notHeld = vectors.events.slides.dirty[3];
+  const unheld = events.buildSlidesDeck(notHeld.payload.slides);
+  check('a non-true holdCheckIns drops the key, never the slide (dirty vector)',
+    unheld.length === notHeld.expectEntryCount && unheld.every((s) => !('holdCheckIns' in s)));
+  check('nothing hold-ish survives the dirty vector',
+    !notHeld.mustNotContain.some((v) => JSON.stringify(unheld).includes(v)));
+  for (const [label, value] of [['false', false], ["the string 'true'", 'true'], ['1', 1], ['null', null], ['an object', { on: true }]]) {
+    check(`holdCheckIns: ${label} is omitted, not coerced`,
+      !('holdCheckIns' in events.buildSlidesDeck([{ text: 'x', holdCheckIns: value }])[0]));
+  }
+  check('a missing holdCheckIns is omitted, not written as false',
+    !('holdCheckIns' in events.buildSlidesDeck([{ text: 'x' }])[0]));
+  check('a deck without the mark is byte-identical to before the field existed',
+    JSON.stringify(events.buildSlidesDeck([{ text: 'plain', holdCheckIns: false }]))
+      === JSON.stringify([{ eyebrow: '', text: 'plain', theme: 'auto', textSize: 'auto', durationSec: 0 }]));
 }
 
 console.log('buildSlidesChunks');
@@ -398,9 +431,11 @@ console.log('buildSlidesChunks');
     events.slidesDeckJsonBytes(cjkDeck) <= events.SLIDES_DECK_JSON_MAX
     && events.buildSlidesChunks(cjkDeck, 1, stamp) === null,
     `${events.slidesDeckJsonBytes(cjkDeck)} bytes`);
-  // CHUNK BUDGET RE-CHECK (#345): showFrom+showUntil cost 49 bytes a slide, so
-  // the worst deck the entry caps admit — 50 slides, 500 characters of text, a
-  // full 60-character eyebrow AND both dates — must still fit maxTotal chunks.
+  // CHUNK BUDGET RE-CHECK (#345, then holdCheckIns): showFrom+showUntil cost
+  // 49 bytes a slide and holdCheckIns another 20, so the worst deck the entry
+  // caps admit — 50 slides, 500 characters of text, a full 60-character
+  // eyebrow, both dates AND holdCheckIns: true — must still fit maxTotal
+  // chunks. Measured: 35,251 bytes, 10 of the 12 chunks (5 slides a chunk).
   // (This deck is the ceiling: MAX slides at MAX field lengths.)
   const datedMaxDeck = events.buildSlidesDeck(Array.from({ length: spec.maxEntries }, (_, i) => ({
     text: (`Slide ${i} `).padEnd(spec.maxText, 'x'),
@@ -408,11 +443,16 @@ console.log('buildSlidesChunks');
     durationSec: 600,
     showFrom: '2026-09-01',
     showUntil: '2026-09-30',
+    holdCheckIns: true,
   })));
   const datedChunks = events.buildSlidesChunks(datedMaxDeck, 9, stamp);
-  check('every slide of the ceiling deck kept both dates',
+  check('every slide of the ceiling deck kept both dates and the hold mark',
     datedMaxDeck.length === spec.maxEntries
-    && datedMaxDeck.every((s) => s.showFrom === '2026-09-01' && s.showUntil === '2026-09-30'));
+    && datedMaxDeck.every((s) => s.showFrom === '2026-09-01' && s.showUntil === '2026-09-30'
+      && s.holdCheckIns === true));
+  check('the ceiling deck passes the publish-time byte gate too',
+    events.slidesDeckJsonBytes(datedMaxDeck) <= events.SLIDES_DECK_JSON_MAX,
+    `${events.slidesDeckJsonBytes(datedMaxDeck)} bytes`);
   check(`the dated ceiling deck still chunks within maxTotal (${spec.maxTotal})`,
     datedChunks !== null && datedChunks.length <= spec.maxTotal,
     datedChunks ? `${datedChunks.length} chunks, ${events.slidesDeckJsonBytes(datedMaxDeck)} bytes` : 'null');

@@ -1,4 +1,15 @@
-﻿## [6.14.0] - 2026-09-16
+﻿## [6.16.0] - 2026-09-28
+A lobby slide can be marked "Hold check-ins", so the banners wait for it instead of talking over it.
+
+**A slide the room is meant to read should not be covered by a banner.** As part of the 2026-27 rebrand, the lobby displays can hold their check-in banners while a slide the operator has marked is on screen. The arrivals wait, then play at full length on the next slide, the same way the fall promo posters will. The printer's half is one optional field on a published slide, `holdCheckIns`. The display update that honours it follows this release.
+
+**Literal `true` only, and otherwise omitted.** `buildSlidesDeck` writes `holdCheckIns: true` only when the incoming slide has exactly `true`. `false`, the string `'true'`, `1`, `null` and a missing field all leave the key out entirely; it is never written as `false`. So an unmarked deck is byte-identical on the wire to what shipped before (asserted), and a hand-edited export's `"true"` is not guessed into a mark. The publish endpoint, the persisted `lobby-slides.json`, the heartbeat rebroadcast and the dashboard's read-back all go through that one builder, so nothing else needed to learn the field.
+
+**The chunk budget was re-measured again.** The mark costs 20 bytes a slide. The worst deck the caps admit (50 slides, 500-character text, a 60-character eyebrow, both dates and the mark) is 35,251 bytes and still needs 10 of the 12 chunks, every one sealing into the 4096 rung. The ceiling-deck case in `npm run test:contracts` now carries the mark, and also checks that deck passes the 40,000-byte publish gate.
+
+`contract-vectors.json` (canonical here, mirrored byte-identically into Awana-Check-in-Display once this merges) gains `holdCheckIns` in the slides `entryOptionalFields`, a sentence in that section's note, a valid vector with a held slide, and a dirty vector proving `false` / `'true'` / `1` / `null` are dropped. CONTRACT.md documents the field. `envelope-vectors.json` is untouched: the framing did not change, so, like v6.12.0's dated vector, the new valid vector is picked up at the next regeneration. `npm run test:contracts` gains 18 checks and `npm run test:slides` 6 (a held slide published end to end, sealed, read back and persisted, with the non-true values absent). 21 suites, 0 failures.
+
+## [6.14.0] - 2026-09-16
 Free-text labels, and a tonight count that comes from TwoTimTwo instead of from the printer's own paper trail.
 
 **A label that just says VOLUNTEER.** A new **Custom Label** card on the dashboard, a **Custom label** panel on the phone page, and a **Custom** checkbox beside Leader in the check-in widget all print one line of whatever you type, auto-sized and centered on an otherwise blank 4x2 label. Nothing else is on it: no wordmark, no club line, no footer, no safety icons, not even the badge outline. `POST /print-custom` reuses the leader tag's plumbing end to end (the one renderer, the duplicate window, `printImage`, the same effective-printer rules), so no new print path exists to regress.
