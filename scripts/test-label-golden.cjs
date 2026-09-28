@@ -870,11 +870,18 @@ async function main() {
       // half printed the other half in Galindo and this one in Helvetica.
       // Each case wraps (asserted: two lines) and puts the missing letter in
       // only one half (asserted: the halves really do differ in coverage).
+      // The old-sans cases are drawn in whatever the HOST resolves Helvetica /
+      // Arial to, so each must wrap with room to spare on every stack a run
+      // meets: Arial's metrics (Windows, Liberation Sans), DejaVu Sans (the
+      // Ubuntu CI runner, about 17% wider) and narrower fallbacks. Each half
+      // stays at or under 91% of the line in DejaVu, and the whole is at least
+      // 116% of it in the narrowest face. A half at 104% in DejaVu is what
+      // broke CI on 6.17.0 ("Sunday School Room 12 — please …").
       const wrapped = [
         // [text, does Galindo draw all of it?]
         ["Welcome to Parents' Night, with our special guest Ștefan", false],   // Ș in the second half
         ["Ștefan is our special guest at Parents' Night. Welcome!", false],     // Ș in the first half
-        ['Sunday School Room 12 — please see Mrs. Nguyễn Thị Thảo', false],     // ễ, ị, ả in the second half
+        ['Sunday School is in Room 12 with Mrs. Nguyễn Thị Thảo', false],       // ễ, ị, ả in the second half
         ["Welcome to Parents' Night, with our special guest Stefan", true],     // every letter drawable
       ];
       for (const [text, galindoDrawsAll] of wrapped) {
