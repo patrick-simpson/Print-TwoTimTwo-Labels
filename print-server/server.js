@@ -248,10 +248,21 @@ const DIVIDER_X   = BX + ICON_COL_W;
 const TEXT_X      = DIVIDER_X + 8;    // right text zone start
 const TEXT_W      = BX + BW - TEXT_X; // right text zone width
 
-// The first name's line box in Galindo, as a multiple of its size (see the
-// name block in generateLabel): Galindo's descenders hang ~15% below the em
-// box, where the old Windows faces kept theirs inside it.
-const NAME_LINE_H_BRAND = 1.15;
+// The first name in the kit's shout face (Paytone One), as multiples of its
+// size. Where the ink lands is measured off the canvas at a 'top' baseline (the
+// line's origin is the top of the em box the canvas picks for it):
+//   Paytone One   ascenders 0.20, capitals 0.26, baseline 0.96, g j p q y to 1.16
+//   Galindo       ascenders 0.09, capitals 0.11, baseline 0.84,           to 1.15
+//   the old faces the whole line inside the box (1.0)
+// So Paytone's ink sits about 0.15 lower in its box than Galindo's did, and
+// its descenders are shallower. The name is drawn NAME_LIFT_BRAND above the
+// box's top, which puts the capitals back where Galindo's were (0.11), and the
+// line box then runs to just past the deepest ordinary descender
+// (1.16 - 0.15 = 1.01) with a little air, so the last name below it keeps the
+// same gap it always had. The old Windows faces keep neither number: they
+// draw where they always did.
+const NAME_LINE_H_BRAND = 1.06;
+const NAME_LIFT_BRAND = 0.15;
 
 // The icon column's right edge: the catalog's wave instead of a ruled line. A
 // slow, slightly irregular S sampled from the approved mockup — [fraction of
@@ -1256,8 +1267,8 @@ function getClubFontFamily(clubName) {
 }
 
 // ── Label type: the kit's three voices, with the old fonts behind them ───────
-// Every piece of text on a label is set in one voice. Galindo shouts (the first
-// name, the monogram, a custom label), Londrina Solid labels (the club line,
+// Every piece of text on a label is set in one voice. Paytone One shouts (the
+// first name, the monogram, a custom label), Londrina Solid labels (the club line,
 // the VISITOR/LEADER pill, the trophy chip, the step-up callout, the TEST band)
 // and Figtree is read (the last name and every small line). The same files are
 // on every PC because they ship in the installer, so a label looks the same at
@@ -1271,13 +1282,17 @@ function getClubFontFamily(clubName) {
 // fonts the way a browser does, it leaves a hole.
 //
 // `whole: true` voices never mix faces inside one string: a name the brand font
-// cannot fully draw ("Thảo" in Galindo) prints entirely in the old font, as it
-// did before, instead of as a name with one letter in another typeface. A
+// cannot fully draw ("Дима" in Paytone One, which has no Cyrillic) prints
+// entirely in the old font, as it did before, instead of as a name with one
+// letter in another typeface. (Paytone One does draw Ș Ț and every Vietnamese
+// letter, which its predecessor Galindo did not, so those names now print in
+// the kit; Figtree still lacks the precomposed Vietnamese letters, so a last
+// name like "Nguyễn" still falls back on its own.) A
 // custom label is the same big line, and as often as not a person's or a
 // room's name in the congregation's own language, so it is whole too. A custom
 // label that wraps is still ONE piece of text, so its face is decided once from
-// all of it (labelType's `pinned`), never per wrapped line: Galindo's missing
-// letter in one half must not print the other half in a different typeface. Other
+// all of it (labelType's `pinned`), never per wrapped line: a missing letter
+// in one half must not print the other half in a different typeface. Other
 // voices split into runs at WORD boundaries (brand.splitRuns), so
 // "⭐ 10th club night tonight!" keeps Figtree for the words and the star comes
 // from the old stack, as it always did, and a word the kit font lacks a letter
@@ -1288,9 +1303,9 @@ function getClubFontFamily(clubName) {
 // fakes anything heavier), so the weight goes through fontVariationSettings.
 const LEGACY_SANS = 'Helvetica, Arial, sans-serif';
 const LABEL_VOICES = Object.freeze({
-  name:      { family: 'Galindo',              legacy: 'bold', whole: true },
-  monogram:  { family: 'Galindo',              legacy: 'bold', whole: true },
-  custom:    { family: 'Galindo',              legacy: 'bold', legacyFamily: LEGACY_SANS, whole: true },
+  name:      { family: 'Paytone One',          legacy: 'bold', whole: true },
+  monogram:  { family: 'Paytone One',          legacy: 'bold', whole: true },
+  custom:    { family: 'Paytone One',          legacy: 'bold', legacyFamily: LEGACY_SANS, whole: true },
   last:      { family: 'Figtree', wght: 500,   legacy: '',     whole: true },
   hint:      { family: 'Figtree', wght: 500,   legacy: 'italic' },
   group:     { family: 'Figtree', wght: 600,   legacy: 'italic' },
@@ -1317,7 +1332,7 @@ const LABEL_VOICES = Object.freeze({
 // only if it loaded and draws every character of all of it), and every measure,
 // fit, truncate and fill of that role then uses that one face whatever piece it
 // is handed. Deciding per piece is how one half of a wrapped label came out in
-// Galindo and the other in Helvetica.
+// the kit's face and the other in Helvetica.
 function labelType(clubName, pinned = {}) {
   const clubFamily = getClubFontFamily(clubName);
   const voice = (role) => LABEL_VOICES[role] || LABEL_VOICES.last;
@@ -1400,7 +1415,45 @@ function labelType(clubName, pinned = {}) {
   // True when this text would print in the kit face (for layout decisions
   // that depend on the face's shape, like the name's descender room).
   const inBrand = (role, text) => runsOf(role, text).some((r) => r.brand);
-  return { measure, fill, truncate, fit, inBrand };
+  // How far the ink of `text` reaches above and below the origin of a line
+  // drawn with a 'top' baseline, as a multiple of the size ({ above, below },
+  // `above` positive UP, so an accented capital that rises past the top of the
+  // em box is positive and an ordinary word is negative). null unless the whole
+  // text prints in the kit face: the old Windows faces keep their ink inside
+  // the box and were laid out without this. Measured off the canvas at 100 px
+  // and scaled (outlines scale exactly), so it is the shipped font's own
+  // answer, glyph by glyph: a plain name reaches 0.20 down from the origin,
+  // "Émile" is 0.09 above it, "Ștefan" hangs 1.31 below it.
+  const inkReach = (ctx, role, text) => {
+    const runs = runsOf(role, text);
+    if (runs.length !== 1 || !runs[0].brand || !runs[0].text) return null;
+    const baseline = ctx.textBaseline;
+    ctx.textBaseline = 'top';
+    use(ctx, role, 100, true);
+    const m = ctx.measureText(runs[0].text);
+    ctx.textBaseline = baseline;
+    const above = m.actualBoundingBoxAscent / 100;
+    const below = m.actualBoundingBoxDescent / 100;
+    return Number.isFinite(above) && Number.isFinite(below) ? { above, below } : null;
+  };
+  // How far to move a line drawn with a 'middle' baseline so that the CAPITAL
+  // block sits on the line's centre, as a multiple of the size; 0 unless the
+  // text prints in the kit face. The canvas puts 'middle' at the centre of the
+  // em box, and a face's capitals are not centred in that: Galindo's stood
+  // 0.09 above it, Paytone One's 0.06 below. Capitals, not the string's own
+  // ink, so two lines of one label keep one baseline whatever they contain.
+  const capCentre = (ctx, role, text) => {
+    const runs = runsOf(role, text);
+    if (!runs.some((r) => r.brand)) return 0;
+    const baseline = ctx.textBaseline;
+    ctx.textBaseline = 'middle';
+    use(ctx, role, 100, true);
+    const m = ctx.measureText('H');
+    ctx.textBaseline = baseline;
+    const shift = (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 200;
+    return Number.isFinite(shift) ? shift : 0;
+  };
+  return { measure, fill, truncate, fit, inBrand, inkReach, capCentre };
 }
 
 // ── Free-text label sizing (POST /print-custom) ──────────────────────────────
@@ -1408,7 +1461,7 @@ function labelType(clubName, pinned = {}) {
 // It has no roster row behind it and no fixed vocabulary, so it cannot use the
 // name block's ceilings: "VOLUNTEER" wants to be huge and "Wednesday Kitchen
 // Team, Room 4" wants to be small, and both have to look deliberate. It is set
-// in the name's voice (Galindo, falling back to bold Helvetica/Arial).
+// in the name's voice (Paytone One, falling back to bold Helvetica/Arial).
 const CUSTOM_TEXT_MAX_CHARS = 60;
 const CUSTOM_TEXT_MAX_PT    = 56;
 const CUSTOM_TEXT_MIN_PT    = 14;
@@ -1798,7 +1851,10 @@ async function generateLabel(input) {
     cctx.textAlign = 'center';
     cctx.textBaseline = 'middle';
     const lineH = layout.size * CUSTOM_TEXT_LINE_H;
-    const firstY = PAGE_H / 2 - ((layout.lines.length - 1) * lineH) / 2;
+    // 'middle' is the centre of the em box, not of the capitals; the kit face
+    // is moved so the capitals sit on the label's centre (see capCentre).
+    const capShift = customType.capCentre(cctx, 'custom', customText) * layout.size;
+    const firstY = PAGE_H / 2 - ((layout.lines.length - 1) * lineH) / 2 + capShift;
     layout.lines.forEach((line, i) =>
       customType.fill(cctx, 'custom', layout.size, line, PAGE_W / 2, firstY + i * lineH));
     const customBuffer = cvs.toBuffer('image/png');
@@ -1945,7 +2001,12 @@ async function generateLabel(input) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = COLOR.bg;
-      type.fill(ctx, 'monogram', mSize, monogram, cx, cy + 1);
+      // The kit face is centred on its capitals; the old face keeps the
+      // 1 pt nudge it always had.
+      const mCentre = type.inBrand('monogram', monogram)
+        ? cy + type.capCentre(ctx, 'monogram', monogram) * mSize
+        : cy + 1;
+      type.fill(ctx, 'monogram', mSize, monogram, cx, mCentre);
       ctx.textBaseline = 'top';  // restore default used by the text area
     }
   }
@@ -2015,13 +2076,25 @@ async function generateLabel(input) {
   const fs5 = 9;
   const GAP = 4;
   const SEP = 9;
-  // The first name's line box, as a multiple of its size. The old Windows
-  // faces keep their descenders inside the em box, so the box was the size
-  // itself (1.0); Galindo's descenders hang about 15% below it and would sit
-  // on the last name, so a Galindo name gets that much more room.
-  const nameLineH = type.inBrand('name', displayFirst) ? NAME_LINE_H_BRAND : 1;
+  // The first name's box, as multiples of its size. The old Windows faces keep
+  // their descenders inside the em box, so the box was the size itself (1.0)
+  // and the line was drawn at its top. The kit's face is drawn NAME_LIFT_BRAND
+  // above the top of its box (see the constants) and has a box of its own.
+  // Beyond that, the name's own ink is measured, so a glyph that reaches past
+  // the box makes room instead of being clipped by the badge above or printed
+  // over the last name below: an accented capital (É, Ấ) rises past the top,
+  // and the comma of Ș and Ț, or a cedilla or ogonek, hangs past the bottom.
+  // An ordinary name reaches neither, so those two are 0 and the layout is the
+  // same for every plain name.
+  const nameBrand = type.inBrand('name', displayFirst);
+  const nameLineH = nameBrand ? NAME_LINE_H_BRAND : 1;
+  const nameLift = nameBrand ? NAME_LIFT_BRAND : 0;
+  const reach = nameBrand ? type.inkReach(ctx, 'name', displayFirst) : null;
+  const nameRoomAbove = reach ? Math.max(0, nameLift + reach.above) : 0;
+  const nameRoomBelow = reach ? Math.max(0, reach.below - nameLift - nameLineH) : 0;
+  const nameBoxH = nameLineH + nameRoomAbove + nameRoomBelow;
 
-  let blockH = fs1 * nameLineH;
+  let blockH = fs1 * nameBoxH;
   if (hasLast)     blockH += GAP + fs2;
   if (hasHint)     blockH += 2 + fs5;
   if (hasClub)     blockH += SEP + fs3;
@@ -2038,8 +2111,8 @@ async function generateLabel(input) {
   // crowding lands at the bottom, where it degrades legibility instead of
   // clipping the name.
   if (blockH > usableH) {
-    const reduce = Math.min((blockH - usableH) / nameLineH, fs1 - 18);
-    if (reduce > 0) { fs1 -= reduce; blockH -= reduce * nameLineH; }
+    const reduce = Math.min((blockH - usableH) / nameBoxH, fs1 - 18);
+    if (reduce > 0) { fs1 -= reduce; blockH -= reduce * nameBoxH; }
   }
 
   const centerY = BY + usableH / 2;
@@ -2052,8 +2125,8 @@ async function generateLabel(input) {
   // ── First name ────────────────────────────────────────────────────────────
   const safeFirst = type.truncate(ctx, 'name', fs1, displayFirst, textW);
   ctx.fillStyle = COLOR.name;
-  type.fill(ctx, 'name', fs1, safeFirst, textCenterX, y);
-  y += fs1 * nameLineH;
+  type.fill(ctx, 'name', fs1, safeFirst, textCenterX, y + (nameRoomAbove - nameLift) * fs1);
+  y += fs1 * nameBoxH;
 
   // ── Last name ─────────────────────────────────────────────────────────────
   if (hasLast) {

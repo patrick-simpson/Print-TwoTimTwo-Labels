@@ -59,7 +59,7 @@
     --ink-soft: #4A5160;
     --ink-faint: #6B7280;
 
-    --f-shout: var(--brand-font-display, 'Galindo', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif);
+    --f-shout: var(--brand-font-display, 'Paytone One', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif);
     --f-label: var(--brand-font-label, 'Londrina Solid', 'Arial Narrow', 'Helvetica Neue', sans-serif);
     --f-read: var(--brand-font-body, 'Figtree', 'Segoe UI', system-ui, sans-serif);
     --quick: var(--brand-dur-quick, 200ms);
@@ -124,7 +124,7 @@
   .t-sparks  { --tab: var(--c-sparks);  --tab-deep: var(--c-sparks-deep); }
   .t-sun     { --tab: var(--c-sun);     --tab-deep: transparent; --tab-ink: var(--c-ink); }
 
-  /* ── Stat cards: tab, big Galindo number, Londrina caption ── */
+  /* ── Stat cards: tab, big Paytone One number, Londrina caption ── */
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
   .stat { display: flex; flex-direction: column; }
   .stat .value { font-family: var(--f-shout); font-weight: 400; font-size: 46px; line-height: 1; color: var(--c-ink); padding: 10px 20px 0; }
@@ -929,9 +929,9 @@ function renderStatusChip(state) {
     el.innerHTML = '<span class="chip-fallback">Printer \u00B7 ' + esc(chip.value) + '</span>';
   }
 }
-// The chip is measured in Galindo, so draw it again once the face has loaded.
+// The chip is measured in Paytone One, so draw it again once the face has loaded.
 if (document.fonts && document.fonts.load) {
-  document.fonts.load('400 24px Galindo').then(function() {
+  document.fonts.load('400 24px "Paytone One"').then(function() {
     if (statusChipState) renderStatusChip(statusChipState);
   }).catch(function() { /* keep the fallback measurement */ });
 }

@@ -125,12 +125,13 @@ do not count while a report is fresh (owner's decision — they are not on it);
 identities match on BOTH the clubber id and the name, so one child is never two.
 The `tally` payload shape is unchanged and must stay so.
 
-**The brand kit (6.17.0).** `print-server/public/brand/` is a byte-identical
+**The brand kit (6.17.0, shout face Paytone One since 6.18.0).**
+`print-server/public/brand/` is a byte-identical
 mirror of the canonical kit in Awana-Check-in-Display (`shared/brand/`), pinned
 by `scripts/brand-kit.sha256` and checked by `scripts/test-brand-kit.cjs` (in
 `npm test`); take a new kit with `node scripts/gen-brand-manifest.cjs --from
 <canonical>`, never by hand (the text files are LF only; `.gitattributes`
-keeps them so). `print-server/brand.js` registers Galindo / Londrina Solid /
+keeps them so). `print-server/brand.js` registers Paytone One / Londrina Solid /
 Figtree with the canvas and loads the official one-colour club marks, and
 EVERYTHING in it fails open: a missing or damaged font, or a letter the font
 lacks, prints that word in the old Windows face; a missing mark falls back to
@@ -140,6 +141,42 @@ the letter monogram; with the whole kit gone the label is the pre-rebrand one.
 folder is the ONE path served before the PIN gate (`/brand/`, only `.css`,
 `.woff2`, `.ttf`, `.svg` with plain paths), because the phone page is the PIN
 screen; keep it to public brand files only.
+
+**The shout is Paytone One (6.18.0), not Galindo.** Owner decision 2026-09-29:
+Galindo "looks too much like SpongeBob", so the first name, the monogram, a
+custom label and every screen's headline are Paytone One (OFL; its Reserved
+Font Names forbid a subset or re-encode, so the kit ships the FULL font and a
+WOFF2 built to meet the OFL's WOFF exception: never swap in a Google or
+@fontsource subset). Londrina Solid (label voice) and Figtree (read voice)
+stayed. What that means here:
+- **Coverage moved.** Paytone One draws Ș Ț and every precomposed Vietnamese
+  letter, which Galindo did not, so those first names and custom labels now
+  print in the kit. It still lacks Cyrillic, Greek, CJK and the rest, and a
+  few Latin letters (Ewe ɔ), which fall back whole. Figtree still lacks the
+  precomposed Vietnamese letters, so a last name like "Nguyễn" falls back on
+  its own (each voice decides for itself). Any test about "a letter the shout
+  face lacks" must use a letter its character map really lacks: Cyrillic or
+  Greek (`test-brand-kit.cjs` pins that they stay uncovered).
+- **The ink sits differently in its box.** Measured off the canvas at a 'top'
+  baseline: Paytone's capitals start 0.26 em down and its descenders are
+  shallower than Galindo's, so the name is drawn `NAME_LIFT_BRAND` above its
+  line box and the box is `NAME_LINE_H_BRAND`; and because it draws accents
+  and the Ș comma far outside that box (Ấ rises 0.23 em above the origin, the
+  comma hangs to 1.31 em), the layout also measures the name's own ink
+  (`labelType().inkReach`) and reserves room above and below when a glyph
+  needs it. `'middle'`-baseline lines (custom label, monogram) are centred on
+  the capitals with `labelType().capCentre`. All of that applies only when the
+  line prints in the kit face, so the old-Windows-face fallback labels are
+  byte-identical to before (`fonts-fallback` and `kit-missing` baselines did
+  not change), and the golden suite's "ink clear of the badge and the last
+  name" checks measure pixels, not the layout numbers.
+- **One name in three places.** The family string is `FONT_FILES[0]` in
+  `brand.js`, `--brand-font-display` / `fonts.css` in the kit, and each
+  surface's `--f-shout` fallback (dashboard, phone, bookmarklet, the status
+  window) plus `step-chip.js`'s measuring family; `test-brand-kit.cjs` and
+  `test-dashboard-chrome.cjs` fail if they drift. The installer's `/health`
+  smoke check still needs 4 loaded fonts (Paytone One, Londrina Solid, Londrina
+  Solid Black, Figtree): the number is unchanged.
 
 **Custom labels never write history.** `POST /print-custom` prints one line of
 free text on a blank label and records nothing at all: no `addHistoryEntry`, no

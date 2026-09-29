@@ -59,7 +59,7 @@ async function main() {
     const actual = fs.existsSync(MIRROR_DIR) ? hashTree(MIRROR_DIR) : [];
     const HOW = 're-copy the kit from Awana-Check-in-Display/shared/brand with scripts/gen-brand-manifest.cjs --from <it>; never edit the mirror here';
     check('the manifest pins a real kit (fonts, marks, tokens)', pinned.size >= 60
-      && pinned.has('tokens.json') && pinned.has('fonts/Galindo-Regular.ttf') && pinned.has('logos/sparks-black.svg'),
+      && pinned.has('tokens.json') && pinned.has('fonts/PaytoneOne-Regular.ttf') && pinned.has('logos/sparks-black.svg'),
       `${pinned.size} entries`);
     const seen = new Set();
     for (const { file, sha256 } of actual) {
@@ -156,7 +156,7 @@ async function main() {
       // is a git work tree (it is in CI and in every clone).
       const attr = spawnSync('git', ['check-attr', 'text', 'eol', '--',
         'print-server/public/brand/tokens.css', 'print-server/public/brand/logos/sparks-black.svg',
-        'print-server/public/brand/fonts/Galindo-Regular.ttf', 'scripts/brand-kit.sha256'], { cwd: REPO, encoding: 'utf8' });
+        'print-server/public/brand/fonts/PaytoneOne-Regular.ttf', 'scripts/brand-kit.sha256'], { cwd: REPO, encoding: 'utf8' });
       if (attr.status === 0 && attr.stdout) {
         const a = (file, name) => {
           const m = attr.stdout.match(new RegExp(`^${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: ${name}: (\\S+)$`, 'm'));
@@ -165,7 +165,7 @@ async function main() {
         for (const file of ['print-server/public/brand/tokens.css', 'print-server/public/brand/logos/sparks-black.svg', 'scripts/brand-kit.sha256']) {
           check(`git keeps ${file} LF (text, eol=lf)`, a(file, 'text') === 'set' && a(file, 'eol') === 'lf', attr.stdout);
         }
-        check('git never converts a kit font (binary)', a('print-server/public/brand/fonts/Galindo-Regular.ttf', 'text') === 'unset', attr.stdout);
+        check('git never converts a kit font (binary)', a('print-server/public/brand/fonts/PaytoneOne-Regular.ttf', 'text') === 'unset', attr.stdout);
       } else {
         console.log('  (not a git work tree here: .gitattributes check skipped)');
       }
@@ -209,8 +209,27 @@ async function main() {
   {
     const st = brand.status();
     check('all four label fonts loaded', st.fonts.loaded.length === 4 && st.fonts.failed.length === 0, JSON.stringify(st.fonts));
-    check('...by family: Galindo, Londrina Solid (+ Black), Figtree',
-      ['Galindo', 'Londrina Solid', 'Londrina Solid Black', 'Figtree'].every((f) => st.fonts.loaded.includes(f)));
+    check('...by family: Paytone One, Londrina Solid (+ Black), Figtree',
+      ['Paytone One', 'Londrina Solid', 'Londrina Solid Black', 'Figtree'].every((f) => st.fonts.loaded.includes(f)));
+    // The shout is named in three places that must agree: the canvas
+    // registration here, the kit's tokens (what the dashboard, the phone and
+    // the status window ask for) and the @font-face the pages load. A family
+    // renamed in one and not the others prints the right label and draws the
+    // screens in a fallback face.
+    const shoutTokens = fs.readFileSync(path.join(MIRROR_DIR, 'tokens.css'), 'utf8').match(/--brand-font-display:\s*'([^']+)'/);
+    const shoutJson = JSON.parse(fs.readFileSync(path.join(MIRROR_DIR, 'tokens.json'), 'utf8'));
+    const shoutFaces = [...fs.readFileSync(path.join(MIRROR_DIR, 'fonts.css'), 'utf8').matchAll(/font-family:\s*'([^']+)'/g)].map((m) => m[1]);
+    check('the shout the renderer registers is the shout the kit’s tokens name',
+      !!shoutTokens && shoutTokens[1] === 'Paytone One' && brand.FONT_FILES[0].family === shoutTokens[1],
+      `${shoutTokens && shoutTokens[1]} vs ${brand.FONT_FILES[0].family}`);
+    check('...and the tokens.json family, and an @font-face the pages can load it from',
+      JSON.stringify(shoutJson).includes('"Paytone One') && shoutFaces.includes(brand.FONT_FILES[0].family), shoutFaces.join(', '));
+    check('...and the shout file is the kit’s TTF, the one fonts.css falls back to',
+      brand.FONT_FILES[0].file === 'PaytoneOne-Regular.ttf'
+      && fs.readFileSync(path.join(MIRROR_DIR, 'fonts.css'), 'utf8').includes('fonts/PaytoneOne-Regular.ttf'));
+    check('nothing in the mirror still names the shout it replaced',
+      !/galindo/i.test(fs.readdirSync(path.join(MIRROR_DIR, 'fonts')).join(' '))
+      && !/galindo/i.test(['tokens.css', 'tokens.json', 'fonts.css'].map((f) => fs.readFileSync(path.join(MIRROR_DIR, f), 'utf8')).join('\n')));
     check('all six club marks loaded', st.marks.loaded.length === 6 && st.marks.failed.length === 0, JSON.stringify(st.marks));
     check('no brand warnings when the kit is whole', brand.warnings().length === 0, JSON.stringify(brand.warnings()));
     check('the shipped kit is the mirror', path.resolve(SHIPPED) === path.resolve(MIRROR_DIR));
@@ -218,26 +237,47 @@ async function main() {
 
   console.log('brand kit: character coverage (the canvas leaves holes, it does not fall back)');
   {
-    check('Galindo draws a plain name', brand.fontCovers('Galindo', 'Testkid'));
-    check('Galindo draws Latin-1 accents', brand.fontCovers('Galindo', 'Zoë José Ñandú Çelik'));
-    check('Galindo has no Vietnamese', !brand.fontCovers('Galindo', 'Thảo'));
-    check('Galindo has no Ș (Romanian)', !brand.fontCovers('Galindo', 'Ștefan'));
-    check('Galindo has no CJK', !brand.fontCovers('Galindo', '李明'));
+    check('Paytone One draws a plain name', brand.fontCovers('Paytone One', 'Testkid'));
+    check('Paytone One draws Latin-1 accents', brand.fontCovers('Paytone One', 'Zoë José Ñandú Çelik'));
+    // What the swap from Galindo bought: these names used to fall back to the
+    // old Windows face, and now print in the kit. The renderer (and the
+    // wrapped custom-label cases in the golden suite) depend on it.
+    check('Paytone One draws Vietnamese', brand.fontCovers('Paytone One', 'Thảo Nguyễn Thị Ấn Ễ Ọ'));
+    check('Paytone One draws Ș and Ț (Romanian)', brand.fontCovers('Paytone One', 'Ștefan Țara șt țu'));
+    check('Paytone One draws the Latin Extended-A names (Polish, Czech, Turkish, ...)',
+      brand.fontCovers('Paytone One', 'Łukasz Žofie Şener Ğ İ Dvořák Ĳ'));
+    // What it still lacks, and so still hands to the old face: every other
+    // script. These are the strings the fail-open cases use, so they are
+    // pinned to stay outside the character map.
+    check('Paytone One has no Cyrillic', !brand.fontCovers('Paytone One', 'Дима') && !brand.fontCovers('Paytone One', 'Д'));
+    check('Paytone One has no Greek (bar the few symbols Ω µ π)',
+      !brand.fontCovers('Paytone One', 'Γιώργος') && brand.fontCovers('Paytone One', 'Ω µ π'));
+    check('Paytone One has no CJK', !brand.fontCovers('Paytone One', '李明'));
+    check('Paytone One has no Thai, Arabic or Devanagari',
+      !brand.fontCovers('Paytone One', 'สวัสดี') && !brand.fontCovers('Paytone One', 'مرحبا') && !brand.fontCovers('Paytone One', 'नमस्ते'));
+    check('one letter it lacks makes the whole string uncovered', !brand.fontCovers('Paytone One', 'Ana Дима'));
+    check('a Latin letter it lacks (Ewe ɔ) is uncovered too', !brand.fontCovers('Paytone One', 'Kɔfi'));
     // The kit's Figtree has the combining accents but not the precomposed
     // Vietnamese letters, so a precomposed "Nguyễn" is NOT covered: the
     // shaper can often build the letter from parts, but a name never depends
     // on "often".
     check('a precomposed letter missing from the character map is not covered', !brand.fontCovers('Figtree', 'Nguy\u1EC5n'));
     check('a decomposed one whose parts are all there is', brand.fontCovers('Figtree', 'Nguye\u0302\u0303n'));
-    const nfd = brand.splitRuns('Galindo', 'Nguye\u0302\u0303n');
+    // Paytone One has the combining circumflex and tilde (\u0302 \u0303) but
+    // not the combining ring below (\u0325), so a base letter it draws can be
+    // followed by an accent it does not: the split must take the two together.
+    const nfd = brand.splitRuns('Paytone One', 'Ana\u0325 Nguye\u0302\u0303n');
     check('a run never separates a letter from its accent',
-      nfd.every((r) => !/^[\u0300-\u036f]/.test(r.text)), JSON.stringify(nfd));
+      nfd.every((r) => !/^[\u0300-\u036f]/.test(r.text)) && nfd.some((r) => !r.brand && r.text.includes('a\u0325')),
+      JSON.stringify(nfd));
+    check('...and a decomposed name whose accents it does have stays in the kit',
+      brand.splitRuns('Paytone One', 'Nguye\u0302\u0303n').length === 1 && brand.fontCovers('Paytone One', 'Nguye\u0302\u0303n'));
     const keycap = brand.splitRuns('Figtree', 'Room 1\uFE0F\u20E3');
     check('...or a keycap digit from its selector',
       keycap.length === 2 && keycap[1].text === '1\uFE0F\u20E3' && keycap[1].brand === false, JSON.stringify(keycap));
     check('no font has an emoji', !brand.fontCovers('Figtree', '⭐'));
     check('every voice has the ellipsis truncation appends',
-      ['Galindo', 'Londrina Solid', 'Londrina Solid Black', 'Figtree'].every((f) => brand.fontCovers(f, '…')));
+      ['Paytone One', 'Londrina Solid', 'Londrina Solid Black', 'Figtree'].every((f) => brand.fontCovers(f, '…')));
     const runs = brand.splitRuns('Figtree', '⭐ 10th club night tonight!');
     check('a mixed line splits into a fallback run and a brand run',
       runs.length === 2 && runs[0].brand === false && runs[0].text === '⭐' && runs[1].brand === true,
@@ -251,13 +291,19 @@ async function main() {
     // inside ("Nguy[ễ]n"), which reads as a misprint.
     const shape = (family, text) => brand.splitRuns(family, text).map((r) => (r.brand ? '' : '!') + r.text);
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-    const viet = shape('Galindo', 'Chào mừng Nguyễn Thị Thảo');
-    check('a word with a letter Galindo lacks goes to the old face whole',
-      same(viet, ['Chào ', '!mừng', ' ', '!Nguyễn', ' ', '!Thị', ' ', '!Thảo']), JSON.stringify(viet));
-    const ro = shape('Galindo', 'Bun venit, Ștefan!');
-    check('...a Romanian name too', same(ro, ['Bun venit, ', '!Ștefan', '!']), JSON.stringify(ro));
-    const cyr = shape('Galindo', 'Добро пожаловать');
-    check('...and a script the kit does not have at all', same(cyr, ['!Добро', ' ', '!пожаловать']), JSON.stringify(cyr));
+    const viet = shape('Paytone One', 'Chào mừng Nguyễn Thị Thảo');
+    check('Vietnamese is now one run in the kit (Galindo had to hand every accented word over)',
+      same(viet, ['Chào mừng Nguyễn Thị Thảo']), JSON.stringify(viet));
+    const ro = shape('Paytone One', 'Bun venit, Ștefan!');
+    check('...so is a Romanian name', same(ro, ['Bun venit, Ștefan!']), JSON.stringify(ro));
+    const ewe = shape('Paytone One', 'Akwaaba Kɔfi Mensah');
+    check('a word with a Latin letter the kit face lacks (ɔ) goes to the old face whole, its neighbours stay',
+      same(ewe, ['Akwaaba ', '!Kɔfi', ' Mensah']), JSON.stringify(ewe));
+    const mixed = shape('Paytone One', 'Welcome Дмитрий and Γιώργος, Anna');
+    check('...and so does a word in a script the kit does not have at all',
+      same(mixed, ['Welcome ', '!Дмитрий', ' and ', '!Γιώργος', ', Anna']), JSON.stringify(mixed));
+    const cyr = shape('Paytone One', 'Добро пожаловать');
+    check('...a line with nothing in the kit is all old face, word by word', same(cyr, ['!Добро', ' ', '!пожаловать']), JSON.stringify(cyr));
     const small = shape('Figtree', 'Gặp cô Nguyễn ở phòng 4');
     check('a small Figtree line splits at words as well',
       same(small, ['!Gặp', ' cô ', '!Nguyễn', ' ', '!ở', ' phòng 4']), JSON.stringify(small));
@@ -270,7 +316,8 @@ async function main() {
 
   // A font file that is cut short or corrupted is refused BEFORE the canvas
   // sees it. The canvas registers such a file, reports the family as present
-  // and then draws every glyph empty (measured with Galindo cut to anywhere
+  // and then draws every glyph empty (measured with the kit's previous shout
+  // font, Galindo, cut to anywhere
   // from ~10% to ~60% of its length: the child's name printed blank while
   // /health said the fonts were fine), so a damaged face can never be let
   // through to be "used".
@@ -342,22 +389,23 @@ async function main() {
     corruptFonts: kit('corrupt-fonts', (d) => {
       cp(d, 'logos');
       fs.mkdirSync(path.join(d, 'fonts'));
-      const real = fs.readFileSync(path.join(SHIPPED, 'fonts', 'Galindo-Regular.ttf'));
-      fs.writeFileSync(path.join(d, 'fonts', 'Galindo-Regular.ttf'), real.subarray(0, 300));        // truncated download
+      const real = fs.readFileSync(path.join(SHIPPED, 'fonts', 'PaytoneOne-Regular.ttf'));
+      fs.writeFileSync(path.join(d, 'fonts', 'PaytoneOne-Regular.ttf'), real.subarray(0, 300));     // truncated download
       fs.writeFileSync(path.join(d, 'fonts', 'LondrinaSolid-Regular.ttf'), Buffer.from('<html>captive portal</html>'));
       fs.writeFileSync(path.join(d, 'fonts', 'LondrinaSolid-Black.ttf'), Buffer.alloc(0));           // empty
       fs.copyFileSync(path.join(SHIPPED, 'fonts', 'Figtree-Variable.ttf'), path.join(d, 'fonts', 'Figtree-Variable.ttf'));
     }),
     // Damaged, not missing: the files are there, their character maps read,
-    // and the canvas would register them. Galindo is cut in the middle of its
-    // glyph table (17000 of its 58104 bytes, the size the first report
-    // measured), Figtree cut at 40%, Londrina Solid Black corrupted inside its
-    // glyph table at full length. Londrina Solid is whole.
+    // and the canvas would register them. Paytone One is cut in the middle of
+    // its glyph table (32000 of its 114648 bytes; the table runs from 10200 to
+    // 70102, and the cmap at 3228 is still whole, so it looks loaded), Figtree
+    // cut at 40%, Londrina Solid Black corrupted inside its glyph table at
+    // full length. Londrina Solid is whole.
     damagedFonts: kit('damaged-fonts', (d) => {
       cp(d, 'logos');
       fs.mkdirSync(path.join(d, 'fonts'));
       const read = (f) => fs.readFileSync(path.join(SHIPPED, 'fonts', f));
-      fs.writeFileSync(path.join(d, 'fonts', 'Galindo-Regular.ttf'), read('Galindo-Regular.ttf').subarray(0, 17000));
+      fs.writeFileSync(path.join(d, 'fonts', 'PaytoneOne-Regular.ttf'), read('PaytoneOne-Regular.ttf').subarray(0, 32000));
       const fig = read('Figtree-Variable.ttf');
       fs.writeFileSync(path.join(d, 'fonts', 'Figtree-Variable.ttf'), fig.subarray(0, Math.floor(fig.length * 0.4)));
       const black = Buffer.from(read('LondrinaSolid-Black.ttf'));
@@ -416,19 +464,19 @@ async function main() {
     }
     if (name === 'corruptFonts') {
       check('corrupt fonts: the three bad files fail, each with a reason',
-        ['Galindo', 'Londrina Solid', 'Londrina Solid Black'].every((f) => st.fonts.failed.includes(f) && st.fonts.reasons[f]),
+        ['Paytone One', 'Londrina Solid', 'Londrina Solid Black'].every((f) => st.fonts.failed.includes(f) && st.fonts.reasons[f]),
         JSON.stringify(st.fonts));
       check('corrupt fonts: the good one still loads', st.fonts.loaded.includes('Figtree'), JSON.stringify(st.fonts));
-      check('corrupt fonts: a font that failed is never asked for', !brand.fontCovers('Galindo', 'Testkid'));
+      check('corrupt fonts: a font that failed is never asked for', !brand.fontCovers('Paytone One', 'Testkid'));
       check('corrupt fonts: the marks are unaffected', st.marks.loaded.length === 6, JSON.stringify(st.marks));
     }
     if (name === 'damagedFonts') {
-      const damaged = ['Galindo', 'Figtree', 'Londrina Solid Black'];
+      const damaged = ['Paytone One', 'Figtree', 'Londrina Solid Black'];
       check('damaged fonts: each damaged file is reported failed, as a damaged font file',
         damaged.every((f) => st.fonts.failed.includes(f) && st.fonts.reasons[f] === 'damaged font file'), JSON.stringify(st.fonts));
       check('damaged fonts: the whole one still loads', st.fonts.loaded.includes('Londrina Solid'), JSON.stringify(st.fonts));
       check('damaged fonts: the renderer is never told a damaged face can draw a name',
-        !brand.fontReady('Galindo') && !brand.fontCovers('Galindo', 'Testkid') && !brand.fontCovers('Figtree', 'Sample'));
+        !brand.fontReady('Paytone One') && !brand.fontCovers('Paytone One', 'Testkid') && !brand.fontCovers('Figtree', 'Sample'));
       const w = brand.warnings().find((x) => x.type === 'brandFonts');
       check('damaged fonts: /health gets the fonts warning, naming them',
         !!w && damaged.every((f) => w.message.includes(`${f} (damaged font file)`)), JSON.stringify(brand.warnings()));
@@ -518,10 +566,10 @@ async function main() {
     brand.loadBrandKit(KITS.damagedFonts);
     const dmg = (await health()).body || {};
     check('/health reports damaged fonts as failed, with the reason',
-      dmg.fonts && dmg.fonts.failed.includes('Galindo') && dmg.fonts.reasons && dmg.fonts.reasons.Galindo === 'damaged font file'
+      dmg.fonts && dmg.fonts.failed.includes('Paytone One') && dmg.fonts.reasons && dmg.fonts.reasons['Paytone One'] === 'damaged font file'
       && dmg.fonts.loaded.includes('Londrina Solid'), JSON.stringify(dmg.fonts));
     check('...and warns about them as a {type, message} object',
-      (dmg.warnings || []).some((w) => w && w.type === 'brandFonts' && typeof w.message === 'string' && /Galindo \(damaged font file\)/.test(w.message)),
+      (dmg.warnings || []).some((w) => w && w.type === 'brandFonts' && typeof w.message === 'string' && /Paytone One \(damaged font file\)/.test(w.message)),
       JSON.stringify(dmg.warnings));
     brand.loadBrandKit(KITS.empty);
 

@@ -10,9 +10,9 @@ import '../../../print-server/public/step-chip.js';
 export default function StepChip({ label, value, plate }) {
   const [, setFontsReady] = useState(0);
   useEffect(() => {
-    // Measured in Galindo: draw again once the face has loaded.
+    // Measured in Paytone One: draw again once the face has loaded.
     let alive = true;
-    document.fonts?.load?.('400 24px Galindo')
+    document.fonts?.load?.('400 24px "Paytone One"')
       .then(() => { if (alive) setFontsReady((n) => n + 1); })
       .catch(() => { /* keep the fallback measurement */ });
     return () => { alive = false; };

@@ -194,6 +194,28 @@ console.log('dashboard chrome: every colour fallback is the kit’s own value');
     check(`the ${name} loads the kit’s fonts`, /brand\/fonts\.css/.test(src));
     check(`the ${name} loads the kit’s tokens`, /brand\/tokens\.css/.test(src));
   }
+  // The font fallbacks are the kit's too, and they are what a page draws in
+  // when the kit's stylesheet has not arrived (or the WOFF2 is refused): each
+  // surface's shout stack must start with the family tokens.css names, and no
+  // surface (nor the shared chip script the dashboard and the window draw
+  // with) may still name the face the kit dropped.
+  const kitShout = (TOKENS['--brand-font-display'] || '').match(/^'([^']+)'/);
+  check('the kit’s shout family is readable from tokens.css', !!kitShout && kitShout[1] === 'Paytone One',
+    TOKENS['--brand-font-display']);
+  const chipScript = read('print-server', 'public', 'step-chip.js');
+  const chipView = read('electron-app', 'renderer', 'components', 'StepChip.jsx');
+  for (const [name, src] of Object.entries(SURFACES)) {
+    const shout = src.match(/--f-shout:\s*var\(--brand-font-display,\s*'([^']+)'/);
+    check(`the ${name}’s shout fallback is the kit’s (${kitShout && kitShout[1]})`,
+      !!shout && !!kitShout && shout[1] === kitShout[1], shout && shout[1]);
+    check(`the ${name} does not name the shout the kit dropped`, !/galindo/i.test(src));
+  }
+  check('the chip script measures and falls back in the kit’s shout, not the one it dropped',
+    chipScript.includes(`(family || '${kitShout && kitShout[1]}')`) && !/galindo/i.test(chipScript));
+  check('the window’s chip waits for the kit’s shout before it measures',
+    chipView.includes(`load?.('400 24px "${kitShout && kitShout[1]}"')`) && !/galindo/i.test(chipView));
+  check('the dashboard’s chip waits for the kit’s shout too',
+    SURFACES.dashboard.includes(`document.fonts.load('400 24px "${kitShout && kitShout[1]}"')`));
 }
 
 console.log('\ndashboard chrome: nothing the scripts use went missing');
