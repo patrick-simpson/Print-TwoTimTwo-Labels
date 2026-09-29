@@ -263,6 +263,16 @@ const TEXT_W      = BX + BW - TEXT_X; // right text zone width
 // draw where they always did.
 const NAME_LINE_H_BRAND = 1.06;
 const NAME_LIFT_BRAND = 0.15;
+// How close to the paper's top edge the first name's ink may rise, in pt. A
+// mark that stands above the capitals (É, Ấ) needs room above the name; the
+// block only pays for the part of that room the paper above it cannot give
+// (see the name block in generateLabel). 4 pt is as close as 6.17.0 ever
+// printed a name (Galindo's É), so it is a margin already proven on the paper.
+const NAME_INK_TOP = 4;
+// The most, in pt, a name gives up BELOW its 18 pt floor so that the room a mark
+// above it or a comma below it asks for does not add to the crowding at the
+// bottom of the label (see the height-fit in generateLabel).
+const NAME_ROOM_SHRINK_MAX = 4;
 
 // The icon column's right edge: the catalog's wave instead of a ruled line. A
 // slow, slightly irregular S sampled from the approved mockup — [fraction of
@@ -1416,19 +1426,20 @@ function labelType(clubName, pinned = {}) {
   // that depend on the face's shape, like the name's descender room).
   const inBrand = (role, text) => runsOf(role, text).some((r) => r.brand);
   // How far the ink of `text` reaches above and below the origin of a line
-  // drawn with a 'top' baseline, as a multiple of the size ({ above, below },
-  // `above` positive UP, so an accented capital that rises past the top of the
-  // em box is positive and an ordinary word is negative). null unless the whole
-  // text prints in the kit face: the old Windows faces keep their ink inside
-  // the box and were laid out without this. Measured off the canvas at 100 px
-  // and scaled (outlines scale exactly), so it is the shipped font's own
-  // answer, glyph by glyph: a plain name reaches 0.20 down from the origin,
-  // "Émile" is 0.09 above it, "Ștefan" hangs 1.31 below it.
-  const inkReach = (ctx, role, text) => {
+  // drawn with a 'top' baseline (or the given one; 'alphabetic' is the line's
+  // baseline itself), as a multiple of the size ({ above, below }, `above`
+  // positive UP, so an accented capital that rises past the top of the em box
+  // is positive and an ordinary word is negative). null unless the whole text
+  // prints in the kit face: the old Windows faces keep their ink inside the box
+  // and were laid out without this. Measured off the canvas at 100 px and
+  // scaled (outlines scale exactly), so it is the shipped font's own answer,
+  // glyph by glyph: a plain name reaches 0.20 down from the origin, "Émile" is
+  // 0.09 above it, "Ștefan" hangs 1.31 below it.
+  const inkReach = (ctx, role, text, at = 'top') => {
     const runs = runsOf(role, text);
     if (runs.length !== 1 || !runs[0].brand || !runs[0].text) return null;
     const baseline = ctx.textBaseline;
-    ctx.textBaseline = 'top';
+    ctx.textBaseline = at;
     use(ctx, role, 100, true);
     const m = ctx.measureText(runs[0].text);
     ctx.textBaseline = baseline;
@@ -1466,6 +1477,9 @@ const CUSTOM_TEXT_MAX_CHARS = 60;
 const CUSTOM_TEXT_MAX_PT    = 56;
 const CUSTOM_TEXT_MIN_PT    = 14;
 const CUSTOM_TEXT_LINE_H    = 1.15;
+// Clear paper kept between one line's lowest ink and the next line's highest,
+// as a multiple of the size, when the kit face's own marks set the line pitch.
+const CUSTOM_TEXT_INK_GAP   = 0.06;
 const CUSTOM_TEXT_MARGIN_X  = 18;   // comfortable, not flush to the die-cut edge
 const CUSTOM_TEXT_MARGIN_Y  = 16;
 
@@ -1483,9 +1497,31 @@ function splitCustomTextInTwo(text) {
   return [text.slice(0, at), text.slice(at + 1)];
 }
 
+// The distance between the baselines of a custom label's lines, as a multiple
+// of the size. CUSTOM_TEXT_LINE_H is what the old bold sans needs. The kit's
+// face draws marks far outside its line: a stacked Vietnamese capital (Ấ, Ế,
+// Ắ) rises 1.19-1.22 em above its baseline, more than that pitch, and a dot
+// below a vowel (ạ) or the tail of a g or y hangs 0.20-0.27 em under the line
+// above it. So when the whole label prints in the kit face the pitch is also
+// what the two lines' own ink needs, lowest ink of the line above plus highest
+// of the line below plus CUSTOM_TEXT_INK_GAP, never less than the stock pitch.
+// Measured off the canvas (inkReach), for the lines as they are set. A label
+// in the old faces keeps CUSTOM_TEXT_LINE_H exactly.
+function customLineH(ctx, type, lines) {
+  let h = CUSTOM_TEXT_LINE_H;
+  for (let i = 1; i < lines.length; i++) {
+    const upper = type.inkReach(ctx, 'custom', lines[i - 1], 'alphabetic');
+    const lower = type.inkReach(ctx, 'custom', lines[i], 'alphabetic');
+    if (upper && lower) h = Math.max(h, upper.below + lower.above + CUSTOM_TEXT_INK_GAP);
+  }
+  return h;
+}
+
 // Start large and shrink. Only once the floor is reached does it wrap to two
 // lines, because one big line reads across a room and two small ones do not.
-// Returns { lines, size } in points.
+// Returns { lines, size, lineH } in points, lineH being the baseline pitch as a
+// multiple of the size (see customLineH); the height test uses it, so a pitch
+// the marks widen makes the text smaller instead of running lines together.
 //
 // `type` must have the label's text pinned (labelType('', { custom: text })),
 // so both lines, the fit and the clip measure in the one face the whole text
@@ -1493,24 +1529,23 @@ function splitCustomTextInTwo(text) {
 function fitCustomLabelText(ctx, text, type = labelType('', { custom: text })) {
   const maxW = PAGE_W - CUSTOM_TEXT_MARGIN_X * 2;
   const maxH = PAGE_H - CUSTOM_TEXT_MARGIN_Y * 2;
-  const fits = (lines, size) => {
-    if (lines.length * size * CUSTOM_TEXT_LINE_H > maxH) return false;
+  const fits = (lines, size, lineH) => {
+    if (lines.length * size * lineH > maxH) return false;
     return lines.every((l) => type.measure(ctx, 'custom', size, l) <= maxW);
   };
   for (let size = CUSTOM_TEXT_MAX_PT; size >= CUSTOM_TEXT_MIN_PT; size--) {
-    if (fits([text], size)) return { lines: [text], size };
+    if (fits([text], size, CUSTOM_TEXT_LINE_H)) return { lines: [text], size, lineH: CUSTOM_TEXT_LINE_H };
   }
   const two = splitCustomTextInTwo(text);
+  const twoH = customLineH(ctx, type, two);
   for (let size = CUSTOM_TEXT_MAX_PT; size >= CUSTOM_TEXT_MIN_PT; size--) {
-    if (fits(two, size)) return { lines: two, size };
+    if (fits(two, size, twoH)) return { lines: two, size, lineH: twoH };
   }
   // Pathological input (60 characters with no space in them). Clip rather than
   // bleed off the die-cut edge: a label that runs off the paper is unreadable,
   // an ellipsis is merely shortened.
-  return {
-    lines: two.map((l) => type.truncate(ctx, 'custom', CUSTOM_TEXT_MIN_PT, l, maxW)),
-    size: CUSTOM_TEXT_MIN_PT,
-  };
+  const clipped = two.map((l) => type.truncate(ctx, 'custom', CUSTOM_TEXT_MIN_PT, l, maxW));
+  return { lines: clipped, size: CUSTOM_TEXT_MIN_PT, lineH: customLineH(ctx, type, clipped) };
 }
 
 // ── Draw a rounded rectangle on canvas ───────────────────────────────────────
@@ -1850,7 +1885,7 @@ async function generateLabel(input) {
     cctx.fillStyle = '#000000';
     cctx.textAlign = 'center';
     cctx.textBaseline = 'middle';
-    const lineH = layout.size * CUSTOM_TEXT_LINE_H;
+    const lineH = layout.size * layout.lineH;
     // 'middle' is the centre of the em box, not of the capitals; the kit face
     // is moved so the capitals sit on the label's centre (see capCentre).
     const capShift = customType.capCentre(cctx, 'custom', customText) * layout.size;
@@ -2069,7 +2104,8 @@ async function generateLabel(input) {
   const hasHint = nameHint.length > 0;
 
   // Font sizes (in pt)
-  let fs1 = type.fit(ctx, 'name', displayFirst, textW, tplNameMax, 18);
+  const NAME_FLOOR_PT = 18;
+  let fs1 = type.fit(ctx, 'name', displayFirst, textW, tplNameMax, NAME_FLOOR_PT);
   const fs2 = 20;
   const fs3 = 12;
   const fs4 = 10;
@@ -2081,18 +2117,25 @@ async function generateLabel(input) {
   // and the line was drawn at its top. The kit's face is drawn NAME_LIFT_BRAND
   // above the top of its box (see the constants) and has a box of its own.
   // Beyond that, the name's own ink is measured, so a glyph that reaches past
-  // the box makes room instead of being clipped by the badge above or printed
-  // over the last name below: an accented capital (É, Ấ) rises past the top,
-  // and the comma of Ș and Ț, or a cedilla or ogonek, hangs past the bottom.
-  // An ordinary name reaches neither, so those two are 0 and the layout is the
-  // same for every plain name.
+  // the box makes room instead of being clipped by the paper's edge above or
+  // printed over the last name below: an accented capital (É, Ấ) rises past
+  // the top, and the comma of Ș and Ț, or a cedilla or ogonek, hangs past the
+  // bottom. An ordinary name reaches neither, so those two are 0 and the
+  // layout is the same for every plain name.
   const nameBrand = type.inBrand('name', displayFirst);
   const nameLineH = nameBrand ? NAME_LINE_H_BRAND : 1;
   const nameLift = nameBrand ? NAME_LIFT_BRAND : 0;
   const reach = nameBrand ? type.inkReach(ctx, 'name', displayFirst) : null;
   const nameRoomAbove = reach ? Math.max(0, nameLift + reach.above) : 0;
   const nameRoomBelow = reach ? Math.max(0, reach.below - nameLift - nameLineH) : 0;
-  const nameBoxH = nameLineH + nameRoomAbove + nameRoomBelow;
+  // The box the block is built from is the line and the room below it. The room
+  // ABOVE is not part of it: the paper above the block gives some of it for
+  // free, and only what it cannot give is charged to the block (accentCharge).
+  const nameBoxH = nameLineH + nameRoomBelow;
+  // Block tops never go above BY + 2, and the ink may rise to NAME_INK_TOP, so
+  // that much of a rising mark's room is already there.
+  const ACCENT_FREE = BY + 2 - NAME_INK_TOP;
+  const accentCharge = (size) => Math.max(0, nameRoomAbove * size - ACCENT_FREE);
 
   let blockH = fs1 * nameBoxH;
   if (hasLast)     blockH += GAP + fs2;
@@ -2105,18 +2148,55 @@ async function generateLabel(input) {
   const usableH = BH - ALLERGY_STRIP_H;
   // Height-fit: a crowded label (name + last + club + group over a stacked
   // bottom band) shrinks the FIRST NAME rather than descending into the band —
-  // blockH is linear in fs1 (slope nameLineH), so the overflow maps straight
+  // blockH is linear in fs1 (slope nameBoxH), so the overflow maps straight
   // onto the size reduction. Floor of 18 matches the width fit's floor; past
   // that, the clamp on y below keeps the block on the badge and any residual
   // crowding lands at the bottom, where it degrades legibility instead of
   // clipping the name.
-  if (blockH > usableH) {
-    const reduce = Math.min((blockH - usableH) / nameBoxH, fs1 - 18);
+  //
+  // A rising mark's room is charged to the block only beyond what the paper
+  // above gives free (accentCharge), so the block is piecewise linear in fs1:
+  // the room costs nameRoomAbove per pt of size while it is charged and
+  // nothing once it fits in the free margin. An ordinary name has no room
+  // above, no charge, and the fit is exactly the one it always was.
+  // How much smaller the name must be for the block, and the charge, to fit in
+  // `room`.
+  const reduceFor = (room) => {
+    const over = blockH + accentCharge(fs1) - room;
+    if (!(over > 0)) return 0;
+    const charged = nameRoomAbove * fs1 > ACCENT_FREE;
+    const reduce = over / (nameBoxH + (charged ? nameRoomAbove : 0));
+    // Shrinking far enough to bring the mark inside the free margin drops the
+    // charge before the overflow is gone: from there on the slope is the box's
+    // alone, so it is worked out without the charge.
+    return charged && nameRoomAbove * (fs1 - reduce) < ACCENT_FREE
+      ? (blockH - room) / nameBoxH
+      : reduce;
+  };
+  {
+    const reduce = Math.min(reduceFor(usableH), fs1 - NAME_FLOOR_PT);
     if (reduce > 0) { fs1 -= reduce; blockH -= reduce * nameBoxH; }
+  }
+  // ...and past the floor, room the name asks for must not make the crowding
+  // at the bottom worse than an ordinary name's already is. An ordinary name
+  // sits on the floor and leaves what it leaves; a name with a mark above or a
+  // comma below asks for more, and the extra used to land on the bottom band
+  // (a step-up callout printed over the trophy chip). So it gives that much
+  // back in size instead, a few pt under the floor at most.
+  if (nameRoomAbove > 0 || nameRoomBelow > 0) {
+    const rest = blockH - fs1 * nameBoxH;
+    const ordinaryLeftover = Math.max(0, NAME_FLOOR_PT * nameLineH + rest - usableH);
+    const more = Math.min(reduceFor(usableH + ordinaryLeftover), NAME_ROOM_SHRINK_MAX);
+    if (more > 0) { fs1 -= more; blockH -= more * nameBoxH; }
   }
 
   const centerY = BY + usableH / 2;
-  let y = Math.max(BY + 2, centerY - blockH / 2);
+  // The top of the first name's line box. The block is centred as if its whole
+  // room above were part of it (so a label with space to spare is laid out as
+  // it always was) but never higher than the charge allows: the ink of a rising
+  // mark stays NAME_INK_TOP or more from the paper's top edge.
+  const roomAbovePt = nameRoomAbove * fs1;
+  let y = Math.max(BY + 2 + accentCharge(fs1), centerY - blockH / 2 + roomAbovePt / 2);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
@@ -2125,7 +2205,7 @@ async function generateLabel(input) {
   // ── First name ────────────────────────────────────────────────────────────
   const safeFirst = type.truncate(ctx, 'name', fs1, displayFirst, textW);
   ctx.fillStyle = COLOR.name;
-  type.fill(ctx, 'name', fs1, safeFirst, textCenterX, y + (nameRoomAbove - nameLift) * fs1);
+  type.fill(ctx, 'name', fs1, safeFirst, textCenterX, y - nameLift * fs1);
   y += fs1 * nameBoxH;
 
   // ── Last name ─────────────────────────────────────────────────────────────

@@ -170,6 +170,23 @@ stayed. What that means here:
   byte-identical to before (`fonts-fallback` and `kit-missing` baselines did
   not change), and the golden suite's "ink clear of the badge and the last
   name" checks measure pixels, not the layout numbers.
+- **A mark's room comes from the paper first, then the block, then size.** A
+  rising mark (É, Ấ) may print as near as `NAME_INK_TOP` (4 pt, what 6.17.0
+  already printed) to the top edge; `accentCharge` charges the block only for
+  what that margin cannot give. Past the 18 pt floor the room a mark or a comma
+  asks for is given back in name size (at most `NAME_ROOM_SHRINK_MAX` under
+  the floor), never left to land on the bottom band: the busiest step-up label
+  (trophy chip, "Go to", milestone, twin hint) prints its callout exactly where
+  an ordinary name does. Do not charge the whole room to `blockH` again (it cost
+  accented names up to a quarter of their size on a crowded label), and do not
+  let the leftover ride down (it printed the callout over the chip).
+- **Wrapped custom labels set their pitch from the ink.** The marks are taller
+  than the old 1.15 em line pitch (Ấ 1.19-1.22 em), so `customLineH` widens the
+  pitch to the first line's lowest ink + the second's highest + a small gap
+  whenever the whole label is in the kit face, and `fitCustomLabelText` fits
+  the height with it (`lineH` in its result). Old-face labels keep 1.15 exactly.
+  Any other place that stacks two kit lines needs the same, measured with
+  `inkReach(..., 'alphabetic')`.
 - **One name in three places.** The family string is `FONT_FILES[0]` in
   `brand.js`, `--brand-font-display` / `fonts.css` in the kit, and each
   surface's `--f-shout` fallback (dashboard, phone, bookmarklet, the status

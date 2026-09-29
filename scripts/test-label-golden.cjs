@@ -326,6 +326,11 @@ const CASES = [
   // (Galindo lacked it); it is the next case now, in the kit.
   { name: 'custom-outside-paytone', model: { customText: 'Добро пожаловать' } },
   { name: 'custom-vietnamese', model: { customText: 'Chào mừng Nguyễn Thị Thảo' } },
+  // The same face wrapped onto two lines. Paytone One stacks its Vietnamese
+  // marks taller than the stock line pitch (Ố, Ấ, Ế, Ắ reach 1.19-1.22 em
+  // above their baseline, the pitch was 1.15), so the acute of TỐI printed into
+  // the line above until the pitch was set from the marks' own ink.
+  { name: 'custom-vietnamese-wrapped', model: { customText: 'NGƯỜI GIÚP VIỆC BAN THIẾU NHI TỐI THỨ TƯ HẰNG TUẦN' } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -1052,12 +1057,18 @@ async function main() {
     }
     // ...and the same on a label crowded to the top: the accent's room is part
     // of the block, so the block is squeezed by shrinking the name, and the
-    // accent still clears the badge.
-    for (const name of ['Ấn', 'Ẳ', 'Émile', 'Ângelo']) {
+    // accent still keeps off the paper's edge. The paper above the block gives
+    // the accent the room between the block and NAME_INK_TOP (4 pt from the
+    // edge, as close as 6.17.0 ever printed a name); only what is beyond that
+    // is charged to the block. The ink itself can sit a fraction of a point
+    // nearer than the layout aims (the canvas reports integer-pixel bounds at
+    // 100 px, and a 1-bit row is a quarter of a point), so this allows 0.5 pt.
+    const PAPER_EDGE_PX = Math.round((4 - 0.5) * S);
+    for (const name of ['Ấn', 'Ẳ', 'Émile', 'Ângelo', 'Ömer', 'Ñandú']) {
       const crowded = CASES.find((c) => c.name === 'name-tall-accent-crowded').model;
       const bands = await inkBands(await render({ ...crowded, firstName: name }));
-      check(`"${name}" on a crowded label: the first name's ink starts below the badge's top edge`,
-        bands.length > 0 && bands[0][0] >= BADGE_TOP_PX, `${JSON.stringify(bands[0])} vs ${BADGE_TOP_PX}`);
+      check(`"${name}" on a crowded label: the first name's ink stays 3.5 pt or more off the paper's top edge`,
+        bands.length > 0 && bands[0][0] >= PAPER_EDGE_PX, `${JSON.stringify(bands[0])} vs ${PAPER_EDGE_PX}`);
     }
   }
 
@@ -1100,6 +1111,187 @@ async function main() {
       const mid = await rowsOfInk(buf, false, { x0: cx - r * 2, x1: cx + r * 2, y0: cy - r * 2, y1: cy + r * 2 }, inDisc);
       check(`monogram "${letters}" (${club}): the letter is centred in its disc (within 1 pt)`,
         mid !== null && Math.abs(mid - cy) <= 1 * S, `centre at row ${mid}, the disc's at ${cy}`);
+    }
+  }
+
+  // ── Lines that must not run into each other, on the image itself ─────────
+  // Paytone One draws marks far outside its line (Ấ, Ố, Ế, Ắ stand 1.19-1.22
+  // em above their baseline, a dot below a vowel or the tail of a g hangs
+  // 0.20-0.27 em under it, the comma of Ș hangs to 1.31 em), so a fixed
+  // spacing that was right for the old bold sans lets one line's marks print
+  // into its neighbour. Two places were caught doing it, both pinned here with
+  // the ink of every fillText rasterised ALONE (a pixel counts when its alpha
+  // is 128 or more, as it is on the 1-bit thermal print), then compared:
+  //   * a custom label wrapped onto two lines, whose pitch is now set from the
+  //     two lines' own ink (customLineH);
+  //   * the step-up callout on a crowded label, which the first name used to
+  //     push onto the trophy chip once its room went past the 18 pt floor.
+  // Paytone One and Figtree are bundled, so these are the same on every host.
+  {
+    const W = 1200, H = 600;
+    const ctxProto = Object.getPrototypeOf(createCanvas(1, 1).getContext('2d'));
+    // Every fillText the renderer makes: what, where, in which font, and (when
+    // `withInk`) the set of device pixels it inks and the rows it spans.
+    const drawn = async (model, { withInk = true, kit } = {}) => {
+      const out = [];
+      const orig = ctxProto.fillText;
+      let inside = false;
+      ctxProto.fillText = function recordInk(text, x, y, ...rest) {
+        if (!inside) {
+          inside = true;   // the rasteriser below draws through this same prototype
+          try {
+            const d = { text: String(text), font: this.font, x, y, ink: null, rows: null };
+            if (withInk) {
+              const tr = this.getTransform();
+              const alone = createCanvas(W, H);
+              const o = alone.getContext('2d');
+              o.setTransform(tr.a, tr.b, tr.c, tr.d, tr.e, tr.f);
+              o.font = this.font;
+              o.fontVariationSettings = this.fontVariationSettings;
+              o.textAlign = this.textAlign;
+              o.textBaseline = this.textBaseline;
+              o.fillStyle = '#000000';
+              orig.call(o, text, x, y, ...rest);
+              const px = o.getImageData(0, 0, W, H).data;
+              const ink = new Set();
+              let lo = Infinity, hi = -Infinity;
+              for (let i = 3, n = 0; i < px.length; i += 4, n++) {
+                if (px[i] >= 128) {
+                  ink.add(n);
+                  const row = Math.floor(n / W);
+                  if (row < lo) lo = row;
+                  if (row > hi) hi = row;
+                }
+              }
+              d.ink = ink;
+              d.rows = ink.size ? [lo, hi] : null;
+            }
+            out.push(d);
+          } finally { inside = false; }
+        }
+        return orig.call(this, text, x, y, ...rest);
+      };
+      try { await render(model, kit); } finally { ctxProto.fillText = orig; }
+      return out;
+    };
+    const sizeOf = (d) => Number((/([0-9.]+)px/.exec(d.font) || [])[1]);
+    const shared = (a, b) => {
+      let n = 0;
+      const [small, big] = a.size < b.size ? [a, b] : [b, a];
+      for (const p of small) if (big.has(p)) n++;
+      return n;
+    };
+
+    // A wrapped custom label: two lines, both in the kit, no pixel shared, and
+    // clear paper (at least 2 px, half a point) between the lowest ink of the
+    // first and the highest of the second. These four collided in the first
+    // 6.18.0 cut (15, 5, 4 and 12 shared pixels): the acute of TỐI merged into
+    // the line above, the stack on HẰ fused under the B of BAN, and É, Ấ and Ế
+    // ran into the y and p descenders.
+    const VIETNAMESE_TWO_LINES = [
+      'NGƯỜI GIÚP VIỆC BAN THIẾU NHI TỐI THỨ TƯ HẰNG TUẦN',
+      'Dạy học Kinh Thánh cùng thầy Nguyễn Quốc Hưng',
+      "Kids' choir practice: gym, Ấu Nhi group, Ẩn Phòng",
+      'Happy guy, joyful peppy puppy — Émile, Ấn and Ếch too',
+    ];
+    for (const text of VIETNAMESE_TWO_LINES) {
+      const lines = await drawn({ customText: text });
+      const twoInKit = lines.length === 2 && lines.every((l) => l.font.includes('"Paytone One"'))
+        && lines.map((l) => l.text).join(' ') === text;
+      check(`custom label "${text}": wraps onto two lines, both in Paytone One`, twoInKit, JSON.stringify(lines.map((l) => [l.text, l.font])));
+      if (!twoInKit) continue;
+      const [a, b] = lines;
+      check(`custom label "${text}": the two lines share no ink`,
+        shared(a.ink, b.ink) === 0, `${shared(a.ink, b.ink)} px shared`);
+      const clear = b.rows[0] - a.rows[1] - 1;
+      check(`custom label "${text}": at least 2 px of clear paper between the lines`,
+        clear >= 2, `${clear} px (line 1 ends at row ${a.rows[1]}, line 2 starts at row ${b.rows[0]})`);
+    }
+    // The pitch only widens for marks that need it, and only in the kit face:
+    // a wrapped label in the old bold sans keeps the stock 1.15, exactly as
+    // 6.17.0 drew it (the fail-open promise), and so does a kit label whose
+    // marks are compact.
+    {
+      const old = await drawn({ customText: "Дмитрий is our guest at Parents' Night. Welcome!" }, );
+      check('custom label in the old face: wraps onto two lines at the stock 1.15 pitch',
+        old.length === 2 && Math.abs((old[1].y - old[0].y) / sizeOf(old[0]) - 1.15) < 1e-6,
+        JSON.stringify(old.map((l) => [l.text, l.y, l.font])));
+      const plain = await drawn({ customText: "Welcome to Parents' Night, with our special guest Stefan" }, );
+      check('custom label in the kit with compact marks: still the stock 1.15 pitch',
+        plain.length === 2 && Math.abs((plain[1].y - plain[0].y) / sizeOf(plain[0]) - 1.15) < 1e-6,
+        JSON.stringify(plain.map((l) => [l.text, l.y, l.font])));
+      const tall = await drawn({ customText: VIETNAMESE_TWO_LINES[0] }, );
+      check('custom label with stacked marks: the pitch is wider than the stock one',
+        tall.length === 2 && (tall[1].y - tall[0].y) / sizeOf(tall[0]) > 1.3,
+        JSON.stringify(tall.map((l) => [l.text, l.y, l.font])));
+    }
+
+    // The step-up callout on the most crowded label there is: a step-up night
+    // with a trophy chip, a "Go to" line, a milestone and a twin hint. The name
+    // is at its 18 pt floor and the block still overflows, so the leftover
+    // lands on the bottom band. An ordinary name leaves the callout where it
+    // leaves it (and clear of the chip's text); a name that asks for room above
+    // or below must not push it any lower, and gives the difference back in
+    // size (a few pt under the floor at most). It used to print the callout
+    // over the chip for Ấn, Ẳ, NGUYỄN (99, 148 and 74 shared pixels).
+    {
+      // The long band is the worse case for the chip's text (it reaches further
+      // under the callout): 59, 31 and 82 shared pixels for Ấn, NGUYỄN and Ẳ
+      // even with the room above charged only past the paper's margin.
+      const LONG_BAND = 'Finished T&T Ultimate Adventure Book 2';
+      const crowdedStepUp = (first, band = 'Finished Sparks Wingrunner') => ({
+        firstName: first, lastName: 'Sample', clubName: 'Sparks', stepUp: true, stepUpNextClub: 'T&T', nameHint: 'b. Mar',
+        extras: { trophyBand: band, goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 10th club night tonight!' },
+      });
+      const pick = (calls, re) => calls.find((c) => re.test(c.text));
+      const ordinary = await drawn(crowdedStepUp('Ivy'));
+      const ordinaryCallout = pick(ordinary, /^Stepping up/);
+      check('crowded step-up label, ordinary name: the name is at the 18 pt floor',
+        Math.abs(sizeOf(pick(ordinary, /^Ivy$/)) - 18) < 1e-9, pick(ordinary, /^Ivy$/).font);
+      check('crowded step-up label, ordinary name: the callout shares no ink with the trophy chip',
+        !!ordinaryCallout && shared(ordinaryCallout.ink, pick(ordinary, /^Finished/).ink) === 0);
+      {
+        const longOrdinary = await drawn(crowdedStepUp('Ivy', LONG_BAND));
+        check('crowded step-up label, ordinary name, long trophy band: the callout shares no ink with the chip',
+          shared(pick(longOrdinary, /^Stepping up/).ink, pick(longOrdinary, /^Finished/).ink) === 0);
+      }
+      for (const name of ['Ấn', 'Ẳ', 'NGUYỄN', 'Ễ', 'JOSÉ', 'Ștefan', 'Ạn']) {
+        const calls = await drawn(crowdedStepUp(name));
+        const callout = pick(calls, /^Stepping up/);
+        const chip = pick(calls, /^Finished/);
+        const first = pick(calls, new RegExp(`^${name}$`));
+        check(`crowded step-up label, "${name}": the callout stays where an ordinary name leaves it`,
+          !!callout && Math.abs(callout.y - ordinaryCallout.y) < 0.01, callout && `${callout.y} vs ${ordinaryCallout.y}`);
+        check(`crowded step-up label, "${name}": the callout shares no ink with the trophy chip`,
+          !!callout && !!chip && shared(callout.ink, chip.ink) === 0);
+        const longCalls = await drawn(crowdedStepUp(name, LONG_BAND));
+        const longCallout = pick(longCalls, /^Stepping up/);
+        const longChip = pick(longCalls, /^Finished/);
+        check(`crowded step-up label, "${name}", long trophy band: the callout shares no ink with the chip`,
+          !!longCallout && !!longChip && shared(longCallout.ink, longChip.ink) === 0,
+          longCallout && longChip && `${shared(longCallout.ink, longChip.ink)} px shared`);
+        check(`crowded step-up label, "${name}": the name gives up at most 4 pt under the 18 pt floor`,
+          !!first && sizeOf(first) >= 14 - 1e-9 && sizeOf(first) <= 18 + 1e-9, first && first.font);
+      }
+    }
+
+    // A crowded label that is NOT at the floor: paper above the block gives a
+    // mark its room, so a diacritic that fits in that margin costs the name
+    // (almost) nothing, and a tall stack costs it a fifth at most (a quarter
+    // when the whole room was charged to the block).
+    {
+      const crowded = CASES.find((c) => c.name === 'name-tall-accent-crowded').model;
+      const sizeFor = async (name) => {
+        const calls = await drawn({ ...crowded, firstName: name }, { withInk: false });
+        const c = calls.find((k) => k.text === name);
+        return c ? sizeOf(c) : NaN;
+      };
+      const base = await sizeFor('Omer');
+      for (const [name, min] of [['Ömer', 0.97], ['Ñandú', 0.97], ['Åsa', 0.93], ['Émile', 0.87], ['Ấn', 0.78], ['Ẳ', 0.78]]) {
+        const got = await sizeFor(name);
+        check(`crowded label, "${name}": prints at ${Math.round(min * 100)}% or more of the size an unaccented name gets`,
+          got / base >= min && got <= base + 1e-9, `${got.toFixed(2)} pt vs ${base.toFixed(2)} pt (${(got / base).toFixed(3)})`);
+      }
     }
   }
 
