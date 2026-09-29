@@ -148,7 +148,8 @@ custom label and every screen's headline are Paytone One (OFL; its Reserved
 Font Names forbid a subset or re-encode, so the kit ships the FULL font and a
 WOFF2 built to meet the OFL's WOFF exception: never swap in a Google or
 @fontsource subset). Londrina Solid (label voice) and Figtree (read voice)
-stayed. What that means here:
+stayed; Londrina reserves its name too, so it ships whole the same way (its
+web copies were Latin subsets until the 6.18.0 kit). What that means here:
 - **Coverage moved.** Paytone One draws Ș Ț and every precomposed Vietnamese
   letter, which Galindo did not, so those first names and custom labels now
   print in the kit. It still lacks Cyrillic, Greek, CJK and the rest, and a
