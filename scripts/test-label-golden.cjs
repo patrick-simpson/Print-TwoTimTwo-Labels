@@ -43,7 +43,7 @@
 // `npm run test:golden:update` — which rewrites the fingerprint too.
 //
 // Since the 2026-27 rebrand the label's TEXT is set in fonts that ship with the
-// app (print-server/public/brand/fonts: Galindo, Londrina Solid, Figtree), so
+// app (print-server/public/brand/fonts: Paytone One, Londrina Solid, Figtree), so
 // most of each label rasterises the same everywhere. What still comes from the
 // host is the emoji row and the old Windows fonts the renderer falls back to
 // (the fail-open cases below render them on purpose), which is why the
@@ -241,7 +241,7 @@ const CASES = [
   { name: 'test-banner',      model: { firstName: 'Canary 00:00:00', lastName: '', clubName: 'Test', testBanner: true } },
   // The official one-colour club mark (brand kit) in the icon column when no
   // TwoTimTwo logo was supplied: one case per club, a short name so the
-  // Galindo name is as big as it gets (the approved mockup's "Ivy"). The mark
+  // Paytone One name is as big as it gets (the approved mockup's "Ivy"). The mark
   // replaces the club line, as a real logo always has. `plain` above is
   // Cubbies with a longer name.
   { name: 'club-puggles',     model: { firstName: 'Ivy', lastName: 'Sample', clubName: 'Puggles' } },
@@ -260,15 +260,36 @@ const CASES = [
   { name: 'monogram-fallback', kit: 'no-marks', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles' } },
   { name: 'fonts-fallback',    kit: 'no-fonts', model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Sparks', handbookGroup: 'Flight 3:16', allergyTokens: ['NUTS'], isVisitor: true } },
   { name: 'kit-missing',       kit: 'none',     model: { firstName: 'Testkid', lastName: 'Sample', clubName: 'Puggles', handbookGroup: 'Flight 3:16', isVisitor: true, footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm' } },
-  // A name the brand face cannot fully draw (Galindo has no Vietnamese): the
+  // A name the brand face cannot fully draw (Paytone One has no Cyrillic): the
   // whole first name prints in the old font rather than with a hole in it,
   // and the last name, whose letters Figtree does have, stays in the kit. One
   // voice falling back must never take the next one with it. (The last name
   // is plain Latin on purpose: the kit's Figtree lacks the precomposed
-  // Vietnamese letters too, so "Nguyễn" would fall back as well and the case
+  // Vietnamese letters, so "Nguyễn" would fall back as well and the case
   // would pin nothing but "every line falls back". The font-face checks after
   // the loop pin the same split by name, in CI too.)
-  { name: 'name-outside-galindo', model: { firstName: 'Thảo', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'name-outside-paytone', model: { firstName: 'Дима', lastName: 'Sample', clubName: 'Sparks' } },
+  // What the swap from Galindo bought: these names used to be in the case
+  // above's position (the old Windows face, whole). Paytone One draws them, so
+  // they print in the kit. Thảo carries a hook above the o; Ștefan the comma
+  // below the S that hangs past the line; Ấn the tallest stack of marks the
+  // face has, on a capital, which rises past the top of the line.
+  { name: 'name-vietnamese', model: { firstName: 'Thảo', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'name-romanian', model: { firstName: 'Ștefan', lastName: 'Sample', clubName: 'Sparks' } },
+  { name: 'name-tall-accent', model: { firstName: 'Ấn', lastName: 'Sample', clubName: 'Sparks' } },
+  // Descenders (g j p q y) on the name, over the last name: the line box has
+  // to clear them.
+  { name: 'name-descenders', model: { firstName: 'Gypsy', lastName: 'Sample', clubName: 'Sparks' } },
+  // The same tall accent on a crowded label, where the block is squeezed
+  // against the top of the badge: the accent's room is part of the block, so
+  // the name gives up size before it gives up its accent.
+  { name: 'name-tall-accent-crowded', model: {
+    firstName: 'Ấn', lastName: 'Fitzwilliam', clubName: 'Sparks',
+    allergyTokens: ['NUTS', 'DAIRY', 'GLUTEN', 'EGG', 'DYE'], handbookGroup: 'Flight 3:16',
+    isBirthday: true, awanaShares: 99, noPhoto: true, streakCount: 12, isNewKid: true, nameHint: 'b. Mar',
+    footerText: 'KVBC Awana · Wednesdays 6:15–8:00pm',
+    extras: { goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 50th club night tonight!' },
+  } },
   // A line of mixed faces under a 'top' baseline (the handbook group): the
   // words in Figtree, the star from the old stack, both on one baseline, not
   // the star's line an ascent above the words (on top of the last name).
@@ -299,10 +320,17 @@ const CASES = [
   // this file would show up as ink here the moment the early return above the
   // stock layout stopped returning early.
   { name: 'custom-label',     model: { customText: 'VOLUNTEER' } },
-  // A custom label Galindo cannot fully draw prints WHOLE in the old bold
-  // sans, as every custom label did before the kit, never as Galindo words
-  // with Arial letters inside them ("Nguy[ễ]n").
-  { name: 'custom-outside-galindo', model: { customText: 'Chào mừng Nguyễn Thị Thảo' } },
+  // A custom label Paytone One cannot fully draw prints WHOLE in the old bold
+  // sans, as every custom label did before the kit, never as kit words with
+  // Arial letters inside them ("Дим[а]"). Vietnamese used to be this case
+  // (Galindo lacked it); it is the next case now, in the kit.
+  { name: 'custom-outside-paytone', model: { customText: 'Добро пожаловать' } },
+  { name: 'custom-vietnamese', model: { customText: 'Chào mừng Nguyễn Thị Thảo' } },
+  // The same face wrapped onto two lines. Paytone One stacks its Vietnamese
+  // marks taller than the stock line pitch (Ố, Ấ, Ế, Ắ reach 1.19-1.22 em
+  // above their baseline, the pitch was 1.15), so the acute of TỐI printed into
+  // the line above until the pitch was set from the marks' own ink.
+  { name: 'custom-vietnamese-wrapped', model: { customText: 'NGƯỜI GIÚP VIỆC BAN THIẾU NHI TỐI THỨ TƯ HẰNG TUẦN' } },
   // The torture case: every optional field on at once. This is the one that
   // catches collisions — the handbook group reserving width for the icon row,
   // the bottom-left line meeting the bottom-right icons, the pill overlapping
@@ -819,8 +847,8 @@ async function main() {
 
       // The kit whole: the voices, each with the club's old face behind it.
       const k = await fontsDrawn(everyLine(clubName));
-      check(`kit, ${who}: the first name asks for Galindo over ${family}`,
-        inKit(fontOf(k, 'Testkid'), 'Galindo', family), fontOf(k, 'Testkid'));
+      check(`kit, ${who}: the first name asks for Paytone One over ${family}`,
+        inKit(fontOf(k, 'Testkid'), 'Paytone One', family), fontOf(k, 'Testkid'));
       for (const text of ['Sample', 'b. Mar', 'Flight 3:16', 'Wednesdays', '10th club night tonight!', 'Go to: Rm 4']) {
         check(`kit, ${who}: "${text}" asks for Figtree over ${family}`,
           inKit(fontOf(k, text), 'Figtree', family), fontOf(k, text));
@@ -833,68 +861,100 @@ async function main() {
         const n = await fontsDrawn(everyLine(clubName), 'no-marks');
         check(`kit without marks, ${who}: the club line asks for Londrina Solid over ${family}`,
           anyInKit(n, clubName, 'Londrina Solid', family), JSON.stringify(fontsOf(n, clubName)));
-        check(`kit without marks, ${who}: the monogram asks for Galindo over ${family}`,
-          anyInKit(n, letter, 'Galindo', family), JSON.stringify(fontsOf(n, letter)));
+        check(`kit without marks, ${who}: the monogram asks for Paytone One over ${family}`,
+          anyInKit(n, letter, 'Paytone One', family), JSON.stringify(fontsOf(n, letter)));
       }
     }
     check('the font recorder saw the renderer draw (it hooks the right prototype)', spied > 50, `${spied} calls`);
 
     // One voice falling back never takes the next with it: a first name
-    // Galindo cannot draw prints in the old face, and the last name after it
-    // is still Figtree.
+    // Paytone One cannot draw prints in the old face, and the last name after
+    // it is still Figtree.
     {
       const trebuchet = PRE_KIT_FAMILY[2][1];
-      const c = await fontsDrawn({ firstName: 'Thảo', lastName: 'Sample', clubName: 'Sparks' });
-      check('a first name outside Galindo asks for the old bold face, whole',
-        asks(fontOf(c, 'Thảo'), 'bold', trebuchet), fontOf(c, 'Thảo'));
+      const c = await fontsDrawn({ firstName: 'Дима', lastName: 'Sample', clubName: 'Sparks' });
+      check('a first name outside Paytone One asks for the old bold face, whole',
+        asks(fontOf(c, 'Дима'), 'bold', trebuchet), fontOf(c, 'Дима'));
       check('...and the last name after it stays in Figtree',
         inKit(fontOf(c, 'Sample'), 'Figtree', trebuchet), fontOf(c, 'Sample'));
+      // The names Galindo could not draw are the kit's now, every letter of
+      // them, and each voice still decides for itself: "Nguyễn" is a last
+      // name, Figtree has no precomposed Vietnamese, so it alone falls back.
+      for (const first of ['Thảo', 'Ștefan', 'Ấn', 'Țara', 'Łukasz', 'Zoë']) {
+        const v = await fontsDrawn({ firstName: first, lastName: 'Sample', clubName: 'Sparks' });
+        check(`the first name "${first}" asks for Paytone One, not the old face`,
+          inKit(fontOf(v, first), 'Paytone One', trebuchet), fontOf(v, first));
+      }
+      const vn = await fontsDrawn({ firstName: 'Thảo', lastName: 'Nguyễn', clubName: 'Sparks' });
+      check('a Vietnamese first name is in the kit while its last name (Figtree lacks ễ) is in the old face',
+        inKit(fontOf(vn, 'Thảo'), 'Paytone One', trebuchet) && asks(fontOf(vn, 'Nguyễn'), '', trebuchet),
+        JSON.stringify([fontOf(vn, 'Thảo'), fontOf(vn, 'Nguyễn')]));
     }
 
-    // A custom label is one face, whole: the kit's when Galindo draws every
-    // letter, else the old bold sans for the whole line, never both.
+    // A custom label is one face, whole: the kit's when Paytone One draws
+    // every letter, else the old bold sans for the whole line, never both.
     {
       const plain = await fontsDrawn({ customText: 'VOLUNTEER' });
-      check('custom label: plain text asks for Galindo over the old sans',
-        plain.length === 1 && inKit(plain[0].font, 'Galindo', OLD_SANS), JSON.stringify(plain));
-      for (const text of ['Chào mừng Nguyễn Thị Thảo', 'Bun venit, Ștefan!', 'Добро пожаловать', 'Kitchen Crew ⭐']) {
+      check('custom label: plain text asks for Paytone One over the old sans',
+        plain.length === 1 && inKit(plain[0].font, 'Paytone One', OLD_SANS), JSON.stringify(plain));
+      // Vietnamese and Romanian used to be in the list below (Galindo lacked
+      // them). They are the kit's now, whole.
+      for (const text of ['Chào mừng Nguyễn Thị Thảo', 'Bun venit, Ștefan!', 'Łukasz i Żaneta zapraszają']) {
         const got = await fontsDrawn({ customText: text });
-        check(`custom label "${text}": the whole line asks for bold ${OLD_SANS}, no letter in Galindo`,
+        check(`custom label "${text}": the whole line asks for Paytone One over the old sans`,
+          got.length === 1 && inKit(got[0].font, 'Paytone One', OLD_SANS) && got[0].text === text, JSON.stringify(got));
+      }
+      for (const text of ['Добро пожаловать', 'Καλώς ήρθατε', 'Kitchen Crew ⭐', 'Akwaaba Kɔfi']) {
+        const got = await fontsDrawn({ customText: text });
+        check(`custom label "${text}": the whole line asks for bold ${OLD_SANS}, no letter in Paytone One`,
           got.length >= 1 && got.every((g) => asks(g.font, 'bold', OLD_SANS))
           && got.map((g) => g.text).join(' ') === text, JSON.stringify(got));
       }
 
       // ...and that is one decision for the WHOLE text, not one per wrapped
       // line. A custom text long enough to wrap used to ask each line on its
-      // own whether Galindo draws it, so a letter Galindo lacks in only one
-      // half printed the other half in Galindo and this one in Helvetica.
-      // Each case wraps (asserted: two lines) and puts the missing letter in
-      // only one half (asserted: the halves really do differ in coverage).
+      // own whether the kit face draws it, so a letter it lacks in only one
+      // half printed the other half in the kit face and this one in
+      // Helvetica. Each case wraps (asserted: two lines) and puts the missing
+      // letter in only one half (asserted: the halves really do differ in
+      // coverage).
+      // The letters that are missing are ones Paytone One really lacks
+      // (Cyrillic, Greek), not the Ș and Vietnamese ones Galindo lacked and
+      // Paytone One has: the last two cases are those, and they prove the
+      // kit now draws both halves of them.
       // The old-sans cases are drawn in whatever the HOST resolves Helvetica /
       // Arial to, so each must wrap with room to spare on every stack a run
       // meets: Arial's metrics (Windows, Liberation Sans), DejaVu Sans (the
       // Ubuntu CI runner, about 17% wider) and narrower fallbacks. Each half
       // stays at or under 91% of the line in DejaVu, and the whole is at least
       // 116% of it in the narrowest face. A half at 104% in DejaVu is what
-      // broke CI on 6.17.0 ("Sunday School Room 12 — please …").
+      // broke CI on 6.17.0 ("Sunday School Room 12 — please …"). Measured for
+      // these (line = 252 pt at the 14 pt floor; Liberation Sans / DejaVu):
+      //   Welcome … with our guest Дмитрий   whole 1.37 / 1.64, halves .72 .64 / .85 .77
+      //   Дмитрий is our guest … Welcome!    whole 1.32 / 1.58, halves .64 .67 / .76 .79
+      //   Sunday School … Mrs. Νικολάου      whole 1.30 / 1.55, halves .70 .58 / .81 .73
+      // The two kit cases are drawn in the bundled face, so they are the same
+      // on every host (whole 1.55 and 1.53, halves at most .80).
       const wrapped = [
-        // [text, does Galindo draw all of it?]
-        ["Welcome to Parents' Night, with our special guest Ștefan", false],   // Ș in the second half
-        ["Ștefan is our special guest at Parents' Night. Welcome!", false],     // Ș in the first half
-        ['Sunday School is in Room 12 with Mrs. Nguyễn Thị Thảo', false],       // ễ, ị, ả in the second half
+        // [text, does the kit face draw all of it?]
+        ["Welcome to Parents' Night, with our guest Дмитрий", false],           // Cyrillic in the second half
+        ["Дмитрий is our guest at Parents' Night. Welcome!", false],             // Cyrillic in the first half
+        ['Sunday School is in Room 12 with Mrs. Νικολάου', false],               // Greek in the second half
         ["Welcome to Parents' Night, with our special guest Stefan", true],     // every letter drawable
+        ["Welcome to Parents' Night, with our special guest Ștefan", true],     // Ș: the kit draws it now
+        ['Sunday School is in Room 12 with Mrs. Nguyễn Thị Thảo', true],         // ễ, ị, ả: so does it these
       ];
-      for (const [text, galindoDrawsAll] of wrapped) {
+      for (const [text, kitDrawsAll] of wrapped) {
         const got = await fontsDrawn({ customText: text });
         const twoLines = got.length === 2 && got.map((g) => g.text).join(' ') === text;
         check(`custom label "${text}": wraps onto two lines`, twoLines, JSON.stringify(got));
-        const halfDraws = got.map((g) => brand.fontCovers('Galindo', g.text));
-        check(`custom label "${text}": ${galindoDrawsAll ? 'Galindo draws both halves' : 'Galindo lacks a letter in one half only'}`,
-          galindoDrawsAll ? halfDraws.every(Boolean) : halfDraws.filter(Boolean).length === 1, JSON.stringify(halfDraws));
-        const face = galindoDrawsAll
-          ? (g) => inKit(g.font, 'Galindo', OLD_SANS)
+        const halfDraws = got.map((g) => brand.fontCovers('Paytone One', g.text));
+        check(`custom label "${text}": ${kitDrawsAll ? 'Paytone One draws both halves' : 'Paytone One lacks a letter in one half only'}`,
+          kitDrawsAll ? halfDraws.every(Boolean) : halfDraws.filter(Boolean).length === 1, JSON.stringify(halfDraws));
+        const face = kitDrawsAll
+          ? (g) => inKit(g.font, 'Paytone One', OLD_SANS)
           : (g) => asks(g.font, 'bold', OLD_SANS);
-        check(`custom label "${text}": every line asks for ${galindoDrawsAll ? 'Galindo' : `bold ${OLD_SANS}`}, none for the other`,
+        check(`custom label "${text}": every line asks for ${kitDrawsAll ? 'Paytone One' : `bold ${OLD_SANS}`}, none for the other`,
           got.length >= 2 && got.every(face), JSON.stringify(got));
         // Same size too: the lines are measured and drawn as one block.
         const sizes = new Set(got.map((g) => (g.font.match(/([0-9.]+)px/) || [])[1]));
@@ -908,7 +968,7 @@ async function main() {
       }
       // The clip path (60 characters, no space) is one face as well.
       {
-        const clipped = 'Ș' + 'W'.repeat(59);
+        const clipped = 'Д' + 'W'.repeat(59);
         const got = await fontsDrawn({ customText: clipped });
         check('custom label with no space, clipped: both pieces ask for bold old sans',
           got.length === 2 && got.every((g) => asks(g.font, 'bold', OLD_SANS)), JSON.stringify(got));
@@ -940,6 +1000,298 @@ async function main() {
       const kitWords = pieces.find((p) => p.text.includes('phòng'));
       check('...and the words Figtree can draw stay in Figtree',
         !!kitWords && inKit(kitWords.font, 'Figtree', PRE_KIT_FAMILY[2][1]), kitWords && kitWords.font);
+    }
+  }
+
+  // ── The first name's ink stays clear of the badge and of the last name ────
+  // Font-independent (the name is Paytone One and the last name Figtree, both
+  // bundled, so these pixels are the same on every host) and measured on the
+  // image itself, not on the layout numbers that produced it. Paytone One
+  // draws marks and commas far outside its own line box: an accented capital
+  // (É, Ấ) rises past the top of the em box, the comma of Ș and Ț and the
+  // cedilla of Ç hang past the bottom, and g j p q y reach 0.20 em down. The
+  // layout measures the name's own ink and makes room for it, so a tall accent
+  // is never printed over the badge's top edge and a hanging comma is never
+  // printed over the last name. If that measurement ever stops reaching the
+  // layout, this fails by name.
+  //
+  // The text column of a plain Sparks label holds exactly two things, the
+  // first name and the last name (the club's mark takes the icon column and
+  // replaces the club line), so its inked rows are bands with the last name
+  // in the LAST one. (The name itself can be several: a mark or a comma floats
+  // clear of its letter, which is a band of its own. What must hold is the
+  // gap before the last name's band, and the top of the first.)
+  {
+    const S = 300 / 72;
+    const BADGE_TOP_PX = Math.round(6 * S);                       // INSET
+    const X0 = Math.round((6 + 84 + 8) * S);                       // TEXT_X
+    const X1 = Math.round((6 + 276) * S);                          // right edge of the badge
+    const inkBands = async (buf) => {
+      const px = await pixels(buf);
+      const bands = [];
+      let open = -1;
+      for (let y = 0; y < px.h; y++) {
+        let ink = false;
+        for (let x = X0; x < X1 && !ink; x++) {
+          const i = (y * px.w + x) * 4;
+          if (0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2] < 128) ink = true;
+        }
+        if (ink && open < 0) open = y;
+        if (!ink && open >= 0) { bands.push([open, y - 1]); open = -1; }
+      }
+      if (open >= 0) bands.push([open, px.h - 1]);
+      return bands;
+    };
+    const NAMES = ['Testkid', 'Ivy', 'Gypsy', 'Jorge', 'Émile', 'Ángel', 'Ömer', 'Åsa', 'Ñandú', 'Çelik', 'Ąga',
+      'Ștefan', 'Țara', 'Thảo', 'Ấn', 'Ễ', 'Ẳ', 'Nguyễn'];
+    for (const name of NAMES) {
+      const bands = await inkBands(await render({ firstName: name, lastName: 'Sample', clubName: 'Sparks' }));
+      check(`"${name}": the last name is a band of its own, not run together with the first name's ink`,
+        bands.length >= 2, JSON.stringify(bands));
+      if (bands.length < 2) continue;
+      check(`"${name}": the first name's ink starts below the badge's top edge`,
+        bands[0][0] >= BADGE_TOP_PX, `starts at row ${bands[0][0]}, the badge at ${BADGE_TOP_PX}`);
+      const gap = bands[bands.length - 1][0] - bands[bands.length - 2][1] - 1;
+      check(`"${name}": at least 2 pt of clear paper between the first name and the last name`,
+        gap >= Math.ceil(2 * S), `${gap} px (${(gap / S).toFixed(1)} pt)`);
+    }
+    // ...and the same on a label crowded to the top: the accent's room is part
+    // of the block, so the block is squeezed by shrinking the name, and the
+    // accent still keeps off the paper's edge. The paper above the block gives
+    // the accent the room between the block and NAME_INK_TOP (4 pt from the
+    // edge, as close as 6.17.0 ever printed a name); only what is beyond that
+    // is charged to the block. The ink itself can sit a fraction of a point
+    // nearer than the layout aims (the canvas reports integer-pixel bounds at
+    // 100 px, and a 1-bit row is a quarter of a point), so this allows 0.5 pt.
+    const PAPER_EDGE_PX = Math.round((4 - 0.5) * S);
+    for (const name of ['Ấn', 'Ẳ', 'Émile', 'Ângelo', 'Ömer', 'Ñandú']) {
+      const crowded = CASES.find((c) => c.name === 'name-tall-accent-crowded').model;
+      const bands = await inkBands(await render({ ...crowded, firstName: name }));
+      check(`"${name}" on a crowded label: the first name's ink stays 3.5 pt or more off the paper's top edge`,
+        bands.length > 0 && bands[0][0] >= PAPER_EDGE_PX, `${JSON.stringify(bands[0])} vs ${PAPER_EDGE_PX}`);
+    }
+  }
+
+  // ── Capitals sit on the centre: the custom label and the monogram badge ───
+  // Both are drawn on a 'middle' baseline, which is the centre of the em box,
+  // and a face's capitals are not centred in its em box: Galindo's stood high
+  // of it and Paytone One's stand low, by about 6% of the size, which at a
+  // custom label's 56 pt is 3.5 pt off the label's middle. The renderer
+  // corrects for it (capCentre), and these measure the ink itself, so they
+  // fail if it stops (Paytone One is bundled, so the pixels are the same on
+  // every host). All-capital text on purpose: descenders would move the
+  // centre of the ink without moving the line.
+  {
+    const S = 300 / 72;
+    const rowsOfInk = async (buf, darkOn, region, inside = () => true) => {
+      const px = await pixels(buf);
+      let lo = Infinity, hi = -Infinity;
+      for (let y = region.y0; y < region.y1; y++) {
+        for (let x = region.x0; x < region.x1; x++) {
+          if (!inside(x, y)) continue;
+          const i = (y * px.w + x) * 4;
+          const lum = 0.2126 * px.data[i] + 0.7152 * px.data[i + 1] + 0.0722 * px.data[i + 2];
+          if (darkOn ? lum < 128 : lum > 200) { if (y < lo) lo = y; if (y > hi) hi = y; break; }
+        }
+      }
+      return lo === Infinity ? null : (lo + hi) / 2;
+    };
+    for (const text of ['VOLUNTEER', 'KITCHEN', 'ROOM 4']) {
+      const mid = await rowsOfInk(await render({ customText: text }), true, { x0: 0, x1: 1200, y0: 0, y1: 600 });
+      check(`custom label "${text}": its capitals are centred on the label (within 1.5 pt)`,
+        mid !== null && Math.abs(mid - 300) <= 1.5 * S, `centre at row ${mid}, the label's at 300`);
+    }
+    // The disc is centred at (6 + 42, 6 + 66) pt with a 28 pt radius; the
+    // letter is the light ink INSIDE it (outside is the pale icon panel, which
+    // is light too, so the mask matters).
+    const cx = Math.round(48 * S), cy = Math.round(72 * S), r = Math.round(20 * S);
+    const inDisc = (x, y) => Math.hypot(x - cx, y - cy) < 26 * S;
+    for (const [club, letters] of [['Puggles', 'P'], ['Cubbies', 'C'], ['Sparks', 'S'], ['Journey', 'J'], ['Trek', 'TR'], ['T&T', 'T&T']]) {
+      const buf = await render({ firstName: 'Testkid', lastName: 'Sample', clubName: club }, 'no-marks');
+      const mid = await rowsOfInk(buf, false, { x0: cx - r * 2, x1: cx + r * 2, y0: cy - r * 2, y1: cy + r * 2 }, inDisc);
+      check(`monogram "${letters}" (${club}): the letter is centred in its disc (within 1 pt)`,
+        mid !== null && Math.abs(mid - cy) <= 1 * S, `centre at row ${mid}, the disc's at ${cy}`);
+    }
+  }
+
+  // ── Lines that must not run into each other, on the image itself ─────────
+  // Paytone One draws marks far outside its line (Ấ, Ố, Ế, Ắ stand 1.19-1.22
+  // em above their baseline, a dot below a vowel or the tail of a g hangs
+  // 0.20-0.27 em under it, the comma of Ș hangs to 1.31 em), so a fixed
+  // spacing that was right for the old bold sans lets one line's marks print
+  // into its neighbour. Two places were caught doing it, both pinned here with
+  // the ink of every fillText rasterised ALONE (a pixel counts when its alpha
+  // is 128 or more, as it is on the 1-bit thermal print), then compared:
+  //   * a custom label wrapped onto two lines, whose pitch is now set from the
+  //     two lines' own ink (customLineH);
+  //   * the step-up callout on a crowded label, which the first name used to
+  //     push onto the trophy chip once its room went past the 18 pt floor.
+  // Paytone One and Figtree are bundled, so these are the same on every host.
+  {
+    const W = 1200, H = 600;
+    const ctxProto = Object.getPrototypeOf(createCanvas(1, 1).getContext('2d'));
+    // Every fillText the renderer makes: what, where, in which font, and (when
+    // `withInk`) the set of device pixels it inks and the rows it spans.
+    const drawn = async (model, { withInk = true, kit } = {}) => {
+      const out = [];
+      const orig = ctxProto.fillText;
+      let inside = false;
+      ctxProto.fillText = function recordInk(text, x, y, ...rest) {
+        if (!inside) {
+          inside = true;   // the rasteriser below draws through this same prototype
+          try {
+            const d = { text: String(text), font: this.font, x, y, ink: null, rows: null };
+            if (withInk) {
+              const tr = this.getTransform();
+              const alone = createCanvas(W, H);
+              const o = alone.getContext('2d');
+              o.setTransform(tr.a, tr.b, tr.c, tr.d, tr.e, tr.f);
+              o.font = this.font;
+              o.fontVariationSettings = this.fontVariationSettings;
+              o.textAlign = this.textAlign;
+              o.textBaseline = this.textBaseline;
+              o.fillStyle = '#000000';
+              orig.call(o, text, x, y, ...rest);
+              const px = o.getImageData(0, 0, W, H).data;
+              const ink = new Set();
+              let lo = Infinity, hi = -Infinity;
+              for (let i = 3, n = 0; i < px.length; i += 4, n++) {
+                if (px[i] >= 128) {
+                  ink.add(n);
+                  const row = Math.floor(n / W);
+                  if (row < lo) lo = row;
+                  if (row > hi) hi = row;
+                }
+              }
+              d.ink = ink;
+              d.rows = ink.size ? [lo, hi] : null;
+            }
+            out.push(d);
+          } finally { inside = false; }
+        }
+        return orig.call(this, text, x, y, ...rest);
+      };
+      try { await render(model, kit); } finally { ctxProto.fillText = orig; }
+      return out;
+    };
+    const sizeOf = (d) => Number((/([0-9.]+)px/.exec(d.font) || [])[1]);
+    const shared = (a, b) => {
+      let n = 0;
+      const [small, big] = a.size < b.size ? [a, b] : [b, a];
+      for (const p of small) if (big.has(p)) n++;
+      return n;
+    };
+
+    // A wrapped custom label: two lines, both in the kit, no pixel shared, and
+    // clear paper (at least 2 px, half a point) between the lowest ink of the
+    // first and the highest of the second. These four collided in the first
+    // 6.18.0 cut (15, 5, 4 and 12 shared pixels): the acute of TỐI merged into
+    // the line above, the stack on HẰ fused under the B of BAN, and É, Ấ and Ế
+    // ran into the y and p descenders.
+    const VIETNAMESE_TWO_LINES = [
+      'NGƯỜI GIÚP VIỆC BAN THIẾU NHI TỐI THỨ TƯ HẰNG TUẦN',
+      'Dạy học Kinh Thánh cùng thầy Nguyễn Quốc Hưng',
+      "Kids' choir practice: gym, Ấu Nhi group, Ẩn Phòng",
+      'Happy guy, joyful peppy puppy — Émile, Ấn and Ếch too',
+    ];
+    for (const text of VIETNAMESE_TWO_LINES) {
+      const lines = await drawn({ customText: text });
+      const twoInKit = lines.length === 2 && lines.every((l) => l.font.includes('"Paytone One"'))
+        && lines.map((l) => l.text).join(' ') === text;
+      check(`custom label "${text}": wraps onto two lines, both in Paytone One`, twoInKit, JSON.stringify(lines.map((l) => [l.text, l.font])));
+      if (!twoInKit) continue;
+      const [a, b] = lines;
+      check(`custom label "${text}": the two lines share no ink`,
+        shared(a.ink, b.ink) === 0, `${shared(a.ink, b.ink)} px shared`);
+      const clear = b.rows[0] - a.rows[1] - 1;
+      check(`custom label "${text}": at least 2 px of clear paper between the lines`,
+        clear >= 2, `${clear} px (line 1 ends at row ${a.rows[1]}, line 2 starts at row ${b.rows[0]})`);
+    }
+    // The pitch only widens for marks that need it, and only in the kit face:
+    // a wrapped label in the old bold sans keeps the stock 1.15, exactly as
+    // 6.17.0 drew it (the fail-open promise), and so does a kit label whose
+    // marks are compact.
+    {
+      const old = await drawn({ customText: "Дмитрий is our guest at Parents' Night. Welcome!" }, );
+      check('custom label in the old face: wraps onto two lines at the stock 1.15 pitch',
+        old.length === 2 && Math.abs((old[1].y - old[0].y) / sizeOf(old[0]) - 1.15) < 1e-6,
+        JSON.stringify(old.map((l) => [l.text, l.y, l.font])));
+      const plain = await drawn({ customText: "Welcome to Parents' Night, with our special guest Stefan" }, );
+      check('custom label in the kit with compact marks: still the stock 1.15 pitch',
+        plain.length === 2 && Math.abs((plain[1].y - plain[0].y) / sizeOf(plain[0]) - 1.15) < 1e-6,
+        JSON.stringify(plain.map((l) => [l.text, l.y, l.font])));
+      const tall = await drawn({ customText: VIETNAMESE_TWO_LINES[0] }, );
+      check('custom label with stacked marks: the pitch is wider than the stock one',
+        tall.length === 2 && (tall[1].y - tall[0].y) / sizeOf(tall[0]) > 1.3,
+        JSON.stringify(tall.map((l) => [l.text, l.y, l.font])));
+    }
+
+    // The step-up callout on the most crowded label there is: a step-up night
+    // with a trophy chip, a "Go to" line, a milestone and a twin hint. The name
+    // is at its 18 pt floor and the block still overflows, so the leftover
+    // lands on the bottom band. An ordinary name leaves the callout where it
+    // leaves it (and clear of the chip's text); a name that asks for room above
+    // or below must not push it any lower, and gives the difference back in
+    // size (a few pt under the floor at most). It used to print the callout
+    // over the chip for Ấn, Ẳ, NGUYỄN (99, 148 and 74 shared pixels).
+    {
+      // The long band is the worse case for the chip's text (it reaches further
+      // under the callout): 59, 31 and 82 shared pixels for Ấn, NGUYỄN and Ẳ
+      // even with the room above charged only past the paper's margin.
+      const LONG_BAND = 'Finished T&T Ultimate Adventure Book 2';
+      const crowdedStepUp = (first, band = 'Finished Sparks Wingrunner') => ({
+        firstName: first, lastName: 'Sample', clubName: 'Sparks', stepUp: true, stepUpNextClub: 'T&T', nameHint: 'b. Mar',
+        extras: { trophyBand: band, goToLine: 'Go to: Music, Rm 4', milestoneLine: '⭐ 10th club night tonight!' },
+      });
+      const pick = (calls, re) => calls.find((c) => re.test(c.text));
+      const ordinary = await drawn(crowdedStepUp('Ivy'));
+      const ordinaryCallout = pick(ordinary, /^Stepping up/);
+      check('crowded step-up label, ordinary name: the name is at the 18 pt floor',
+        Math.abs(sizeOf(pick(ordinary, /^Ivy$/)) - 18) < 1e-9, pick(ordinary, /^Ivy$/).font);
+      check('crowded step-up label, ordinary name: the callout shares no ink with the trophy chip',
+        !!ordinaryCallout && shared(ordinaryCallout.ink, pick(ordinary, /^Finished/).ink) === 0);
+      {
+        const longOrdinary = await drawn(crowdedStepUp('Ivy', LONG_BAND));
+        check('crowded step-up label, ordinary name, long trophy band: the callout shares no ink with the chip',
+          shared(pick(longOrdinary, /^Stepping up/).ink, pick(longOrdinary, /^Finished/).ink) === 0);
+      }
+      for (const name of ['Ấn', 'Ẳ', 'NGUYỄN', 'Ễ', 'JOSÉ', 'Ștefan', 'Ạn']) {
+        const calls = await drawn(crowdedStepUp(name));
+        const callout = pick(calls, /^Stepping up/);
+        const chip = pick(calls, /^Finished/);
+        const first = pick(calls, new RegExp(`^${name}$`));
+        check(`crowded step-up label, "${name}": the callout stays where an ordinary name leaves it`,
+          !!callout && Math.abs(callout.y - ordinaryCallout.y) < 0.01, callout && `${callout.y} vs ${ordinaryCallout.y}`);
+        check(`crowded step-up label, "${name}": the callout shares no ink with the trophy chip`,
+          !!callout && !!chip && shared(callout.ink, chip.ink) === 0);
+        const longCalls = await drawn(crowdedStepUp(name, LONG_BAND));
+        const longCallout = pick(longCalls, /^Stepping up/);
+        const longChip = pick(longCalls, /^Finished/);
+        check(`crowded step-up label, "${name}", long trophy band: the callout shares no ink with the chip`,
+          !!longCallout && !!longChip && shared(longCallout.ink, longChip.ink) === 0,
+          longCallout && longChip && `${shared(longCallout.ink, longChip.ink)} px shared`);
+        check(`crowded step-up label, "${name}": the name gives up at most 4 pt under the 18 pt floor`,
+          !!first && sizeOf(first) >= 14 - 1e-9 && sizeOf(first) <= 18 + 1e-9, first && first.font);
+      }
+    }
+
+    // A crowded label that is NOT at the floor: paper above the block gives a
+    // mark its room, so a diacritic that fits in that margin costs the name
+    // (almost) nothing, and a tall stack costs it a fifth at most (a quarter
+    // when the whole room was charged to the block).
+    {
+      const crowded = CASES.find((c) => c.name === 'name-tall-accent-crowded').model;
+      const sizeFor = async (name) => {
+        const calls = await drawn({ ...crowded, firstName: name }, { withInk: false });
+        const c = calls.find((k) => k.text === name);
+        return c ? sizeOf(c) : NaN;
+      };
+      const base = await sizeFor('Omer');
+      for (const [name, min] of [['Ömer', 0.97], ['Ñandú', 0.97], ['Åsa', 0.93], ['Émile', 0.87], ['Ấn', 0.78], ['Ẳ', 0.78]]) {
+        const got = await sizeFor(name);
+        check(`crowded label, "${name}": prints at ${Math.round(min * 100)}% or more of the size an unaccented name gets`,
+          got / base >= min && got <= base + 1e-9, `${got.toFixed(2)} pt vs ${base.toFixed(2)} pt (${(got / base).toFixed(3)})`);
+      }
     }
   }
 

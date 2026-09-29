@@ -197,8 +197,10 @@ async function main() {
         const res = await request({ host: lan, pathname: a });
         check(`LAN GET ${a} loads without a PIN`, res.status === 200, `status ${res.status}`);
       }
-      const font = await request({ host: lan, pathname: '/brand/fonts/galindo-latin-400-normal.woff2' });
+      const font = await request({ host: lan, pathname: '/brand/fonts/paytone-one-full-400-normal.woff2' });
       check('LAN GET a brand WOFF2 font loads without a PIN', font.status === 200, `status ${font.status}`);
+      const ttf = await request({ host: lan, pathname: '/brand/fonts/PaytoneOne-Regular.ttf' });
+      check('...and so does the TTF the stylesheet falls back to', ttf.status === 200, `status ${ttf.status}`);
       const css = await request({ host: lan, pathname: '/brand/fonts.css' });
       check('the brand stylesheet is the kit, not the dashboard', /@font-face/.test(css.body) && !css.body.includes('Leakcanary'));
     }

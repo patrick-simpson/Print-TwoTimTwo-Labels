@@ -79,7 +79,7 @@
   }
 
   var ctx;
-  // The advance width of `text` in em, in the kit's shout face (Galindo).
+  // The advance width of `text` in em, in the kit's shout face (Paytone One).
   function measureEm(text, family) {
     if (ctx === undefined) {
       try {
@@ -89,7 +89,7 @@
       }
     }
     if (!ctx) return rough(text);
-    ctx.font = '100px "' + (family || 'Galindo') + '", "Arial Rounded MT Bold", sans-serif';
+    ctx.font = '100px "' + (family || 'Paytone One') + '", "Arial Rounded MT Bold", sans-serif';
     var w = ctx.measureText(text).width / 100;
     return isFinite(w) && w > 0 ? w : rough(text);
   }
@@ -112,7 +112,7 @@
     // As a style, not a fill attribute, so a CSS var() works as the plate.
     var plate = opts.plate ? 'style="fill:' + esc(opts.plate) + '"' : 'fill="#030404" fill-opacity="0.5"';
     var text = 'fill="#fff" text-anchor="middle" dominant-baseline="central" lengthAdjust="spacingAndGlyphs"'
-      + ' style="font-family:var(--brand-font-display, Galindo, sans-serif)"';
+      + ' style="font-family:var(--brand-font-display, \'Paytone One\', sans-serif)"';
     return '<svg viewBox="-0.04 -0.04 ' + g.width.toFixed(3) + ' ' + g.height.toFixed(3) + '"'
       + ' width="' + g.width.toFixed(3) + 'em" height="' + g.height.toFixed(3) + 'em"'
       + ' aria-hidden="true" focusable="false" style="display:block;overflow:visible">'

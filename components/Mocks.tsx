@@ -161,7 +161,7 @@ const ClubChips: React.FC = () => (
    it and sends it to every screen (the printer dashboard's Lobby Slides
    card is the paste-a-file route to the same pipe). The TV is a typed slide
    in the display's 2026-27 look: the "night" catalog scene, a Londrina
-   Solid eyebrow, a Galindo headline and the house wave (CatalogScene.jsx,
+   Solid eyebrow, a Paytone One headline and the house wave (CatalogScene.jsx,
    app.css .manual-slide-*). No logo, no club art. */
 const WAVE = 'M0 190 C220 80 420 80 640 160 C880 250 1120 250 1330 150 C1430 105 1530 100 1600 130 L1600 420 L0 420 Z';
 

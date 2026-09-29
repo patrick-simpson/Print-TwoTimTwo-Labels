@@ -251,7 +251,7 @@
 .lbl-lobby__wave--back { bottom: 1.5%; left: -1.5%; }
 .lbl-lobby__copy { position: absolute; top: 5%; bottom: 34%; left: 5%; right: 5%; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
 .lbl-lobby__eyebrow { font: 400 max(2.6cqi, 11px)/1 'Londrina Solid', 'Arial Narrow', sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #ffd98a; margin-bottom: 1.2cqi; }
-.lbl-lobby__big { font: 400 8.2cqi/1.05 'Galindo', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif; color: #fff; text-wrap: balance; text-shadow: 0 .5cqi 0 rgb(20 32 80 / .35), 0 1.4cqi 3.6cqi rgb(20 32 80 / .45); }
+.lbl-lobby__big { font: 400 8.2cqi/1.05 'Paytone One', 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif; color: #fff; text-wrap: balance; text-shadow: 0 .5cqi 0 rgb(20 32 80 / .35), 0 1.4cqi 3.6cqi rgb(20 32 80 / .45); }
 .lbl-lobby__sub { font: 400 max(3.2cqi, 11px)/1.2 'Londrina Solid', 'Arial Narrow', sans-serif; color: #fff6e3; margin-top: 1.6cqi; }
 @media (max-width: 720px) {
   .lbl-publish { grid-template-columns: minmax(0, 1fr); justify-items: stretch; }

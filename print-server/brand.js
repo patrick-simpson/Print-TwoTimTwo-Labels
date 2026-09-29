@@ -9,7 +9,7 @@
 // Two kinds of asset come out of it, and BOTH FAIL OPEN to what the label
 // printed before the kit existed. A child at the door always gets a label:
 //
-//   * FONTS. Galindo (the shout: the first name), Londrina Solid (the label
+//   * FONTS. Paytone One (the shout: the first name), Londrina Solid (the label
 //     voice: pills, chips, the club line) and Figtree (the read: everything
 //     else) are registered with the canvas library once, at require time. A
 //     font whose file is missing, unreadable or refused by the canvas is
@@ -17,8 +17,8 @@
 //     used before (server.js keeps those stacks). A font that DID load is still
 //     only used for a string whose every character it actually draws: the
 //     canvas does not fall back glyph by glyph to the system fonts the way a
-//     browser does, so "Thảo" set in Galindo (which has no Vietnamese) prints
-//     "Th o" with a hole in it. The character map of each TTF is read here, and
+//     browser does, so "Дима" set in Paytone One (which has no Cyrillic) prints
+//     four holes. The character map of each TTF is read here, and
 //     fontCovers()/splitRuns() are how the renderer asks. A file cut short or
 //     corrupted is refused before it reaches the canvas (fontFileProblem):
 //     the canvas would register it and then draw every glyph empty.
@@ -55,7 +55,7 @@ const DEFAULT_BRAND_DIR = path.join(__dirname, 'public', 'brand');
 // family rather than weight 900 of "Londrina Solid": the canvas resolves both
 // weights of one registered family to the same face, measured.
 const FONT_FILES = Object.freeze([
-  { family: 'Galindo',              file: 'Galindo-Regular.ttf' },
+  { family: 'Paytone One',          file: 'PaytoneOne-Regular.ttf' },
   { family: 'Londrina Solid',       file: 'LondrinaSolid-Regular.ttf' },
   { family: 'Londrina Solid Black', file: 'LondrinaSolid-Black.ttf' },
   { family: 'Figtree',              file: 'Figtree-Variable.ttf' },
@@ -95,9 +95,9 @@ const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 // family as present, and still has the character map read below, so it looks
 // loaded, and then every glyph draws EMPTY: the child's first name, a custom
 // label, the TEST band, all blank on paper while /health says the fonts are
-// fine. Measured with the kit's Galindo cut to anywhere from ~10% to ~60% of
-// its length. The canvas cannot fall back from a face it thinks it has, so the
-// only safe place to catch it is here, before registration.
+// fine. Measured with the kit's shout font (then Galindo) cut to anywhere from
+// ~10% to ~60% of its length. The canvas cannot fall back from a face it thinks
+// it has, so the only safe place to catch it is here, before registration.
 //
 // So check the file the way the format lets you: a real sfnt header, a table
 // directory that fits, every table inside the file, the tables a TrueType or
