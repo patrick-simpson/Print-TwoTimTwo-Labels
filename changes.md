@@ -1,4 +1,9 @@
-﻿## [6.18.0] - 2026-09-29
+﻿## [6.18.1] - 2026-09-30
+The Club Print button in the browser extension moves about an inch to the left, off TwoTimTwo's search magnifier.
+
+**What changed.** The extension's collapsed "Club Print" pill (and the panel it opens) is pinned to the top-right of the TwoTimTwo page, and there it sat on top of the site's own search magnifying glass. It is now pinned 12 px + 96 px (about an inch) in from the right edge instead of 12 px, at the same height, so the magnifier is uncovered. Nothing else about the widget changed. As with any extension change, it reaches a check-in PC after the app update and one Chrome restart (the app syncs the extension folder on launch).
+
+## [6.18.0] - 2026-09-29
 The labels and the operator's screens change their headline font from Galindo to Paytone One, because the owner said Galindo "looks too much like SpongeBob".
 
 ### One font swap, everywhere the printer shouts

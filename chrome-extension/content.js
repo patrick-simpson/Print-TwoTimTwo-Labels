@@ -2,7 +2,7 @@
   if (window.__awanaPrinterLoaded) return;
   window.__awanaPrinterLoaded = true;
 
-  const EXTENSION_VERSION = '6.18.0';
+  const EXTENSION_VERSION = '6.18.1';
   const PRINT_COOLDOWN = 2000;
   // POST /print is synchronous on the server: PowerShell + a cold printer can
   // take 15-30 s (the server retries the spooler internally). This must sit
@@ -854,6 +854,9 @@
     // numbers can never drift apart.
     const PANEL_TOP = 55;   // clears TwoTimTwo's two nav bars
     const PANEL_GAP = 12;   // breathing room at the bottom edge
+    // TwoTimTwo's search magnifier sits in the top-right corner and the pill
+    // covered it, so the widget is pulled in by about an inch (96 CSS px).
+    const PANEL_RIGHT = PANEL_GAP + 96;
 
     // ── Expanded state: full panel ──
     const panel = document.createElement('div');
@@ -2799,7 +2802,7 @@
     Object.assign(widget.style, {
       position: 'fixed',
       top: PANEL_TOP + 'px',
-      right: PANEL_GAP + 'px',
+      right: PANEL_RIGHT + 'px',
       zIndex: '99999',
       // Bound here too, so the widget itself can never be taller than the
       // screen even if a future child ignores the panel's own cap.
