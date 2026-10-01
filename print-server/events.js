@@ -486,6 +486,154 @@ function buildSlidesChunks(slides, deckRev, publishedAt) {
   return chunks;
 }
 
+// ── Shared display settings (contract v6) ─────────────────────────────────────
+// The lobby screens' SHARED settings, published from the display app's Settings
+// on the check-in computer (POST /api/display-settings) and mirrored to every
+// screen over the sealed `settings` event, so a change made once reaches every
+// screen. Per-screen settings (what plays behind the names, the uploads, this
+// TV's sound, motion, confetti and wake lock, simplified mode, the Pusher keys)
+// are not in this table and can never ride the wire.
+//
+// One table, mirrored in contract-vectors.json `events.settings.keys` (and in
+// the display repo's src/lib/sharedSettings.js); test-contracts.cjs fails if
+// the two drift. Every key is optional: a payload carries only what the
+// publisher had, and a consumer keeps its own value for anything absent.
+//
+// No names, ever: these are thresholds, switches, times and church-authored
+// copy (the welcome wording and one short line per club).
+const SETTINGS_SPEC = {
+  standardDisplayMs: { type: 'int', min: 2000, max: 20000 },
+  specialDisplayMs: { type: 'int', min: 3000, max: 25000 },
+  clubPhrases: { type: 'phrases', maxKeys: 15, maxKey: 40, maxValue: 80 },
+  showBirthdayWeekRibbon: { type: 'bool' },
+  clubTintBackground: { type: 'bool' },
+  firstArrivalMoment: { type: 'bool' },
+  milestoneEvery: { type: 'int', min: 0, max: 10000 },
+  clubMilestoneEvery: { type: 'int', min: 0, max: 1000 },
+  bookMilestones: { type: 'intList', maxItems: 8, min: 1, max: 10000 },
+  awardMilestones: { type: 'intList', maxItems: 8, min: 1, max: 10000 },
+  showClock: { type: 'bool' },
+  showTally: { type: 'bool' },
+  showTallySyncNote: { type: 'bool' },
+  showWeatherChip: { type: 'bool' },
+  weatherLocationName: { type: 'string', max: 80 },
+  weatherLat: { type: 'number', min: -90, max: 90 },
+  weatherLon: { type: 'number', min: -180, max: 180 },
+  weatherUnits: { type: 'enum', values: ['fahrenheit', 'celsius'] },
+  calendarEnabled: { type: 'bool' },
+  calendarUrl: { type: 'url', max: 300 },
+  calendarWelcomeText: { type: 'string', max: 80 },
+  calendarShowWelcome: { type: 'bool' },
+  calendarShowNextWeek: { type: 'bool' },
+  calendarShowRemaining: { type: 'bool' },
+  seasonPromos: { type: 'bool' },
+  checkoutBoardMode: { type: 'enum', values: ['off', 'pickup', 'always'] },
+  checkoutBoardNamesAbove: { type: 'int', min: 0, max: 200 },
+  checkoutBoardStaleMin: { type: 'int', min: 1, max: 120 },
+  checkoutBoardFrom: { type: 'time' },
+  checkoutBoardUntil: { type: 'time' },
+  cornerStillHere: { type: 'bool' },
+  nightTheme: { type: 'slug', max: 32 },
+  followPrinterTheme: { type: 'bool' },
+  particleEffect: { type: 'enum', values: ['auto', 'off', 'snow', 'rain', 'sparkle'] },
+  weatherTheme: { type: 'bool' },
+  aprilFools: { type: 'bool' },
+};
+// The whole settings object's serialized JSON. The worst case the caps admit
+// (15 full club lines, every string at its cap) is ~3.3 KB; with the envelope's
+// length prefix and the {rev, publishedAt} wrapper it seals into the 4096 rung.
+const SETTINGS_JSON_MAX = 3800;
+const SETTINGS_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SETTINGS_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/** One value against its spec: the clean value, or undefined to drop it. */
+function settingValue(spec, v) {
+  switch (spec.type) {
+    case 'bool':
+      return typeof v === 'boolean' ? v : undefined;
+    case 'int': {
+      if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+      const n = Math.round(v);
+      return Math.min(spec.max, Math.max(spec.min, n));
+    }
+    case 'number':
+      if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+      return Math.min(spec.max, Math.max(spec.min, v));
+    case 'enum':
+      return spec.values.includes(v) ? v : undefined;
+    case 'string': {
+      if (typeof v !== 'string') return undefined;
+      return plainText(v, spec.max);
+    }
+    case 'url': {
+      if (typeof v !== 'string') return undefined;
+      const s = v.trim();
+      if (!s) return '';
+      if (s.length > spec.max || !/^https:\/\/[^\s<>"']+$/i.test(s)) return undefined;
+      return s;
+    }
+    case 'time':
+      return typeof v === 'string' && SETTINGS_TIME_RE.test(v) ? v : undefined;
+    case 'slug':
+      return typeof v === 'string' && v.length <= spec.max && SETTINGS_SLUG_RE.test(v) ? v : undefined;
+    case 'intList': {
+      if (!Array.isArray(v)) return undefined;
+      const out = [...new Set(v
+        .filter((x) => typeof x === 'number' && Number.isFinite(x))
+        .map((x) => Math.round(x))
+        .filter((x) => x >= spec.min && x <= spec.max))]
+        .sort((a, b) => a - b)
+        .slice(0, spec.maxItems);
+      return out;
+    }
+    case 'phrases': {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+      const out = {};
+      for (const [k, phrase] of Object.entries(v).slice(0, spec.maxKeys)) {
+        const key = String(k).trim().toLowerCase().slice(0, spec.maxKey);
+        if (!key || typeof phrase !== 'string') continue;
+        const text = plainText(phrase, spec.maxValue);
+        if (text) out[key] = text;
+      }
+      return out;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Reduce an incoming settings object to exactly the shared allowlist, every
+ * value checked against its spec. Unknown keys, wrong types and per-screen
+ * keys are dropped, never coerced from strings. Returns {} for junk.
+ */
+function buildDisplaySettings(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, spec] of Object.entries(SETTINGS_SPEC)) {
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    const clean = settingValue(spec, raw[key]);
+    if (clean !== undefined) out[key] = clean;
+  }
+  return out;
+}
+
+/** Serialized size of sanitized settings — the publish endpoint's size gate. */
+function displaySettingsJsonBytes(settings) {
+  return Buffer.byteLength(JSON.stringify(settings), 'utf8');
+}
+
+/** The wire payload: {rev, publishedAt, settings}, or null if it cannot seal. */
+function buildSettingsPayload(settings, rev, publishedAt) {
+  const payload = {
+    rev: Math.max(1, Math.floor(Number(rev) || 1)),
+    publishedAt: String(publishedAt),
+    settings: buildDisplaySettings(settings),
+  };
+  if (paddedSize('settings', Buffer.byteLength(JSON.stringify(payload), 'utf8')) == null) return null;
+  return payload;
+}
+
 // ── Club-night window ─────────────────────────────────────────────────────────
 // clubNights: [{ dow: 0-6 (Sunday=0), start: "HH:MM", end: "HH:MM" }].
 // Pure function of the supplied date (defaults to now) so it's testable.
@@ -550,7 +698,7 @@ function isClubNightNow(clubNights, date, graceMinutes = 0) {
 //   plaintext = u32be(jsonByteLength) || json || zero filler
 //   ct        = aesgcm_ciphertext || 16-byte tag   (WebCrypto's layout)
 const ENVELOPE_VERSION = 1;
-const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays', 'checkout', 'slides']);
+const ENCRYPTED_EVENTS = new Set(['checkin', 'recap', 'birthdays', 'checkout', 'slides', 'settings']);
 // checkin gets a FIXED pad: it is the frame that matters, one child per event,
 // so its length must reveal nothing at all. 512 covers the true worst case —
 // note the builders cap names at 40 CHARACTERS, and a character can be 4 bytes
@@ -594,7 +742,9 @@ function paddedSize(event, jsonByteLength) {
     // publish() fails closed rather than leaking a length.
     return needed <= CHECKIN_PAD ? CHECKIN_PAD : null;
   }
-  if (event === 'slides') {
+  // `settings` (contract v6) rides the same short ladder for the same reason:
+  // one frame, capped well under 4096, and no rung Pusher cannot deliver.
+  if (event === 'slides' || event === 'settings') {
     for (const rung of SLIDES_PAD_LADDER) if (needed <= rung) return rung;
     return null;   // fail closed — see SLIDES_PAD_LADDER above
   }
@@ -994,6 +1144,11 @@ module.exports = {
   SLIDES_TOTAL_MAX,
   SLIDES_DECK_JSON_MAX,
   SLIDES_CHUNK_JSON_BUDGET,
+  SETTINGS_SPEC,
+  SETTINGS_JSON_MAX,
+  buildDisplaySettings,
+  buildSettingsPayload,
+  displaySettingsJsonBytes,
   isClubNightNow,
   parseHM,
   publish,

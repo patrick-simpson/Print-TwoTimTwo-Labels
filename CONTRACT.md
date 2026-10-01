@@ -1,4 +1,4 @@
-﻿# Club Event Bus Contract (v5)
+﻿# Club Event Bus Contract (v6)
 
 This document pins the payload schemas for every event on the shared Pusher
 channel **`awana-channel`**. The **print server in this repo is the ONLY
@@ -155,6 +155,31 @@ of an accepted publish seals into the `slides` pad ladder (`[2048, 4096]`,
 **fail closed** above — the 8192 rung would base64-inflate past Pusher's
 ceiling, so it must not exist for this event).
 
+### `settings` — the lobby screens' shared settings (v6, sealed, one frame)
+
+Published by the print server when the display app's Settings, open on the
+check-in computer, changes a SHARED setting (it POSTs the whole shared set to
+`/api/display-settings`, with the publish token from the display app's
+origin, exactly like `/api/lobby-slides`), then rebroadcast whole every ~5
+minutes so a rebooted screen converges. Sealed: it carries church-authored
+copy (the welcome wording and one short line per club).
+
+| Field | Type | Notes |
+|---|---|---|
+| `rev` | int ≥ 1 | Operator-facing counter; may restart at 1. **Never** the ordering authority. |
+| `publishedAt` | string (ISO 8601) | **The** ordering + anti-replay authority. A consumer applies a payload iff its `publishedAt` is strictly newer than the one it holds. Rebroadcasts reuse it byte-identically. |
+| `settings` | object | ONLY keys from `events.settings.keys` in the vectors, each checked against its rule (bool, a clamped int or number, an enum, a capped plain string, an https URL, an `HH:MM` time, a lowercase skin id, a repaired list of thresholds, or up to 15 club lines of 80 characters). Every key is optional. |
+
+**Shared, not per-screen.** What plays behind the names, the uploads, this
+TV's sound, motion, confetti, wake lock and simplified mode, and the Pusher
+keys are per-screen and are not in the table, so they can never ride the
+wire; the publisher drops them, and so does every consumer. A consumer that
+lacks a key keeps its own value. **No names, ever:** thresholds, switches,
+times and church copy. The publisher caps the settings object's JSON at
+3 800 bytes (the worst case the caps admit is well under it) and refuses
+anything bigger with a 413 before committing, so every accepted frame seals
+into the `[2048, 4096]` ladder `slides` uses, fail closed above.
+
 ### `update` — laptop-internal release ping (NOT part of the display contract)
 
 Published once by the release workflow (`.github/workflows/build-electron.yml`)
@@ -213,8 +238,8 @@ exact key sets, correct types, PII structurally impossible, plus the
 The Pusher channel is **public**, and Pusher public channels have no
 server-side authorization primitive — subscription is granted by possession of
 the app key, which must ship in the display's public bundle. So the four
-name-bearing events (`checkin`, `recap`, `birthdays`, `checkout`) and the
-operator-authored `slides` deck are **encrypted** with AES-256-GCM before
+name-bearing events (`checkin`, `recap`, `birthdays`, `checkout`), the
+operator-authored `slides` deck and the shared `settings` are **encrypted** with AES-256-GCM before
 publish; the remaining events ride in the clear on purpose.
 
 This is a **transport** layer, strictly outside the contract above:
