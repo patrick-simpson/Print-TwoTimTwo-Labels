@@ -630,6 +630,51 @@
               <select id="settings-printer"><option value="">Loading...</option></select>
             </div>
             <div>
+              <label>Printer type</label>
+              <select id="settings-printer-type" onchange="toggleReceiptSettings()">
+                <option value="label">Label printer (4&Prime; &times; 2&Prime;)</option>
+                <option value="receipt">Receipt printer (80 mm roll, network) &mdash; trial</option>
+              </select>
+              <div id="receipt-settings" style="display:none; margin-top:8px; padding:10px; border:1px solid #e2e8f0; border-radius:8px">
+                <p style="font-size:11px;color:#64748b;margin:0 0 8px">
+                  Every label prints on the receipt printer instead: today's label turned sideways and scaled to fill the roll
+                  (about 2&#8542;&Prime; &times; 5&#8541;&Prime;), then cut. No tunes. If the receipt printer fails, the label goes to the
+                  printer chosen above instead (if it's connected).
+                </p>
+                <div style="display:grid; grid-template-columns: 2fr 1fr; gap:10px">
+                  <div>
+                    <label>Printer IP address</label>
+                    <input type="text" id="settings-receipt-host" placeholder="192.168.1.50" maxlength="253">
+                  </div>
+                  <div>
+                    <label>Port</label>
+                    <input type="number" id="settings-receipt-port" placeholder="9100" min="1" max="65535">
+                  </div>
+                  <div>
+                    <label>Cut</label>
+                    <select id="settings-receipt-cut">
+                      <option value="full">Full cut (tag drops free)</option>
+                      <option value="partial">Partial cut (tag hangs until torn off)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Printable width (dots)</label>
+                    <input type="number" id="settings-receipt-dots" placeholder="576" min="384" max="832" step="8">
+                  </div>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap">
+                  <button class="btn btn-secondary btn-sm" type="button" onclick="findReceiptPrinters()">Find printers</button>
+                  <button class="btn btn-secondary btn-sm" type="button" onclick="sendReceiptTest()">Send test tag</button>
+                </div>
+                <div id="receipt-found" style="margin-top:6px"></div>
+                <p id="receipt-status" style="font-size:11px;color:#64748b;margin:6px 0 0"></p>
+                <p style="font-size:10px;color:#94a3b8;margin:6px 0 0">
+                  Hold FEED while switching the printer on to print its self-test page with its IP address. 576 dots is 72 mm, the normal width for 80 mm paper.
+                  Find printers looks only on this computer's own network.
+                </p>
+              </div>
+            </div>
+            <div>
               <label>Check-in URL</label>
               <input type="text" id="settings-url" placeholder="https://yourchurch.twotimtwo.com/clubber/checkin">
             </div>
@@ -1821,6 +1866,67 @@ function toggleRehearsal() {
 }
 
 // Musical printer (#11/#12): the demo button. 409 means the toggle is off.
+// ── Receipt-printer trial ─────────────────────────────────────────────────────
+function toggleReceiptSettings() {
+  var on = document.getElementById('settings-printer-type').value === 'receipt';
+  document.getElementById('receipt-settings').style.display = on ? '' : 'none';
+}
+
+function receiptFormValues() {
+  return {
+    receiptHost: document.getElementById('settings-receipt-host').value.trim(),
+    receiptPort: document.getElementById('settings-receipt-port').value.trim(),
+    receiptDots: document.getElementById('settings-receipt-dots').value.trim(),
+    receiptCut: document.getElementById('settings-receipt-cut').value
+  };
+}
+
+function setReceiptStatus(text, bad) {
+  var el = document.getElementById('receipt-status');
+  el.textContent = text;
+  el.style.color = bad ? '#b91c1c' : '#64748b';
+}
+
+function sendReceiptTest() {
+  setReceiptStatus('Sending a test tag…');
+  fetch(BASE + '/receipt/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(receiptFormValues()) })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) return setReceiptStatus('Test tag failed: ' + ((res.d && res.d.error) || 'unknown error'), true);
+      var st = res.d.status || {};
+      setReceiptStatus('Test tag sent to ' + res.d.host + '.' + (st.unknown ? ' (This printer doesn\'t report paper status.)' : st.paperLow ? ' Paper is nearly out.' : ' Paper OK.')
+        + ' Remember to Save if you changed anything.');
+    })
+    .catch(function() { setReceiptStatus('Could not reach the server.', true); });
+}
+
+function findReceiptPrinters() {
+  var box = document.getElementById('receipt-found');
+  box.textContent = '';
+  setReceiptStatus('Looking for printers on this network (a few seconds)…');
+  fetch(BASE + '/receipt/discover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receiptPort: receiptFormValues().receiptPort }) })
+    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
+    .then(function(res) {
+      if (!res.ok) return setReceiptStatus((res.d && res.d.error) || 'Search failed.', true);
+      var list = res.d.printers || [];
+      if (!list.length) {
+        return setReceiptStatus('No printers answered on ' + ((res.d.subnets || []).join(', ') || 'this network')
+          + '. Check the cable and that the printer is on, or type its IP from the self-test page.', true);
+      }
+      setReceiptStatus('Found ' + list.length + '. Pick one, then Send test tag.');
+      list.forEach(function(p) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-secondary btn-sm';
+        b.style.marginRight = '6px';
+        b.textContent = p.host;
+        b.onclick = function() { document.getElementById('settings-receipt-host').value = p.host; setReceiptStatus('Selected ' + p.host + '. Send a test tag, then Save.'); };
+        box.appendChild(b);
+      });
+    })
+    .catch(function() { setReceiptStatus('Could not reach the server.', true); });
+}
+
 function playTune() {
   fetch(BASE + '/play-tune', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
     .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, d: d }; }); })
@@ -1892,6 +1998,12 @@ function loadSettings() {
     document.getElementById('settings-label-footer').value = config.labelFooter || '';
     document.getElementById('settings-season-theme').value = config.seasonTheme || 'auto';
     document.getElementById('settings-musical').checked = config.musicalPrinter === true;
+    document.getElementById('settings-printer-type').value = config.printerType === 'receipt' ? 'receipt' : 'label';
+    document.getElementById('settings-receipt-host').value = config.receiptHost || '';
+    document.getElementById('settings-receipt-port').value = config.receiptPort || '';
+    document.getElementById('settings-receipt-dots').value = config.receiptDots || '';
+    document.getElementById('settings-receipt-cut').value = config.receiptCut === 'partial' ? 'partial' : 'full';
+    toggleReceiptSettings();
     document.getElementById('settings-update-beacon').checked = config.updateBeacon === true;
     document.getElementById('settings-ft-inverted').checked = config.firstTimerInverted !== false;
     document.getElementById('settings-trophy-band').checked = config.trophyBand !== false;
@@ -2229,6 +2341,11 @@ function saveSettings() {
       labelFooter: document.getElementById('settings-label-footer').value.trim(),
       seasonTheme: document.getElementById('settings-season-theme').value,
       musicalPrinter: document.getElementById('settings-musical').checked,
+      printerType: document.getElementById('settings-printer-type').value,
+      receiptHost: document.getElementById('settings-receipt-host').value.trim(),
+      receiptPort: document.getElementById('settings-receipt-port').value.trim(),
+      receiptDots: document.getElementById('settings-receipt-dots').value.trim(),
+      receiptCut: document.getElementById('settings-receipt-cut').value,
       updateBeacon: document.getElementById('settings-update-beacon').checked,
       firstTimerInverted: document.getElementById('settings-ft-inverted').checked,
       trophyBand: document.getElementById('settings-trophy-band').checked,
@@ -2383,6 +2500,18 @@ function renderNightStatus(h) {
       rows += statusRow('🎵', 'Musical printer', "last tune '" + mt.last.tune + "' played " + formatTime(mt.last.at));
     } else {
       rows += statusRow('❌', 'Musical printer', "tune '" + mt.last.tune + "' FAILED: " + (mt.last.error || 'unknown') + ' at ' + formatTime(mt.last.at));
+    }
+  }
+
+  var rp = h.receiptPrinter;
+  if (rp && rp.enabled) {
+    var rpWhere = rp.host ? ' (' + rp.host + ')' : '';
+    if (!rp.last) {
+      rows += statusRow('🟡', 'Receipt printer', 'on' + rpWhere + ' — nothing printed yet this session');
+    } else if (rp.last.ok) {
+      rows += statusRow(rp.last.paperLow ? '🟡' : '✅', 'Receipt printer', 'last tag printed ' + formatTime(rp.last.at) + rpWhere + (rp.last.paperLow ? ' — paper nearly out' : ''));
+    } else {
+      rows += statusRow('❌', 'Receipt printer', 'FAILED: ' + (rp.last.error || 'unknown') + (rp.last.fellBackTo ? ' — printing on ' + rp.last.fellBackTo + ' instead' : '') + ' at ' + formatTime(rp.last.at));
     }
   }
 
