@@ -9,12 +9,12 @@ import { Icon, IconName } from './Icons';
  */
 
 export const URLS = {
-  labels: 'https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/',
-  checkin: 'https://patrick-simpson.github.io/Awana-Check-in-Display/about.html',
-  journey: 'https://patrick-simpson.github.io/Journey-Display/about.html',
-  srcLabels: 'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels',
-  srcCheckin: 'https://github.com/patrick-simpson/Awana-Check-in-Display',
-  srcJourney: 'https://github.com/patrick-simpson/Journey-Display',
+  labels: 'https://awana.kvbchurch.org/',
+  checkin: 'https://awana.kvbchurch.org/lobby/about.html',
+  journey: 'https://awana.kvbchurch.org/journey/about.html',
+  srcLabels: 'https://github.com/patrick-simpson/kvbcawana/tree/main/printer',
+  srcCheckin: 'https://github.com/patrick-simpson/kvbcawana/tree/main/lobby',
+  srcJourney: 'https://github.com/patrick-simpson/kvbcawana/tree/main/journey',
 } as const;
 
 export interface SubLink { href: string; label: string; current?: boolean }

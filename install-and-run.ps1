@@ -1,5 +1,5 @@
 ﻿# Club Label Print Server -- All-in-One Installer
-# Version    : 6.21.0
+# Version    : 6.22.0
 # Updated    : 2026-04-17
 #
 # DEPRECATED: this script install is superseded by the Windows app installer
@@ -32,7 +32,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
-$ScriptVersion = "6.21.0"
+$ScriptVersion = "6.22.0"
 
 # The repository this install pulls its code from. A FORK must change this (or
 # pass -RepoSlug), otherwise the installer downloads upstream's code instead of
@@ -79,7 +79,7 @@ function Test-SafeWebUrl {
 
 Write-Host ""
 Write-Host "  NOTE: There's now a simpler Windows app installer that replaces this script:" -ForegroundColor Yellow
-Write-Host "  https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest" -ForegroundColor Yellow
+Write-Host "  https://awana.kvbchurch.org/download/club-label-printer" -ForegroundColor Yellow
 Write-Host "  This script still works, but will be removed in a future release." -ForegroundColor Yellow
 Write-Host ""
 

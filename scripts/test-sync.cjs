@@ -66,6 +66,7 @@ globalThis.fetch = async (url, init = {}) => {
     return reply(200, { session: SESSION, displayKey: service.key, pusher: { key: 'k', cluster: 'us2' }, state: {} });
   }
   if (route === '/v1/state') return reply(service.stateStatus, {});
+  if (route === '/v1/publish') return reply(200, { ok: true, screens: 2 });
   if (route === '/v1/slides') return reply(service.publishStatus, { deckRev: 5, publishedAt: '2026-10-01T18:00:00.000Z', slideCount: 1, droppedCount: 0 });
   if (route === '/v1/settings') return reply(service.publishStatus, { rev: 3, publishedAt: '2026-10-01T18:00:00.000Z', keyCount: 1 });
   return reply(404, {});
@@ -135,6 +136,23 @@ async function main() {
     check('/health: signed in, never the session', h.body.sync.signedIn === true && !JSON.stringify(h.body).includes(SESSION));
     const cfg = await j('/config', { headers: { Origin: 'https://patrick-simpson.github.io' } });
     check('the session is a secret: not in /config for anyone else', cfg.body && cfg.body.syncSession === undefined);
+  }
+
+  console.log('sync: every live frame also goes to the service, sealed, in order');
+  {
+    const events = require(path.join(__dirname, '..', 'print-server', 'events.js'));
+    const before = service.calls.length;
+    const pusher = { trigger: () => Promise.resolve() };
+    await events.publish(pusher, 'awana-channel', 'checkin', events.buildCheckin({ id: 'c1', firstName: 'Noah', lastName: 'Secret', club: 'Sparks' }) || { id: 'c1', firstName: 'Noah', club: 'Sparks', at: new Date().toISOString() });
+    await events.publish(pusher, 'awana-channel', 'tally', { counts: { Sparks: 4 }, total: 4, at: new Date().toISOString() });
+    await events.publish(pusher, 'cache-awana-channel-provision', 'provision', { v: 1 });
+    await settle(150);
+    const sent = service.calls.slice(before).filter((c) => c.route === '/v1/publish');
+    check('two frames relayed, in order, never the provision channel', sent.length === 2 && sent[0].body.event === 'checkin' && sent[1].body.event === 'tally', JSON.stringify(sent.map((c) => c.body.event)));
+    check('with the session', sent.every((c) => c.auth === `Bearer ${SESSION}`));
+    check('the check-in is sealed on the way (no name in the clear)', sent[0] && sent[0].body.payload.v === 1 && !JSON.stringify(sent[0].body).includes('Noah'));
+    const alone = await events.publish(null, 'awana-channel', 'tally', { counts: {}, total: 0, at: new Date().toISOString() });
+    check('with no Pusher at all, the service is the path', alone === true);
   }
 
   console.log('sync: the old paths go quiet');

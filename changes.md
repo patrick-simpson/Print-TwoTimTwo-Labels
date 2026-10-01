@@ -1,4 +1,17 @@
-﻿## [6.21.0] - 2026-10-01
+﻿## [6.22.0] - 2026-10-01
+The move to awana.kvbchurch.org: updates now come from the church's own site, and every live frame also goes to the sync service's own channel while this computer is signed in.
+
+**Updates.** electron-updater reads https://awana.kvbchurch.org/updates/printer/latest.yml (the generic provider) instead of this repo's GitHub releases, because the printer now lives in the kvbc-awana repo beside the lobby's own Windows app, and two apps cannot share one repo's "Latest" release. The installer itself is still a GitHub release asset. This release is the bridge: the last one from Print-TwoTimTwo-Labels.
+
+**Addresses.** The dashboard and the sync client find the service through awana.kvbchurch.org; the repair dialog, the Install Guide and the extension popup download from awana.kvbchurch.org/download/club-label-printer.
+
+**The live relay.** Every live frame also goes to the sync service's own channel while this computer is signed in (the one-site move, step 3).
+
+**Why.** Screens signed in to the sync service now listen on its live channel instead of Pusher, where only signed-in screens can listen, so arrival timing and headcount stop being public. The names were already sealed and still are.
+
+**How.** `events.setRelay()`: after `publish()` seals a frame, it is also POSTed to the service's `/v1/publish`, one at a time and in order, with the session (`server.js`). Only the display channel's events, never the provision frame. With no Pusher configured at all, the service is the only path. 
+
+## [6.21.0] - 2026-10-01
 Sign this computer in to the church's sync service with the same passphrase every screen types, so the screens keep syncing with this computer switched off.
 
 **Why.** The owner wants one word ("kennebec") to set up any screen, and settings, slides and the calendar to stay in step without this laptop being on. The screens now sync through an always-on service (a Cloudflare Worker in the Awana-Check-in-Display repo, `worker/`), and this computer signs in to it like any screen.
