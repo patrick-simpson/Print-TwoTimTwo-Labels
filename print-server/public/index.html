@@ -718,6 +718,26 @@
               </div>
               <p id="display-key-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
             </div>
+            <div id="sync-section" style="display:none; margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+              <label class="section-label">Sync service &mdash; one passphrase for every screen</label>
+              <p style="font-size:11px; color:#64748b; margin-bottom:8px">
+                The church&rsquo;s screens now sync through an always-on service, so they keep working with this
+                computer switched off. Sign this computer in with the church passphrase (the same word every screen
+                types). It then seals check-ins with the key the screens share, and the lobby slides and shared
+                settings live on the service instead of here. Sign this computer in <strong>before</strong> the
+                screens, so screens set up earlier keep reading names.
+              </p>
+              <div id="sync-signin-row" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                <input type="password" id="sync-passphrase" placeholder="the church passphrase" autocomplete="off" style="flex:1 1 240px"
+                  onkeydown="if (event.key === 'Enter') syncSignIn()">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="syncSignIn()">Sign in</button>
+              </div>
+              <div id="sync-signed-in-row" style="display:none; gap:8px; align-items:center; flex-wrap:wrap">
+                <code id="sync-signed-in-text" style="flex:1 1 240px">signed in</code>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="syncSignOut()">Sign out</button>
+              </div>
+              <p id="sync-note" style="font-size:10px;color:#94a3b8;margin-top:6px"></p>
+            </div>
             <div id="display-login-section" style="margin-top:12px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
               <label class="section-label">Display login &mdash; one passphrase for every screen</label>
               <p style="font-size:11px; color:#64748b; margin-bottom:8px">
@@ -1107,6 +1127,7 @@ function loadHealth() {
     document.getElementById('version-text').textContent = 'v' + data.version + (data.printer ? ' \u00B7 ' + data.printer : '');
     document.getElementById('printer-name').textContent = data.printer || '(default)';
     document.getElementById('uptime-value').textContent = formatUptime(data.uptime || 0);
+    setSyncState(data.sync);
 
     // Update notice with one-click update: the server exits with a special
     // code and the launcher (launch-awana.bat) re-runs the installer.
@@ -2017,6 +2038,7 @@ function loadSettings() {
     // someone to "copy" it into a screen.
     setDisplayKeyState(config.displayKey || '');
     setDisplayLoginState(config.displayLoginPassphrase || '');
+    initSyncSection();
     document.getElementById('settings-fleet-config-url').value = config.fleetConfigUrl || '';
     var body = document.getElementById('schedule-body');
     body.innerHTML = '';
@@ -2244,6 +2266,82 @@ function copyDisplayKey() {
 function clearDisplayKey() {
   if (!confirm("Clear the display key?\n\nThe server drops back to ROLLOUT MODE: names and lobby slides go out unencrypted — and every screen that still holds a key will REFUSE those plaintext events, so keyed screens show no banners and keep their last slide deck. Clear the key on each screen too only if you truly mean to run unencrypted.")) return;
   setDisplayKeyState('');
+}
+
+// ── Sync service ──────────────────────────────────────────────────────────────
+// Where it is comes from the display site's shared/sync.json (GitHub Pages
+// answers it to any origin). Until it names a service this section stays
+// hidden and the display login below is how screens are set up.
+var SYNC_INDEX = 'https://patrick-simpson.github.io/Awana-Check-in-Display/shared/sync.json';
+var syncUrl = '';
+
+function initSyncSection() {
+  return fetch(SYNC_INDEX, { cache: 'no-store' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      var url = d && typeof d.url === 'string' ? d.url.trim().replace(/\/+$/, '') : '';
+      if (!/^https:\/\/[^\s?#]+$/.test(url)) return;
+      syncUrl = url;
+      document.getElementById('sync-section').style.display = 'block';
+      // Replaced: screens sign in through the service now.
+      document.getElementById('display-login-section').style.display = 'none';
+      loadHealth();
+    })
+    .catch(function() { /* offline: the old display login stays */ });
+}
+
+function setSyncState(sync) {
+  if (!sync) return;
+  var signedIn = !!sync.signedIn;
+  if (sync.url && !syncUrl) {
+    syncUrl = sync.url;
+    document.getElementById('sync-section').style.display = 'block';
+    document.getElementById('display-login-section').style.display = 'none';
+  }
+  document.getElementById('sync-signin-row').style.display = signedIn ? 'none' : 'flex';
+  document.getElementById('sync-signed-in-row').style.display = signedIn ? 'flex' : 'none';
+  var note = document.getElementById('sync-note');
+  if (sync.state === 'signed-out' && !signedIn) {
+    note.textContent = sync.error || 'Signed out: the passphrase was changed. Sign in again with the new one.';
+    note.style.color = '#dc2626';
+  } else if (signedIn) {
+    note.textContent = sync.state === 'unreachable'
+      ? 'Signed in, but the service could not be reached at the last check. Check-ins still print and reach the screens.'
+      : 'Signed in. Lobby slides and shared settings published on this computer go to the service.';
+    note.style.color = sync.state === 'unreachable' ? '#b45309' : '#16a34a';
+  }
+}
+
+function syncSignIn() {
+  var input = document.getElementById('sync-passphrase');
+  var note = document.getElementById('sync-note');
+  var passphrase = input.value.trim();
+  if (!passphrase) { note.textContent = 'Type the passphrase first.'; note.style.color = '#b45309'; return; }
+  note.textContent = 'Signing in…'; note.style.color = '#64748b';
+  fetch(BASE + '/config/sync-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ passphrase: passphrase, url: syncUrl }),
+  }).then(function(r) { return r.json().then(function(b) { return { ok: r.ok, body: b || {} }; }); })
+    .then(function(res) {
+      if (!res.ok) {
+        var extra = res.body.triesLeft !== undefined ? ' ' + res.body.triesLeft + ' tries left before a 15-minute wait.' : '';
+        note.textContent = (res.body.error || 'Sign-in failed') + extra; note.style.color = '#dc2626';
+        return;
+      }
+      input.value = '';
+      note.textContent = 'Signed in (key ' + res.body.kid + ').' + (res.body.changedKey ? ' This computer now seals with the key the screens share.' : '');
+      note.style.color = '#16a34a';
+      loadHealth();
+    })
+    .catch(function() { note.textContent = 'Could not reach the print server.'; note.style.color = '#dc2626'; });
+}
+
+function syncSignOut() {
+  if (!confirm('Sign this computer out of the sync service?\n\nCheck-ins keep printing and keep their key. Slides and shared settings published here stay on this computer until it signs in again.')) return;
+  fetch(BASE + '/config/sync-logout', { method: 'POST' })
+    .then(function() { loadHealth(); })
+    .catch(function() {});
 }
 
 // ── Display login ─────────────────────────────────────────────────────────────
@@ -2543,7 +2641,15 @@ function renderNightStatus(h) {
   } else {
     rows += statusRow('❌', 'Roster CSV', 'missing');
   }
-  if (h.displayLogin && h.displayLogin.configured) {
+  if (h.sync && h.sync.signedIn) {
+    rows += statusRow(h.sync.state === 'unreachable' ? '🟡' : '🔑', 'Sync service',
+      h.sync.state === 'unreachable' ? 'signed in — the service could not be reached at the last check' : 'signed in — screens sync without this computer');
+  } else if (h.sync && h.sync.state === 'signed-out') {
+    rows += statusRow('❌', 'Sync service', 'signed out — the passphrase was changed; sign in again (Settings → Sync service)');
+  }
+  if (h.displayLogin && h.displayLogin.retired) {
+    // replaced by the sync service: nothing to show
+  } else if (h.displayLogin && h.displayLogin.configured) {
     rows += statusRow(h.displayLogin.lastPublishedAt ? '🔑' : '🟡', 'Display login',
       'passphrase set (key ' + (h.displayLogin.kid || '?') + ')'
       + (h.displayLogin.lastPublishedAt ? ' — login frame published ' + formatTime(h.displayLogin.lastPublishedAt)
