@@ -643,7 +643,7 @@ function startServer(config) {
 
 // ─── Self-repair for a broken install ────────────────────────────────────────
 const REPAIR_INSTALLER_URL =
-  'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Club-Label-Printer-Setup.exe';
+  'https://awana.kvbchurch.org/download/club-label-printer';
 
 function offerRepairInstall(errMessage) {
   dialog.showMessageBox({
@@ -656,7 +656,7 @@ function offerRepairInstall(errMessage) {
     cancelId: 2,
   }).then(({ response }) => {
     if (response === 0) downloadAndRunRepairInstaller();
-    else if (response === 1) shell.openExternal('https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest');
+    else if (response === 1) shell.openExternal('https://github.com/patrick-simpson/kvbcawana/releases');
   }).catch(() => { /* dialog dismissed */ });
 }
 

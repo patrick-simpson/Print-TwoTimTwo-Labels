@@ -4,8 +4,8 @@ import { Icon } from './family/Icons';
 
 type ConnectionStatus = 'idle' | 'checking' | 'connected' | 'error';
 
-const INSTALLER_URL = 'https://github.com/patrick-simpson/Print-TwoTimTwo-Labels/releases/latest/download/Club-Label-Printer-Setup.exe';
-const LEGACY_INSTALL_CMD = "powershell -ExecutionPolicy Bypass -Command 'irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex'";
+const INSTALLER_URL = 'https://awana.kvbchurch.org/download/club-label-printer';
+const LEGACY_INSTALL_CMD = "powershell -ExecutionPolicy Bypass -Command 'irm https://awana.kvbchurch.org/install.ps1 | iex'";
 
 const Step: React.FC<{ n: number; title: string; children: React.ReactNode }> = ({ n, title, children }) => (
   <li className="lbl-install__step">

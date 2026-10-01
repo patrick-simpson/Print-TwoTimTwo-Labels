@@ -6,8 +6,10 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      // Base path for GitHub Pages (repository name)
-      base: '/Print-TwoTimTwo-Labels/',
+      // Base path: GitHub Pages serves the repo under its name; the one-site
+      // build (site/build.mjs) serves this at the root of awana.kvbchurch.org
+      // and sets SITE_BASE=/.
+      base: process.env.SITE_BASE || '/Print-TwoTimTwo-Labels/',
       server: {
         port: 3000,
         host: '0.0.0.0',

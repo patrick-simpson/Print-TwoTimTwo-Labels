@@ -1,5 +1,5 @@
 # Club Label Print Server -- Bootstrap Installer
-# Usage: irm https://patrick-simpson.github.io/Print-TwoTimTwo-Labels/install.ps1 | iex
+# Usage: irm https://awana.kvbchurch.org/install.ps1 | iex
 #
 # Downloads and runs the full installer, targeting c:\output as the install directory.
 

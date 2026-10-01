@@ -1060,9 +1060,18 @@ function setPublisherConfigured(isConfigured) {
   publishState.configured = !!isConfigured;
 }
 
+// The sync service's live channel (server.js installs this while the
+// computer is signed in): every frame publish() sends, after sealing, goes
+// there too, so screens listening on the Worker get exactly what Pusher
+// carries. With no Pusher at all (after switch day) it is the only path.
+let relay = null;
+function setRelay(fn) {
+  relay = typeof fn === 'function' ? fn : null;
+}
+
 function publish(pusher, channel, event, payload) {
-  publishState.configured = !!pusher;
-  if (!pusher || !payload) return Promise.resolve(false);
+  publishState.configured = !!pusher || !!relay;
+  if ((!pusher && !relay) || !payload) return Promise.resolve(false);
 
   // Seal the three name-bearing events. FAIL CLOSED: if a display key is
   // configured-but-unusable, or the payload somehow will not fit its fixed
@@ -1089,6 +1098,20 @@ function publish(pusher, channel, event, payload) {
       publishState.encrypting = true;
       body = sealed;
     }
+  }
+
+  // The relay gets the frame exactly as Pusher does: sealed when sealed.
+  const relayed = relay
+    ? Promise.resolve().then(() => relay(channel, event, body)).then((ok) => ok === true, () => false)
+    : null;
+  if (!pusher) {
+    return relayed.then((ok) => {
+      publishState.lastPublishOk = ok;
+      publishState.lastPublishAt = nowIso();
+      publishState.lastEvent = event;
+      publishState.lastError = ok ? null : 'the sync service did not take it';
+      return ok;
+    });
   }
 
   try {
@@ -1154,6 +1177,7 @@ module.exports = {
   publish,
   getPublishState,
   setPublisherConfigured,
+  setRelay,
   // Sealed envelopes — see the block above publish().
   ENVELOPE_VERSION,
   ENCRYPTED_EVENTS,

@@ -22,7 +22,7 @@
 
 'use strict';
 
-const DEFAULT_SYNC_INDEX = 'https://patrick-simpson.github.io/Awana-Check-in-Display/shared/sync.json';
+const DEFAULT_SYNC_INDEX = 'https://awana.kvbchurch.org/lobby/shared/sync.json';
 const SESSION_RE = /^v1\.\d+\.\d+\.[A-Za-z0-9_-]{20,}$/;
 const TIMEOUT_MS = 15000;
 

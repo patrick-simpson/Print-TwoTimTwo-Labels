@@ -1,6 +1,6 @@
 {
   "name": "awana-label-printer",
-  "version": "6.21.0",
+  "version": "6.22.0",
   "description": "Silent label printing for Awana check-in",
   "main": "main.js",
   "scripts": {
@@ -25,9 +25,8 @@
     "appId": "com.kvbc.awana-label-printer",
     "productName": "Club Label Printer",
     "publish": {
-      "provider": "github",
-      "owner": "patrick-simpson",
-      "repo": "Print-TwoTimTwo-Labels"
+      "provider": "generic",
+      "url": "https://awana.kvbchurch.org/updates/printer/"
     },
     "win": {
       "target": "nsis",

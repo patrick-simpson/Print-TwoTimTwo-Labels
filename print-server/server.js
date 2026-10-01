@@ -6311,6 +6311,24 @@ function writeConfigPatch(mutate) {
   applySavedConfig(next);
 }
 
+// Every live frame (check-ins, tally, recap, birthdays, …) also goes to the
+// sync service's channel while signed in, one at a time and in order, so a
+// check-in never lands after the tally that counts it any more than Pusher
+// would. Only the display channel's events: never the provision frame.
+let relayChain = Promise.resolve();
+events.setRelay((channel, event, body) => {
+  if (channel !== EVENT_CHANNEL || !signedInToSync()) return false;
+  const send = () => syncClient.syncRequest(config.syncUrl, '/v1/publish', {
+    method: 'POST', body: { event, payload: body }, session: config.syncSession,
+  }).then((r) => {
+    if (r.status === 401) checkSyncSignIn().catch(() => {});
+    return r.ok;
+  });
+  const next = relayChain.then(send, send);
+  relayChain = next.catch(() => false);
+  return next;
+});
+
 async function checkSyncSignIn() {
   if (!signedInToSync()) return;
   const verdict = await syncClient.syncCheck(config.syncUrl, config.syncSession);
