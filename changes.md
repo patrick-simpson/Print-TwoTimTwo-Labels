@@ -1,4 +1,24 @@
-﻿## [6.18.1] - 2026-09-30
+﻿## [6.19.0] - 2026-10-01
+A trial option: print every label on an 80 mm network receipt printer (ESC/POS, such as a Rongta with an Ethernet jack) on sticky thermal roll, instead of the 4×2 label printer. Off by default; nothing changes for a church that doesn't turn it on.
+
+**Why.** The owner wants to try kids' name tags on a receipt printer for one club night, as a trial that may not continue. So it's one setting that can be flipped back mid-evening, and nothing about the label itself was redesigned.
+
+**What it prints.** The same label the one renderer draws, turned a quarter turn and scaled up to fill the roll's printable width (576 dots, 72 mm, by default), keeping its 2:1 shape: about 2⅞″ wide and 5⅝″ long, then cut. The label's left edge (where the name starts) comes out first. Black and near-black print solid and near-white prints as bare paper; only the in-between tones are dithered, which is what keeps the colour emoji visible: the yellow allergy warning icon and the birthday cake. A plain black/white cutoff printed the yellow warning icon as blank paper, and dithering everything put a speckled halo round the name.
+
+**How it gets there.** Raw ESC/POS straight to the printer's TCP port 9100: no Windows driver, no PowerShell, no spooler. Before each tag the server asks the printer for its status (DLE EOT); out of paper, cover open or a printer error refuses the job before any of it is sent. A printer that doesn't answer the status query still gets the job, because plenty of models skip it. Tags are sent one at a time, so a batch of siblings prints in order.
+
+**If it fails, the child still gets a label.** If the receipt printer can't be reached or refuses the job, that label goes to the 4×2 printer chosen in Settings, provided Windows says it is installed and not offline, and `/health` and the dashboard raise a `receiptFallback` warning naming the reason. With no 4×2 printer available either, the print fails as any print does (`receiptPrinterFailed` on `/health`, the failures list and its Reprint button). The warning clears on the next good tag. A nearly-empty roll raises `receiptPaperLow`.
+
+**Settings → Printer type.** "Receipt printer (80 mm roll, network) — trial" reveals the printer's IP address and port (9100), the cut (full, the default, or partial, where the tag hangs until torn off) and the printable width in dots. **Find printers** looks for anything answering on port 9100 on this computer's own private networks; **Send test tag** prints a TEST tag on the receipt printer only (never the fallback), using the form's values before you save, and records nothing. Diagnostics gains a "Receipt printer" row.
+
+**What it doesn't do.** No tunes while it's on: a receipt head can't play them, and the fallback printer stays quiet too. The startup blank "prewarm" print is skipped. Each tag starts with a short blank lead (the gap between the print head and the cutter), which receipt printers can't avoid. Every print path (check-ins, reprints, award slips, connect cards, leader tags, custom labels, the canary) goes the same way. The public website doesn't mention it yet; it will if the trial sticks.
+
+**For maintainers.**
+- New `print-server/receipt.js`: `rasterizeLabel()` (rotate, scale, mid-tone dither), `buildEscPos()` (ESC @, GS v 0 in 128-row bands, GS V 65/66), `parseStatus()`, the single TCP conversation, the job queue, and `discover()`.
+- `server.js`: `printLabel()` replaces direct `printImage()` calls at every label print site; with `printerType` unset it is exactly `printImage()`. New config keys `printerType` ('receipt'; 'label' deletes it), `receiptHost`, `receiptPort`, `receiptDots`, `receiptCut`; defaults delete their keys. New routes `POST /receipt/test` and `POST /receipt/discover` (trusted origin only). `/health` gains `receiptPrinter` (the address only for this computer) and the three `{type, message}` warnings above.
+- New `scripts/test-receipt.cjs` (in `npm test`): orientation and scale, the dithering rules, the ESC/POS bands and cut, the status bits, and the whole route against a fake network printer (delivery, paper-out refusal, a status-less printer, fallback, no-fallback failure, silence, the default path unchanged).
+
+## [6.18.1] - 2026-09-30
 The Club Print button in the browser extension moves about an inch to the left, off TwoTimTwo's search magnifier.
 
 **What changed.** The extension's collapsed "Club Print" pill (and the panel it opens) is pinned to the top-right of the TwoTimTwo page, and there it sat on top of the site's own search magnifying glass. It is now pinned 12 px + 96 px (about an inch) in from the right edge instead of 12 px, at the same height, so the magnifier is uncovered. Nothing else about the widget changed. As with any extension change, it reaches a check-in PC after the app update and one Chrome restart (the app syncs the extension folder on launch).

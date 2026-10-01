@@ -24,6 +24,7 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 // The catalog brand kit (fonts + official one-colour club marks) the label is
 // set in. Loaded on require; every piece of it fails open — see brand.js.
 const brand = require('./brand');
+const receipt = require('./receipt');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
@@ -2563,6 +2564,85 @@ $pd.Dispose()
   }
 }
 
+// ── Where a label goes: the 4×2 printer, or the receipt-printer trial ─────────
+// Every label print in this file goes through here. With printerType unset
+// (the default) it is exactly printImage(). With printerType 'receipt' the
+// same PNG goes to the network receipt printer (print-server/receipt.js); if
+// that fails, the label goes to the named 4×2 printer when one is set and
+// Windows says it is there, so no child misses a tag. Only when both fail
+// does the caller see an error, and it records the failure as it always has
+// (the dashboard's failures list and its Reprint button).
+let lastReceipt = null;   // { ok, at, error?, fellBackTo?, paperLow? }
+
+// Is the named 4×2 printer installed and not offline? On Windows a job sent
+// to a disconnected USB printer just waits in the queue, which would look like
+// success while the child walks away with nothing. Off Windows (tests) or if
+// the query itself fails, assume yes and let printImage() be the judge.
+function fallbackPrinterReady(name) {
+  if (process.platform !== 'win32') return true;
+  try {
+    const safe = name.replace(/'/g, "''");
+    const raw = execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Printer | Where-Object { $_.Name -eq '${safe}' } | Select-Object WorkOffline,PrinterStatus | ConvertTo-Json -Compress"`,
+      { timeout: 8000, windowsHide: true }
+    ).toString().trim();
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+    return !(p.WorkOffline === true || p.PrinterStatus === 7);
+  } catch {
+    return true;
+  }
+}
+
+async function printLabel(pngPath, printerName) {
+  if (!receipt.isEnabled(config)) {
+    printImage(pngPath, printerName);
+    return { via: 'label' };
+  }
+  const opts = receipt.optionsFrom(config);
+  const at = new Date().toISOString();
+  try {
+    const r = await receipt.printPng(pngPath, opts);
+    lastReceipt = { ok: true, at, paperLow: !!(r.status && r.status.paperLow) };
+    return { via: 'receipt' };
+  } catch (e) {
+    const why = String(e.message || e).slice(0, 160);
+    lastReceipt = { ok: false, at, error: why };
+    console.warn(`[receipt] Print failed: ${why}`);
+    const fallback = String(printerName || PRINTER_NAME || '').trim();
+    if (fallback && isSafePrinterName(fallback) && fallbackPrinterReady(fallback)) {
+      printImage(pngPath, fallback);
+      lastReceipt.fellBackTo = fallback;
+      console.warn(`[receipt] Printed on the 4×2 printer "${fallback}" instead`);
+      return { via: 'fallback', printer: fallback };
+    }
+    throw new Error(`Receipt printer: ${why}. ${fallback
+      ? `The 4×2 printer "${fallback}" is not available either.`
+      : 'No 4×2 printer is set as a fallback.'}`);
+  }
+}
+
+// The /health half: one {type, message} warning while the trial is on and the
+// last receipt print didn't go cleanly. Clears on the next good print.
+function receiptWarnings() {
+  if (!receipt.isEnabled(config)) return [];
+  if (!receipt.isSafeHost(config.receiptHost)) {
+    return [{ type: 'receiptPrinterUnset', message: 'Receipt printer mode is on but no printer address is set. Open Settings → Printer and enter its IP (or press Find printers).' }];
+  }
+  if (!lastReceipt) return [];
+  const when = new Date(lastReceipt.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (!lastReceipt.ok && lastReceipt.fellBackTo) {
+    return [{ type: 'receiptFallback', message: `The receipt printer failed at ${when} (${lastReceipt.error}), so labels are printing on "${lastReceipt.fellBackTo}" instead. Fix it, then press Send test tag in Settings.` }];
+  }
+  if (!lastReceipt.ok) {
+    return [{ type: 'receiptPrinterFailed', message: `The receipt printer failed at ${when} (${lastReceipt.error}) and no 4×2 printer could take the label. Fix it, then reprint from the failures list.` }];
+  }
+  if (lastReceipt.paperLow) {
+    return [{ type: 'receiptPaperLow', message: 'The receipt printer reports its paper roll is nearly out. Have a spare roll ready.' }];
+  }
+  return [];
+}
+
 // ── Musical printer (#11/#12) ─────────────────────────────────────────────────
 // A thermal label printer is a stepper motor with a paper supply, and stepper
 // pitch tracks step rate: vary the feed SPEED and the motor sings. TSPL-family
@@ -2691,6 +2771,9 @@ try {
 let lastTune = null; // { ok, tune, printer, error?, at }
 function playTuneIfEnabled(printerName, tuneName) {
   if (config.musicalPrinter !== true) return false;
+  // The receipt-printer trial is silent on purpose (owner's decision): an
+  // ESC/POS head can't sing, and the 4×2 fallback stays quiet too.
+  if (receipt.isEnabled(config)) return false;
   const name = TUNE_NAMES.includes(tuneName) ? tuneName : nextTuneName();
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -3520,7 +3603,7 @@ async function performCheckinPrint(input) {
     // cycle per label; a birthday kid's label plays Happy Birthday. Played
     // BEFORE the label so the backfeed returns the media to its start.
     playTuneIfEnabled(effectivePrinter, cakeWeek ? 'birthday' : undefined);
-    printImage(pngPath, effectivePrinter);
+    await printLabel(pngPath, effectivePrinter);
     if (!isDemo) recordPrint(dupKey);
 
     // Connect card (#27/#10): first-time families optionally get a second
@@ -3565,7 +3648,7 @@ async function performCheckinPrint(input) {
           extras: where ? { goToLine: where } : {},
         });
         connectPngPath = card.pngPath;
-        printImage(connectPngPath, effectivePrinter);
+        await printLabel(connectPngPath, effectivePrinter);
         console.log(`[print] Connect card printed for ${firstName} ${lastName}${autoFirstTimer && !visitor ? ' (auto: first-ever check-in)' : ''}`);
         // Recorded like an award slip: visible in the dashboard's history,
         // excluded from everything that counts check-ins.
@@ -4787,7 +4870,7 @@ async function reprintRow(entry, printerName, opts = {}) {
       const result = await renderLeaderLabel({ firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName });
       leaderPng = result.pngPath;
       if (!silent) playTuneIfEnabled(effectivePrinter);
-      printImage(leaderPng, effectivePrinter);
+      await printLabel(leaderPng, effectivePrinter);
       addHistoryEntry({
         firstName: entry.firstName, lastName: entry.lastName, clubName: entry.clubName,
         printer: effectivePrinter, success: true, isLeader: true,
@@ -4840,7 +4923,7 @@ async function reprintRow(entry, printerName, opts = {}) {
     pngPath = result.pngPath;
 
     if (!silent) playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
-    printImage(pngPath, effectivePrinter);
+    await printLabel(pngPath, effectivePrinter);
 
     addHistoryEntry({
       firstName: entry.firstName, lastName: entry.lastName,
@@ -5056,7 +5139,7 @@ app.post('/print-award', async (req, res) => {
     pngPath = result.pngPath;
 
     playTuneIfEnabled(effectivePrinter, birthday ? 'birthday' : undefined);
-    printImage(pngPath, effectivePrinter);
+    await printLabel(pngPath, effectivePrinter);
     recordPrint(dupKey);
 
     addHistoryEntry({
@@ -5291,7 +5374,7 @@ async function performLeaderPrint(input) {
     const result = await renderLeaderLabel({ firstName, lastName, clubName, testBanner: isDemo });
     pngPath = result.pngPath;
     playTuneIfEnabled(effectivePrinter);
-    printImage(pngPath, effectivePrinter);
+    await printLabel(pngPath, effectivePrinter);
     if (isDemo) {
       console.log(`[print-leader] Printed a TEST leader tag for '${firstName} ${lastName}' — nothing recorded`);
       return { status: 200, body: { success: true, demo: true } };
@@ -5413,7 +5496,7 @@ app.post('/print-custom', async (req, res) => {
     const result = await generateLabel({ customText: norm.text });
     pngPath = result.pngPath;
     playTuneIfEnabled(effectivePrinter);
-    printImage(pngPath, effectivePrinter);
+    await printLabel(pngPath, effectivePrinter);
     recordPrint(dupKey);
     console.log(`[print-custom] ${norm.text}`);
     return res.json({ success: true });
@@ -6192,7 +6275,7 @@ app.post('/canary', async (req, res) => {
     // two-second motor melody. Failure is swallowed inside — the canary's
     // job is the label and the pipe, never the music.
     playTuneIfEnabled(printerName);
-    printImage(pngPath, printerName);
+    await printLabel(pngPath, printerName);
     stages.push({ stage: 'print', passed: true, detail: `TEST label sent to ${printerName || 'default printer'}` });
   } catch (err) {
     stages.push({ stage: 'print', passed: false, detail: err.message });
@@ -6664,6 +6747,7 @@ app.get('/health', async (req, res) => {
   // otherwise just print plainer labels and nobody would know why.
   const brandKit = brand.status();
   warnings.push(...brand.warnings());
+  warnings.push(...receiptWarnings());
   let csvUpdatedAt = null;
   try {
     csvUpdatedAt = fs.statSync(CSV_FILE).mtime.toISOString();
@@ -6706,6 +6790,14 @@ app.get('/health', async (req, res) => {
     // the exact Win32 error when the RAW path fails — "it just prints
     // normal" must be diagnosable from the dashboard.
     musicalTune: { enabled: config.musicalPrinter === true, last: lastTune },
+    // Receipt-printer trial. The address is a LAN IP (no username in it), but
+    // it's kept to this computer anyway, like every other setting the check-in
+    // site has no business reading.
+    receiptPrinter: {
+      enabled: receipt.isEnabled(config),
+      ...(isTrustedConfigOrigin(req) ? { host: config.receiptHost || null } : {}),
+      last: lastReceipt,
+    },
     // Windows spooler backlog (#256), as NUMBERS rather than prose, so the
     // Night Status card and any future UI don't have to parse a sentence.
     // Counts, ages and spooler status tokens only — deliberately never a
@@ -6915,6 +7007,7 @@ app.post('/config', (req, res) => {
     labelFooter, connectCardAutoFirstTimer, connectCardGreeting, seasonTheme,
     musicalPrinter, updateBeacon, slidesPublishToken, displayLoginPassphrase,
     trophyBand, fleetConfigUrl,
+    printerType, receiptHost, receiptPort, receiptDots, receiptCut,
   } = req.body || {};
   if (!isTrustedConfigOrigin(req) && SECRET_CONFIG_KEYS.some(k => (req.body || {})[k] !== undefined)) {
     return res.status(403).json({ error: 'Pusher/PIN/display-login settings can only be changed from the dashboard or the extension options page' });
@@ -7072,6 +7165,36 @@ app.post('/config', (req, res) => {
     // printer model are a party trick, not a guarantee.
     if (musicalPrinter !== undefined) next.musicalPrinter = !!musicalPrinter;
     if (updateBeacon !== undefined) next.updateBeacon = !!updateBeacon;
+    // Receipt-printer trial (print-server/receipt.js). 'label' is the default
+    // and deletes the key, so a church that never opts in keeps a clean file.
+    if (printerType !== undefined) {
+      const pt = String(printerType || 'label');
+      if (pt === 'label') delete next.printerType;
+      else if (pt === 'receipt') next.printerType = 'receipt';
+      else return res.status(400).json({ error: 'printerType must be label or receipt' });
+    }
+    if (receiptHost !== undefined) {
+      const rh = String(receiptHost || '').trim();
+      if (rh === '') delete next.receiptHost;
+      else if (!receipt.isSafeHost(rh)) return res.status(400).json({ error: 'The receipt printer address must be an IP address like 192.168.1.50' });
+      else next.receiptHost = rh;
+    }
+    if (receiptPort !== undefined) {
+      if (receiptPort === '' || receiptPort === null || Number(receiptPort) === receipt.RECEIPT_DEFAULT_PORT) delete next.receiptPort;
+      else if (!receipt.normalizePort(receiptPort)) return res.status(400).json({ error: 'The receipt printer port must be 1-65535' });
+      else next.receiptPort = receipt.normalizePort(receiptPort);
+    }
+    if (receiptDots !== undefined) {
+      if (receiptDots === '' || receiptDots === null || Number(receiptDots) === receipt.RECEIPT_DEFAULT_DOTS) delete next.receiptDots;
+      else if (!receipt.normalizeDots(receiptDots)) return res.status(400).json({ error: `The printable width must be ${receipt.RECEIPT_MIN_DOTS}-${receipt.RECEIPT_MAX_DOTS} dots` });
+      else next.receiptDots = receipt.normalizeDots(receiptDots);
+    }
+    if (receiptCut !== undefined) {
+      const rc = String(receiptCut || 'full');
+      if (rc === 'full') delete next.receiptCut;
+      else if (rc === 'partial') next.receiptCut = 'partial';
+      else return res.status(400).json({ error: 'receiptCut must be full or partial' });
+    }
     if (enableDrivenCheckin !== undefined) next.enableDrivenCheckin = !!enableDrivenCheckin;
     if (lateGraceMin !== undefined) next.lateGraceMin = Math.max(0, Math.min(120, Number(lateGraceMin) || 0));
     // Worksheets (POST /print-pdf) are letter-size, not 4x2 labels, so a
@@ -7181,6 +7304,54 @@ app.post('/play-tune', (req, res) => {
   const tune = String((req.body || {}).tune || '') || undefined;
   const ok = playTuneIfEnabled(wanted || PRINTER_NAME, tune);
   res.json({ ok, tune: lastTune ? lastTune.tune : null, error: !ok && lastTune ? lastTune.error : undefined });
+});
+
+// Receipt-printer trial: "Send test tag" and "Find printers". Dashboard-only
+// (trusted origin), like /play-tune. The test tag deliberately goes ONLY to the
+// receipt printer, never the 4×2 fallback, because its whole job is to prove
+// that printer works; and it accepts the form's unsaved values so an operator
+// can try an address before saving it. A TEST label records nothing.
+function receiptOverrides(body) {
+  const b = body || {};
+  const out = receipt.optionsFrom({ ...config, ...Object.fromEntries(
+    ['receiptHost', 'receiptPort', 'receiptDots', 'receiptCut']
+      .filter(k => b[k] !== undefined && b[k] !== '').map(k => [k, b[k]])) });
+  return out;
+}
+
+app.post('/receipt/test', async (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The test tag only works from the dashboard on this computer' });
+  }
+  const opts = receiptOverrides(req.body);
+  if (!receipt.isSafeHost(opts.host)) {
+    return res.status(400).json({ error: 'Enter the receipt printer\'s IP address first (or press Find printers)' });
+  }
+  let pngPath = null;
+  try {
+    const result = await generateLabel({ firstName: 'Test tag', lastName: '', clubName: 'Test', testBanner: true });
+    pngPath = result.pngPath;
+    const r = await receipt.printPng(pngPath, opts);
+    lastReceipt = { ok: true, at: new Date().toISOString(), paperLow: !!(r.status && r.status.paperLow) };
+    res.json({ ok: true, host: opts.host, status: r.status });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: String(e.message || e) });
+  } finally {
+    if (pngPath) fs.unlink(pngPath, () => {});
+  }
+});
+
+app.post('/receipt/discover', async (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'Finding printers only works from the dashboard on this computer' });
+  }
+  const port = receipt.normalizePort((req.body || {}).receiptPort) || receipt.RECEIPT_DEFAULT_PORT;
+  try {
+    const printers = await receipt.discover({ port });
+    res.json({ printers, subnets: receipt.localSubnets().map(s => s.base + '.0/24') });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 // Clear a jammed printer's backlog (#256). Gated the way /play-tune and
@@ -7538,7 +7709,8 @@ function prewarmPrinterIfConfigured() {
     const prewarmConfig = fs.existsSync(CONFIG_FILE)
       ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
       : {};
-    if (prewarmConfig.prewarmPrinter) {
+    // Not in receipt mode: a blank 5.7in tag would just waste sticker stock.
+    if (prewarmConfig.prewarmPrinter && !receipt.isEnabled(prewarmConfig)) {
       setTimeout(async () => {
         try {
           console.log('[prewarm] Sending blank label to printer...');
@@ -7766,6 +7938,8 @@ module.exports = {
   easterSunday, seasonForDate, SEASON_KEYS, currentScreenSeason,
   // Musical printer (#11/#12) — the TSPL compiler is the testable artifact.
   buildTuneTspl, nextTuneName, TUNE_NAMES, TUNE_ROTATION,
+  // Receipt-printer trial: the dispatcher every label print goes through.
+  printLabel, receiptWarnings,
   // Spooler backlog (#256). The verdict and both parsers are PURE so the one
   // piece of judgement here is exhaustively testable on a machine with no
   // Windows spooler at all — which is every CI runner this repo has.
