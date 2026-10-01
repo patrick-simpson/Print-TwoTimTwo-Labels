@@ -1,4 +1,22 @@
-﻿## [6.20.0] - 2026-10-01
+﻿## [6.21.0] - 2026-10-01
+Sign this computer in to the church's sync service with the same passphrase every screen types, so the screens keep syncing with this computer switched off.
+
+**Why.** The owner wants one word ("kennebec") to set up any screen, and settings, slides and the calendar to stay in step without this laptop being on. The screens now sync through an always-on service (a Cloudflare Worker in the Awana-Check-in-Display repo, `worker/`), and this computer signs in to it like any screen.
+
+**What signing in does.**
+- This computer seals check-ins with the key the screens share. On the service's very first sign-in it hands over the key it already had, so screens set up before keep reading names; after that it adopts the service's key.
+- The old display login's `provision` frame stops. It sealed the keys under the passphrase on a public channel, where a short word could be guessed offline; the service checks the word online, with guess limits, instead.
+- The lobby deck and the shared settings stop being rebroadcast from here, and a publish made on this computer (the dashboard, or the display app on this computer) is forwarded to the service, which is now their one home.
+- Check-ins never pass through the service.
+
+**Settings → Sync service** (shown once the display site's `shared/sync.json` names a service, in place of the display login): type the passphrase, **Sign in**. If the passphrase is changed on another screen, the service signs this computer out (it also replaces the key): `/health` and Diagnostics say so in red, and the fix is signing in again with the new word.
+
+**For maintainers.**
+- New `print-server/sync-client.js`: the request helpers (`syncLogin`, `syncCheck`, `syncPublish`), no state.
+- `server.js`: `POST /config/sync-login` `{passphrase, url}` and `POST /config/sync-logout` (this computer's trusted surface only), `config.syncUrl` / `config.syncSession` (the session is a `SECRET_CONFIG_KEYS` entry), a 10-minute sign-in check, the provision and rebroadcast gates, the forwarding, and `/health.sync` (`signedIn`, `state`, `error`; never the session) and `/health.displayLogin.retired`. Nothing touches the network until someone signs in.
+- New `scripts/test-sync.cjs` (in `npm test`) against a stand-in service.
+
+## [6.20.0] - 2026-10-01
 Lobby screens share their settings: change one on the check-in computer and every screen follows.
 
 **Why.** The owner wants a Settings change (banner times, celebrations, the pickup board's hours, the season look, the calendar and weather) to reach every lobby screen without walking to each one. Per-screen things (what plays behind the names, uploaded videos and decks, that TV's sound, motion, confetti and wake lock, simplified mode, the connection keys) stay per-screen.

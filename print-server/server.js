@@ -25,6 +25,7 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 // set in. Loaded on require; every piece of it fails open — see brand.js.
 const brand = require('./brand');
 const receipt = require('./receipt');
+const syncClient = require('./sync-client');
 const { execSync } = require('child_process');
 const http  = require('http');
 const https = require('https');
@@ -5874,6 +5875,7 @@ app.post('/api/lobby-slides', (req, res) => {
     console.warn(`[security] Refused lobby-slides publish from ${origin || 'no-origin non-loopback caller'}`);
     return res.status(403).json({ error: 'Lobby slides can be published from the printer dashboard or the display app’s slide editor on this computer.' });
   }
+  if (signedInToSync()) return forwardToSync(res, 'slides', (req.body || {}).slides);
   const result = acceptLobbySlidesPublish((req.body || {}).slides);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   return res.json(result);
@@ -5913,6 +5915,7 @@ app.post('/api/display-settings', (req, res) => {
     console.warn(`[security] Refused display-settings publish from ${origin || 'no-origin non-loopback caller'}`);
     return res.status(403).json({ error: 'Display settings can be published from the display app on this computer.' });
   }
+  if (signedInToSync()) return forwardToSync(res, 'settings', (req.body || {}).settings);
   const result = acceptDisplaySettingsPublish((req.body || {}).settings);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   return res.json(result);
@@ -6074,6 +6077,9 @@ function persistLobbySlides() {
 // rebroadcast that re-stamped it would masquerade as a new publish.
 async function publishLobbySlides() {
   if (lobbySlides.deckRev < 1) return false;    // nothing ever published
+  // Signed in to the sync service, it is the deck's one home and publishes it
+  // itself: a rebroadcast from here would only repeat an older deck.
+  if (signedInToSync()) return false;
   const chunks = events.buildSlidesChunks(lobbySlides.slides, lobbySlides.deckRev, lobbySlides.publishedAt);
   if (!chunks) {
     console.error('[slides] Deck no longer fits the chunk ceiling — NOT published (fail closed)');
@@ -6173,6 +6179,7 @@ function persistDisplaySettings() {
 // Rebroadcasts reuse publishedAt byte-identically, like the deck's.
 async function publishDisplaySettings() {
   if (displaySettings.rev < 1) return false;    // nothing ever published
+  if (signedInToSync()) return false;            // the sync service publishes them
   const payload = events.buildSettingsPayload(displaySettings.settings, displaySettings.rev, displaySettings.publishedAt);
   if (!payload) {
     console.error('[settings] Settings no longer fit one sealed frame — NOT published (fail closed)');
@@ -6254,7 +6261,8 @@ function onTallyWindow(fn) {
 let lastProvisionAt = null;
 let provisionQuietReason = null;
 async function publishProvision() {
-  const reason = !pusher ? 'no pusher'
+  const reason = signedInToSync() ? 'replaced by the sync service'
+    : !pusher ? 'no pusher'
     : !events.getDisplayLoginState().configured ? 'no passphrase'
       : !events.getDisplayKeyState().configured ? 'no display key' : null;
   if (reason) {
@@ -6282,6 +6290,99 @@ async function publishProvision() {
   return ok;
 }
 
+
+// ── The sync service (one passphrase for every screen) ────────────────────────
+// Signed in (config.syncSession + config.syncUrl, both written only by
+// POST /config/sync-login below), this server seals with the service's display
+// key, stops the `provision` login frame and the deck / settings rebroadcasts,
+// and forwards a publish made on this computer to the service. Nothing here
+// touches the network until someone signs in, so a server that never does
+// behaves exactly as before. See print-server/sync-client.js.
+let syncStatus = { state: 'none', checkedAt: null, error: null };
+
+function signedInToSync() {
+  return syncClient.isValidSyncUrl(config.syncUrl) && syncClient.isValidSession(config.syncSession);
+}
+
+function writeConfigPatch(mutate) {
+  const next = fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {};
+  mutate(next);
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2), 'utf8');
+  applySavedConfig(next);
+}
+
+async function checkSyncSignIn() {
+  if (!signedInToSync()) return;
+  const verdict = await syncClient.syncCheck(config.syncUrl, config.syncSession);
+  syncStatus = { state: verdict, checkedAt: new Date().toISOString(), error: null };
+  if (verdict === 'signed-out') {
+    // The passphrase was changed on another screen, which also replaced the
+    // display key: check-ins sealed with ours no longer open on screens that
+    // signed in again. Say so loudly; the session is dropped, so the old
+    // heartbeats resume until someone signs this computer in again.
+    console.error('[sync] Signed out by the sync service (the passphrase was changed). Sign this computer in again: Settings → Sync service.');
+    try {
+      writeConfigPatch((next) => { delete next.syncSession; });
+    } catch (e) { console.warn('[sync] Could not clear the session:', e.message); }
+    syncStatus = { state: 'signed-out', checkedAt: syncStatus.checkedAt, error: 'The passphrase was changed on another screen. Sign this computer in again with the new one.' };
+  }
+}
+
+async function forwardToSync(res, kind, payload) {
+  const r = await syncClient.syncPublish(config.syncUrl, config.syncSession, kind, payload);
+  if (r.status === 0) return res.status(502).json({ error: 'Could not reach the sync service from this computer. Check its internet connection, then publish again.' });
+  if (r.status === 401) {
+    checkSyncSignIn().catch(() => {});
+    return res.status(502).json({ error: 'This computer is signed out of the sync service. Sign it in again (printer dashboard → Settings → Sync service).' });
+  }
+  if (!r.ok) return res.status(r.status).json({ error: (r.body && r.body.error) || `The sync service answered HTTP ${r.status}` });
+  return res.json({ ok: true, viaSync: true, ...(r.body || {}) });
+}
+
+app.post('/config/sync-login', async (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'This computer can only be signed in from its own dashboard' });
+  }
+  const { passphrase, url } = req.body || {};
+  const base = String(url || '').trim().replace(/\/+$/, '');
+  if (!syncClient.isValidSyncUrl(base)) return res.status(400).json({ error: 'That is not a sync service address (https only).' });
+  if (!syncClient.normalizeSyncPassphrase(passphrase)) return res.status(400).json({ error: 'Type the passphrase first.' });
+  const r = await syncClient.syncLogin(base, passphrase, { seedKey: events.getDisplayKeyState().configured ? config.displayKey : '' });
+  if (!r.ok) {
+    const out = { error: r.error, reason: r.reason };
+    if (r.triesLeft !== undefined) out.triesLeft = r.triesLeft;
+    if (r.retryAfterSec !== undefined) out.retryAfterSec = r.retryAfterSec;
+    return res.status(r.status === 0 ? 502 : (r.status === 401 || r.status === 429 ? r.status : 502)).json(out);
+  }
+  if (!events.isValidDisplayKey(r.displayKey)) return res.status(502).json({ error: 'The sync service sent an unusable display key.' });
+  const changedKey = r.displayKey !== config.displayKey;
+  try {
+    writeConfigPatch((next) => {
+      next.syncUrl = base;
+      next.syncSession = r.session;
+      next.displayKey = r.displayKey;
+    });
+  } catch (e) {
+    return res.status(500).json({ error: `Could not save the sign-in: ${e.message}` });
+  }
+  syncStatus = { state: 'ok', checkedAt: new Date().toISOString(), error: null };
+  console.log(`[sync] Signed in to the sync service (key ${events.getDisplayKeyState().kid}${changedKey ? ', adopted the service\'s key' : ''})`);
+  return res.json({ ok: true, kid: events.getDisplayKeyState().kid, changedKey });
+});
+
+app.post('/config/sync-logout', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'This computer can only be signed out from its own dashboard' });
+  }
+  try {
+    writeConfigPatch((next) => { delete next.syncSession; });
+  } catch (e) {
+    return res.status(500).json({ error: `Could not save: ${e.message}` });
+  }
+  syncStatus = { state: 'none', checkedAt: null, error: null };
+  return res.json({ ok: true });
+});
+
 function startClubNightTimers() {
   setInterval(onClubNight(publishRecap), 2 * 60 * 1000);
   setInterval(onTallyWindow(publishTally), 60 * 1000);
@@ -6301,6 +6402,10 @@ function startClubNightTimers() {
   publishLobbySlides().catch(() => {});
   setInterval(() => { publishDisplaySettings().catch(() => {}); }, 5 * 60 * 1000);
   publishDisplaySettings().catch(() => {});
+  // Signed in to the sync service: confirm the sign-in still counts (a
+  // passphrase change elsewhere ends it). No network at all otherwise.
+  setInterval(() => { checkSyncSignIn().catch(() => {}); }, 10 * 60 * 1000);
+  setTimeout(() => { checkSyncSignIn().catch(() => {}); }, 3000);
 }
 
 // ── Selector self-test receiver ───────────────────────────────────────────────
@@ -6949,7 +7054,16 @@ app.get('/health', async (req, res) => {
     },
     // Display login: whether screens can log in with the passphrase, and the
     // fingerprint of the wrapping key — never the passphrase, never the key.
+    // The sync service: whether this computer is signed in, never the session.
+    sync: {
+      signedIn: signedInToSync(),
+      url: syncClient.isValidSyncUrl(config.syncUrl) ? config.syncUrl : null,
+      state: signedInToSync() ? syncStatus.state : (syncStatus.state === 'signed-out' ? 'signed-out' : 'none'),
+      checkedAt: syncStatus.checkedAt,
+      error: syncStatus.error,
+    },
     displayLogin: {
+      retired: signedInToSync(),
       configured: loginState.configured,
       kid: loginState.kid,
       iterations: loginState.iterations,
@@ -7001,7 +7115,7 @@ app.post('/update-now', (req, res) => {
 // Now: the request must come from the loopback interface, AND its Origin (when
 // present) must be the extension or one of this server's own loopback pages.
 // A LAN caller never gets these fields even with a valid PIN.
-const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken', 'displayLoginPassphrase'];
+const SECRET_CONFIG_KEYS = ['pusherSecret', 'phonePin', 'displayKey', 'slidesPublishToken', 'displayLoginPassphrase', 'syncSession'];
 
 // Operator text that ends up printed on a label (labelFooter, the connect-card
 // greeting). Not secrets, but they go onto paper and into config.json, so only
