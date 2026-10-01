@@ -3088,6 +3088,9 @@ const app = express();
 //     outright (403). A form POST with text/plain is never preflighted, so
 //     without this a hostile tab could still WRITE (that is how a crafted name
 //     reached print-history.json and then the dashboard's innerHTML).
+// The two paths the deployed display app may POST to (with the publish token).
+const DISPLAY_PUBLISH_PATHS = new Set(['/api/lobby-slides', '/api/display-settings']);
+
 function corsPolicy(req, res, next) {
   const origin = req.headers.origin;
   // The lobby-slides publish endpoint admits ONE extra caller: the deployed
@@ -3095,7 +3098,9 @@ function corsPolicy(req, res, next) {
   // single path so the display site never gains cross-origin access to the
   // roster or any other endpoint. The bearer publish token — checked in the
   // route — is the actual credential; the origin gate is browser hygiene.
-  const isSlidesPath = req.path === '/api/lobby-slides';
+  // Contract v6 adds the shared display settings, published the same way from
+  // the same app with the same token.
+  const isSlidesPath = DISPLAY_PUBLISH_PATHS.has(req.path);
   const slidesOrigin = isSlidesPath && security.isExactAllowedOrigin(
     origin, security.sanitizeAllowedOrigins(churchConfig.displayOrigins));
   const allowed = slidesOrigin || security.isAllowedOrigin(origin, {
@@ -5889,6 +5894,41 @@ app.get('/api/lobby-slides', (req, res) => {
   });
 });
 
+// ── Shared display settings endpoints (contract v6) ───────────────────────────
+// Same two callers and credentials as the lobby slides: this computer's own
+// trusted surface, or the display app's exact origin with the publish token.
+// The display's Settings publishes here when a SHARED setting changes on the
+// check-in computer; every screen then receives the sealed `settings` event.
+app.post('/api/display-settings', (req, res) => {
+  const origin = req.headers.origin;
+  const fromDisplayOrigin = security.isExactAllowedOrigin(
+    origin, security.sanitizeAllowedOrigins(churchConfig.displayOrigins));
+  if (!isTrustedConfigOrigin(req) && !(fromDisplayOrigin && slidesTokenOk(req))) {
+    if (fromDisplayOrigin && !config.slidesPublishToken) {
+      return res.status(403).json({ error: 'No publish token is set on the print server. Open its dashboard → Lobby slides → Generate publish token (the display login hands it to screens).' });
+    }
+    if (fromDisplayOrigin) {
+      return res.status(403).json({ error: 'Wrong publish token. Log this screen in again, or compare it with the print server dashboard → Lobby slides.' });
+    }
+    console.warn(`[security] Refused display-settings publish from ${origin || 'no-origin non-loopback caller'}`);
+    return res.status(403).json({ error: 'Display settings can be published from the display app on this computer.' });
+  }
+  const result = acceptDisplaySettingsPublish((req.body || {}).settings);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  return res.json(result);
+});
+
+app.get('/api/display-settings', (req, res) => {
+  if (!isTrustedConfigOrigin(req)) {
+    return res.status(403).json({ error: 'The display settings are only readable from this computer' });
+  }
+  res.json({
+    rev: displaySettings.rev,
+    publishedAt: displaySettings.publishedAt || null,
+    settings: displaySettings.settings,
+  });
+});
+
 app.post('/reset-tonight', (req, res) => {
   if ((req.body || {}).confirm !== true) {
     return res.status(400).json({ error: 'confirm: true required — this zeroes tonight on every surface' });
@@ -6102,6 +6142,77 @@ function acceptLobbySlidesPublish(rawSlides) {
   };
 }
 
+// ── Shared display settings (contract v6) ─────────────────────────────────────
+// Same shape of state as the lobby deck: one {rev, publishedAt, settings},
+// persisted in display-settings.json, rebroadcast whole every ~5 minutes so a
+// rebooted screen converges, and ordered by consumers on publishedAt alone.
+const DISPLAY_SETTINGS_FILE = path.join(DATA_DIR, 'display-settings.json');
+let displaySettings = { rev: 0, publishedAt: '', settings: {} };
+try {
+  if (fs.existsSync(DISPLAY_SETTINGS_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(DISPLAY_SETTINGS_FILE, 'utf8'));
+    const rev = Math.floor(Number(raw.rev));
+    const at = Date.parse(raw.publishedAt);
+    if (Number.isFinite(at) && rev >= 1) {
+      displaySettings = { rev, publishedAt: new Date(at).toISOString(), settings: events.buildDisplaySettings(raw.settings) };
+      console.log(`[settings] Loaded display settings rev ${rev} (${Object.keys(displaySettings.settings).length} key(s))`);
+    }
+  }
+} catch (e) {
+  console.warn('[settings] Could not load display-settings.json — starting with none:', e.message);
+}
+
+function persistDisplaySettings() {
+  try {
+    const tmp = DISPLAY_SETTINGS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(displaySettings), 'utf8');
+    fs.renameSync(tmp, DISPLAY_SETTINGS_FILE);
+  } catch (e) { console.warn('[settings] Could not persist display settings:', e.message); }
+}
+
+// Rebroadcasts reuse publishedAt byte-identically, like the deck's.
+async function publishDisplaySettings() {
+  if (displaySettings.rev < 1) return false;    // nothing ever published
+  const payload = events.buildSettingsPayload(displaySettings.settings, displaySettings.rev, displaySettings.publishedAt);
+  if (!payload) {
+    console.error('[settings] Settings no longer fit one sealed frame — NOT published (fail closed)');
+    return false;
+  }
+  // publish() seals (settings is an ENCRYPTED_EVENT) and never throws.
+  return events.publish(pusher, EVENT_CHANNEL, 'settings', payload);
+}
+
+/** Accept a publish: sanitize, gate on size, stamp, persist, broadcast. */
+function acceptDisplaySettingsPublish(rawSettings) {
+  if (!rawSettings || typeof rawSettings !== 'object' || Array.isArray(rawSettings)) {
+    return { ok: false, status: 400, error: 'Body must be { settings: { ... } }' };
+  }
+  const settings = events.buildDisplaySettings(rawSettings);
+  const bytes = events.displaySettingsJsonBytes(settings);
+  if (bytes > events.SETTINGS_JSON_MAX) {
+    return { ok: false, status: 413, error: `Settings too large to broadcast (${bytes} bytes; limit ${events.SETTINGS_JSON_MAX}). Shorten the club lines.` };
+  }
+  const lastMs = Date.parse(displaySettings.publishedAt);
+  const stampMs = Math.max(Date.now(), (Number.isFinite(lastMs) ? lastMs : 0) + 1000);
+  const nextRev = (displaySettings.rev || 0) + 1;
+  const nextStamp = new Date(stampMs).toISOString();
+  if (!events.buildSettingsPayload(settings, nextRev, nextStamp)) {
+    return { ok: false, status: 413, error: 'Settings too large to broadcast in one sealed frame. Shorten the club lines.' };
+  }
+  displaySettings = { rev: nextRev, publishedAt: nextStamp, settings };
+  persistDisplaySettings();
+  publishDisplaySettings();
+  const dropped = Object.keys(rawSettings).length - Object.keys(settings).length;
+  console.log(`[settings] Published display settings rev ${nextRev} (${Object.keys(settings).length} key(s)${dropped > 0 ? `, ${dropped} per-screen/unknown dropped` : ''})`);
+  return {
+    ok: true,
+    rev: nextRev,
+    publishedAt: nextStamp,
+    keyCount: Object.keys(settings).length,
+    droppedCount: Math.max(0, dropped),
+  };
+}
+
 function onClubNight(fn) {
   return () => {
     try {
@@ -6188,6 +6299,8 @@ function startClubNightTimers() {
   // Pusher's quota. Startup broadcast included so a restart re-seeds quickly.
   setInterval(() => { publishLobbySlides().catch(() => {}); }, 5 * 60 * 1000);
   publishLobbySlides().catch(() => {});
+  setInterval(() => { publishDisplaySettings().catch(() => {}); }, 5 * 60 * 1000);
+  publishDisplaySettings().catch(() => {});
 }
 
 // ── Selector self-test receiver ───────────────────────────────────────────────
@@ -6826,6 +6939,13 @@ app.get('/health', async (req, res) => {
       publishedAt: lobbySlides.publishedAt || null,
       slideCount: lobbySlides.slides.length,
       tokenConfigured: Boolean(config.slidesPublishToken),
+    },
+    // Shared display settings (contract v6): which rev the screens are on.
+    // Never the values themselves.
+    displaySettings: {
+      rev: displaySettings.rev,
+      publishedAt: displaySettings.publishedAt || null,
+      keyCount: Object.keys(displaySettings.settings).length,
     },
     // Display login: whether screens can log in with the passphrase, and the
     // fingerprint of the wrapping key — never the passphrase, never the key.

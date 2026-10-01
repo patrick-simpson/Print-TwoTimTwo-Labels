@@ -1,4 +1,19 @@
-﻿## [6.19.0] - 2026-10-01
+﻿## [6.20.0] - 2026-10-01
+Lobby screens share their settings: change one on the check-in computer and every screen follows.
+
+**Why.** The owner wants a Settings change (banner times, celebrations, the pickup board's hours, the season look, the calendar and weather) to reach every lobby screen without walking to each one. Per-screen things (what plays behind the names, uploaded videos and decks, that TV's sound, motion, confetti and wake lock, simplified mode, the connection keys) stay per-screen.
+
+**How.** Exactly the lobby slides' path. The display app's Settings, open on the check-in computer, POSTs the shared set to the new `POST /api/display-settings` (from the display's own origin with the publish token, which the display login already hands out, or from this computer's trusted surface). The server keeps it in `display-settings.json`, and publishes it as one sealed `settings` event, rebroadcast every 5 minutes so a rebooted screen catches up. A screen applies a payload only if its `publishedAt` is newer than the one it holds.
+
+**What can ride it.** Only the keys in one allowlist (`SETTINGS_SPEC` in `events.js`, mirrored in `contract-vectors.json` as `events.settings.keys`), each checked against its rule: switches, clamped numbers, menus, capped plain text, an https calendar URL, `HH:MM` times, a skin id, threshold lists, and up to 15 club lines of 80 characters. Per-screen keys and anything else are dropped. No names ever. The JSON is capped at 3,800 bytes (413 above it, nothing committed), so every frame seals into the 4096 rung.
+
+**For maintainers.**
+- Contract v6: `contract-vectors.json` gains `events.settings` and lists `settings` as encrypted; `envelope-vectors.json` is regenerated with its cases (`settings` pads on the `slides` ladder, `[2048, 4096]`, fail closed). Both mirrored into Awana-Check-in-Display, which ships the consumer half in the same change.
+- `events.js`: `SETTINGS_SPEC`, `buildDisplaySettings()`, `buildSettingsPayload()`, `displaySettingsJsonBytes()`, `SETTINGS_JSON_MAX`.
+- `server.js`: `POST`/`GET /api/display-settings`, the CORS/PNA carve-out now covers both display paths (`DISPLAY_PUBLISH_PATHS`), the 5-minute rebroadcast, and `/health.displaySettings` (`rev`, `publishedAt`, `keyCount`; never the values).
+- New `scripts/test-display-settings.cjs` (in `npm test`); `test-contracts.cjs` pins the builder's table to the contract's and the worst case to one frame.
+
+## [6.19.0] - 2026-10-01
 A trial option: print every label on an 80 mm network receipt printer (ESC/POS, such as a Rongta with an Ethernet jack) on sticky thermal roll, instead of the 4×2 label printer. Off by default; nothing changes for a church that doesn't turn it on.
 
 **Why.** The owner wants to try kids' name tags on a receipt printer for one club night, as a trial that may not continue. So it's one setting that can be flipped back mid-evening, and nothing about the label itself was redesigned.

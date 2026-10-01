@@ -67,8 +67,9 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 console.log('contract-vectors.json — self-consistency');
 {
   // v4 added `checkout` (who is still in the building); v5 added `slides`
-  // (the operator's typed lobby deck, sealed and chunked).
-  check('contractVersion is 5', vectors.contractVersion === 5);
+  // (the operator's typed lobby deck, sealed and chunked); v6 added `settings`
+  // (the lobby screens' shared settings, one sealed frame).
+  check('contractVersion is 6', vectors.contractVersion === 6);
   check('channel is awana-channel', vectors.channel === 'awana-channel');
   for (const [name, spec] of Object.entries(vectors.events)) {
     for (const [i, v] of (spec.valid || []).entries()) {
@@ -471,6 +472,60 @@ console.log('buildSlidesChunks');
     check(`slides.valid[${i}] fits the slides pad ladder`,
       events.paddedSize('slides', Buffer.byteLength(JSON.stringify(v), 'utf8')) !== null);
   }
+}
+
+console.log('buildDisplaySettings (contract v6)');
+{
+  const spec = vectors.events.settings;
+  check('the builder\'s table is the contract\'s, key for key and rule for rule',
+    JSON.stringify(events.SETTINGS_SPEC) === JSON.stringify(spec.keys));
+  check('the size cap is the contract\'s', events.SETTINGS_JSON_MAX === spec.maxJsonBytes);
+  for (const [i, v] of spec.valid.entries()) {
+    const built = events.buildDisplaySettings(v.settings);
+    check(`settings.valid[${i}] passes through unchanged`, JSON.stringify(built) === JSON.stringify(v.settings), JSON.stringify(built));
+    check(`settings.valid[${i}] seals into the 4096 rung`,
+      events.paddedSize('settings', Buffer.byteLength(JSON.stringify(v), 'utf8')) !== null);
+  }
+  for (const [i, d] of spec.dirty.entries()) {
+    const raw = JSON.stringify(events.buildDisplaySettings(d.payload.settings));
+    for (const banned of d.mustNotContain) {
+      check(`settings.dirty[${i}] (${d.reason}) drops ${banned}`, !raw.includes(banned), raw);
+    }
+  }
+  const dirty0 = events.buildDisplaySettings(spec.dirty[0].payload.settings);
+  check('a club line keeps its words once the markup is gone', dirty0.clubPhrases.sparks === 'alert(1) Go!', JSON.stringify(dirty0));
+  check('a value inside its spec survives beside dropped ones', dirty0.milestoneEvery === 25);
+  check('only allowlisted keys ever come out',
+    Object.keys(events.buildDisplaySettings({ ...spec.valid[0].settings, manualSlides: [{ text: 'x' }], audioMuted: false }))
+      .every((k) => Object.prototype.hasOwnProperty.call(spec.keys, k)));
+  check('numbers clamp to their range', events.buildDisplaySettings({ standardDisplayMs: 999999, weatherLat: 200 }).standardDisplayMs === 20000
+    && events.buildDisplaySettings({ weatherLat: 200 }).weatherLat === 90);
+  check('a threshold list is repaired: whole, in range, unique, sorted, capped',
+    JSON.stringify(events.buildDisplaySettings({ bookMilestones: [25, 5, 5, 0, 1e9, 2.4, 'x', 10, 11, 12, 13, 14, 15, 16] }).bookMilestones)
+      === JSON.stringify([2, 5, 10, 11, 12, 13, 14, 15]));
+  check('an empty calendar URL is kept (it means "none")', events.buildDisplaySettings({ calendarUrl: '  ' }).calendarUrl === '');
+  check('junk in, nothing out', JSON.stringify(events.buildDisplaySettings(null)) === '{}'
+    && JSON.stringify(events.buildDisplaySettings(['showClock'])) === '{}');
+  // The worst case the caps admit: every string and club line at its cap.
+  const worst = {};
+  for (const [k, rule] of Object.entries(events.SETTINGS_SPEC)) {
+    if (rule.type === 'bool') worst[k] = true;
+    else if (rule.type === 'int' || rule.type === 'number') worst[k] = rule.max;
+    else if (rule.type === 'enum') worst[k] = rule.values.reduce((a, b) => (b.length > a.length ? b : a));
+    else if (rule.type === 'string') worst[k] = 'x'.repeat(rule.max);
+    else if (rule.type === 'url') worst[k] = 'https://' + 'x'.repeat(rule.max - 8);
+    else if (rule.type === 'time') worst[k] = '23:59';
+    else if (rule.type === 'slug') worst[k] = 'x'.repeat(rule.max);
+    else if (rule.type === 'intList') worst[k] = Array.from({ length: rule.maxItems }, (_, i) => rule.max - i);
+    else if (rule.type === 'phrases') {
+      worst[k] = {};
+      for (let i = 0; i < rule.maxKeys; i += 1) worst[k][`${String(i).padStart(2, '0')}${'k'.repeat(rule.maxKey - 2)}`] = 'p'.repeat(rule.maxValue);
+    }
+  }
+  const worstBuilt = events.buildDisplaySettings(worst);
+  const worstBytes = events.displaySettingsJsonBytes(worstBuilt);
+  check('the worst case the caps admit fits the size cap', worstBytes <= events.SETTINGS_JSON_MAX, `${worstBytes} bytes`);
+  check('and seals into one 4096 frame', events.buildSettingsPayload(worstBuilt, 999999, '2026-10-01T23:35:00.000Z') !== null);
 }
 
 console.log('isClubNightNow');

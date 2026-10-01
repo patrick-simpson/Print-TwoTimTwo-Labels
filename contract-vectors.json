@@ -1,15 +1,16 @@
 {
-  "contractVersion": 5,
+  "contractVersion": 6,
   "channel": "awana-channel",
-  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — bounded and plain-text-forced). v5 adds `slides`: the operator's typed lobby slide deck, sealed and chunked — the second free-text surface on the channel, and the reason it rides encrypted.",
+  "note": "CANONICAL COPY (Print-TwoTimTwo-Labels). Mirrored byte-identical into the consumer repos (Awana-Check-in-Display, KVBC-Awana-Countdown). Privacy rule: only first names ever ride the channel — no lastName, no allergies, no contact info, no birth years. v3 adds four PII-free aggregate/context events sourced from TwoTimTwo's own reports: tonight (counters), points (color-team scores), schedule (next meeting), notice (church-authored public announcement — bounded and plain-text-forced). v5 adds `slides`: the operator's typed lobby slide deck, sealed and chunked — the second free-text surface on the channel, and the reason it rides encrypted. v6 adds `settings`: the lobby screens' shared settings, one sealed frame of allowlisted keys (no names; per-screen settings never ride the wire).",
   "transport": {
-    "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the four name-bearing events — and `slides`, which carries arbitrary operator-authored copy — are sealed with AES-256-GCM before publish. This is a TRANSPORT layer: every payload vector below describes the OPENED payload, which both repos' sanitizers run on exactly as they would a plaintext one. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
+    "note": "The Pusher channel is PUBLIC and Pusher public channels have no server-side authorization primitive, so the four name-bearing events — and `slides` and `settings`, which carry arbitrary operator-authored copy — are sealed with AES-256-GCM before publish. This is a TRANSPORT layer: every payload vector below describes the OPENED payload, which both repos' sanitizers run on exactly as they would a plaintext one. The framing, padding sizes and a cross-implementation interop fixture live in envelope-vectors.json, which is mirrored byte-identically into the display repo alongside this file.",
     "encryptedEvents": [
       "checkin",
       "recap",
       "birthdays",
       "checkout",
-      "slides"
+      "slides",
+      "settings"
     ],
     "plaintextEvents": [
       "tally",
@@ -1211,6 +1212,282 @@
         {
           "reason": "null",
           "payload": null
+        }
+      ]
+    },
+    "settings": {
+      "note": "The lobby screens' SHARED settings (contract v6), published from the display app's Settings on the check-in computer (POST /api/display-settings) and rebroadcast whole every ~5 minutes, so a change made once reaches every screen. One frame, sealed (operator-authored copy rides it: the welcome wording and one short line per club). `settings` carries ONLY keys from `keys`, every one optional: a consumer keeps its own value for any key the payload lacks, and drops (never coerces) a value that fails its spec. Per-screen settings (what plays behind the names, uploads, this TV's sound, motion, confetti, wake lock, simplified mode, the Pusher keys) are not in `keys` and can never ride the wire. publishedAt is the ONLY ordering and anti-replay authority (a consumer applies a payload iff its publishedAt is strictly newer than the one it holds); rev is an operator-facing counter that may restart at 1. No names, ever: thresholds, switches, times and church copy. The publisher caps the settings object's JSON at maxJsonBytes and refuses (413) anything bigger, so every accepted frame seals into the 4096 rung.",
+      "fields": [
+        "rev",
+        "publishedAt",
+        "settings"
+      ],
+      "keys": {
+        "standardDisplayMs": {
+          "type": "int",
+          "min": 2000,
+          "max": 20000
+        },
+        "specialDisplayMs": {
+          "type": "int",
+          "min": 3000,
+          "max": 25000
+        },
+        "clubPhrases": {
+          "type": "phrases",
+          "maxKeys": 15,
+          "maxKey": 40,
+          "maxValue": 80
+        },
+        "showBirthdayWeekRibbon": {
+          "type": "bool"
+        },
+        "clubTintBackground": {
+          "type": "bool"
+        },
+        "firstArrivalMoment": {
+          "type": "bool"
+        },
+        "milestoneEvery": {
+          "type": "int",
+          "min": 0,
+          "max": 10000
+        },
+        "clubMilestoneEvery": {
+          "type": "int",
+          "min": 0,
+          "max": 1000
+        },
+        "bookMilestones": {
+          "type": "intList",
+          "maxItems": 8,
+          "min": 1,
+          "max": 10000
+        },
+        "awardMilestones": {
+          "type": "intList",
+          "maxItems": 8,
+          "min": 1,
+          "max": 10000
+        },
+        "showClock": {
+          "type": "bool"
+        },
+        "showTally": {
+          "type": "bool"
+        },
+        "showTallySyncNote": {
+          "type": "bool"
+        },
+        "showWeatherChip": {
+          "type": "bool"
+        },
+        "weatherLocationName": {
+          "type": "string",
+          "max": 80
+        },
+        "weatherLat": {
+          "type": "number",
+          "min": -90,
+          "max": 90
+        },
+        "weatherLon": {
+          "type": "number",
+          "min": -180,
+          "max": 180
+        },
+        "weatherUnits": {
+          "type": "enum",
+          "values": [
+            "fahrenheit",
+            "celsius"
+          ]
+        },
+        "calendarEnabled": {
+          "type": "bool"
+        },
+        "calendarUrl": {
+          "type": "url",
+          "max": 300
+        },
+        "calendarWelcomeText": {
+          "type": "string",
+          "max": 80
+        },
+        "calendarShowWelcome": {
+          "type": "bool"
+        },
+        "calendarShowNextWeek": {
+          "type": "bool"
+        },
+        "calendarShowRemaining": {
+          "type": "bool"
+        },
+        "seasonPromos": {
+          "type": "bool"
+        },
+        "checkoutBoardMode": {
+          "type": "enum",
+          "values": [
+            "off",
+            "pickup",
+            "always"
+          ]
+        },
+        "checkoutBoardNamesAbove": {
+          "type": "int",
+          "min": 0,
+          "max": 200
+        },
+        "checkoutBoardStaleMin": {
+          "type": "int",
+          "min": 1,
+          "max": 120
+        },
+        "checkoutBoardFrom": {
+          "type": "time"
+        },
+        "checkoutBoardUntil": {
+          "type": "time"
+        },
+        "cornerStillHere": {
+          "type": "bool"
+        },
+        "nightTheme": {
+          "type": "slug",
+          "max": 32
+        },
+        "followPrinterTheme": {
+          "type": "bool"
+        },
+        "particleEffect": {
+          "type": "enum",
+          "values": [
+            "auto",
+            "off",
+            "snow",
+            "rain",
+            "sparkle"
+          ]
+        },
+        "weatherTheme": {
+          "type": "bool"
+        },
+        "aprilFools": {
+          "type": "bool"
+        }
+      },
+      "maxJsonBytes": 3800,
+      "valid": [
+        {
+          "rev": 4,
+          "publishedAt": "2026-10-01T23:35:00.000Z",
+          "settings": {
+            "standardDisplayMs": 7000,
+            "specialDisplayMs": 9000,
+            "clubPhrases": {
+              "sparks": "Shine bright tonight!",
+              "t&t": "Bring it!"
+            },
+            "milestoneEvery": 25,
+            "bookMilestones": [
+              5,
+              10,
+              25
+            ],
+            "showClock": true,
+            "weatherLocationName": "Waterville, Maine",
+            "weatherLat": 44.552,
+            "weatherLon": -69.6317,
+            "weatherUnits": "fahrenheit",
+            "calendarUrl": "https://kvbchurch.twotimtwo.com/calendar/index",
+            "checkoutBoardMode": "pickup",
+            "checkoutBoardNamesAbove": 3,
+            "checkoutBoardFrom": "19:35",
+            "checkoutBoardUntil": "20:30",
+            "cornerStillHere": true,
+            "nightTheme": "auto",
+            "particleEffect": "auto"
+          }
+        },
+        {
+          "rev": 1,
+          "publishedAt": "2026-10-01T18:00:00.000Z",
+          "settings": {}
+        }
+      ],
+      "dirty": [
+        {
+          "reason": "per-screen keys never ride the wire, and markup is stripped from club lines",
+          "payload": {
+            "rev": 5,
+            "publishedAt": "2026-10-01T23:40:00.000Z",
+            "settings": {
+              "backgroundSource": "video",
+              "pusherAppKey": "attacker-app",
+              "panicMode": true,
+              "displayKey": "QUJD",
+              "clubPhrases": {
+                "sparks": "<script>alert(1)</script>Go!"
+              },
+              "milestoneEvery": 25
+            }
+          },
+          "mustNotContain": [
+            "backgroundSource",
+            "attacker-app",
+            "panicMode",
+            "displayKey",
+            "<script>"
+          ]
+        },
+        {
+          "reason": "values outside their spec are dropped, not coerced",
+          "payload": {
+            "rev": 6,
+            "publishedAt": "2026-10-01T23:45:00.000Z",
+            "settings": {
+              "milestoneEvery": "25",
+              "checkoutBoardMode": "everyone",
+              "checkoutBoardFrom": "7:35pm",
+              "calendarUrl": "javascript:alert(1)",
+              "nightTheme": "<b>",
+              "showClock": "yes"
+            }
+          },
+          "mustNotContain": [
+            "\"25\"",
+            "everyone",
+            "7:35pm",
+            "javascript:",
+            "<b>",
+            "\"yes\""
+          ]
+        }
+      ],
+      "reject": [
+        {
+          "reason": "null",
+          "payload": null
+        },
+        {
+          "reason": "missing publishedAt, so it cannot be ordered",
+          "payload": {
+            "rev": 1,
+            "settings": {
+              "showClock": true
+            }
+          }
+        },
+        {
+          "reason": "settings is not an object",
+          "payload": {
+            "rev": 1,
+            "publishedAt": "2026-10-01T18:00:00.000Z",
+            "settings": [
+              "showClock"
+            ]
+          }
         }
       ]
     }
